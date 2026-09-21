@@ -4,6 +4,8 @@
 # Workshop: "Agent Skills: упаковка експертизи команди".
 # Deliverables are agent skills (.claude/skills/**), evidence documents (docs/**)
 # and the app changes the skills helped to make (app/**, lib/**, components/**).
+# Scope note: Task C is the skill only; the «запит на кошторис» feature is built
+# by the agent during the Task D A/B runs and carried over from run B.
 
 language: "uk-UA"
 tone_instructions: >
@@ -163,16 +165,17 @@ reviews:
 
     - path: "docs/verification.md"
       instructions: |
-        Докази Task A–C. Task A: ≥ 3 виправлення — id правила Vercel, коміт,
-        числа було/стало і як міряли (продакшн-збірка); виправлення без чисел
-        чи без id — ⚠️. Task B і C: запит у свіжій сесії, який НЕ називав скіл;
-        чи спрацював скіл і як це видно (виклик Skill / читання SKILL.md);
-        результат. Task C: вивід check-contract.mjs на коді main (з FAIL) і на
-        фінальному коді (0 FAIL); журнал мока для сценарію «форма → колбек →
-        /quotes/<id>» — URL /webhook/, auth=ok, idempotency=new, колбек з
-        відповіддю 2xx; час відповіді форми; журнал сервера без тіл і
-        персональних даних. Переказ шаблону без власних спостережень — ⚠️.
-        Розділ «Cursor» — бонус E3.
+        Докази Task A–C. Task A: рівно два виправлення — у кожного id правила
+        Vercel і коміт; для ОДНОГО з них числа було/стало і як міряли
+        (продакшн-збірка), для другого досить пояснення, що і чому змінили.
+        Жодного виправлення з числами або виправлення без id правила — ⚠️.
+        Task B: запит у свіжій сесії, який НЕ називав скіл; чи спрацював скіл і
+        як це видно (виклик Skill / читання SKILL.md); результат. Task C: скіл
+        тут лише пакують — вимагати тут запит, на який спрацював скіл, або
+        журнал мока НЕ треба (це Task D, docs/ab-validation.md). Для Task C
+        перевір вивід check-contract.mjs на коді main (з FAIL), перевірку
+        скрипта на навмисно поганому коді і вивід на фінальному коді (0 FAIL).
+        Переказ шаблону без власних спостережень — ⚠️. Розділ «Cursor» — бонус E3.
 
     - path: "docs/ab-validation.md"
       instructions: |
@@ -189,6 +192,12 @@ reviews:
         таблиця порівняння; висновок, що спирається на ці дані. Чесне «різниці немає»
         з поясненням, звідки агент узяв контракт (напр. з --help мока), —
         прийнятне. Висновок без чисел і журналів — ⚠️.
+        Окремий розділ про перенесення: фіча «запит на кошторис» у гілці — це
+        результат прогону B, і має бути сказано, як його перенесли (діф, злиття
+        чи копіювання файлів), що довелось доробити руками, вивід
+        check-contract.mjs на фінальному коді (0 FAIL) і що сценарій «форма →
+        колбек → /quotes/<id>» відпрацював уже на гілці. Фіча без такого
+        розділу (або написана в гілці замість прогону) — ⚠️.
 
     - path: "docs/ab/**"
       instructions: |
@@ -210,7 +219,8 @@ reviews:
 
     - path: "app/**"
       instructions: |
-        Код застосунку: виправлення Task A і фіча «запит на кошторис» (Task C).
+        Код застосунку: два виправлення Task A і фіча «запит на кошторис»,
+        перенесена з прогону B (Task D).
         Статичне рев'ю — do NOT run the build or the app. Кожне виправлення
         Task A має відповідати правилу Vercel, названому в коміті
         (`fix(<rule-id>)`), і документації Next.js 16: перевір, що зміна
@@ -233,7 +243,8 @@ reviews:
 
     - path: "lib/**"
       instructions: |
-        Код застосунку: виправлення Task A і фіча «запит на кошторис» (Task C).
+        Код застосунку: два виправлення Task A і фіча «запит на кошторис»,
+        перенесена з прогону B (Task D).
         Статичне рев'ю — do NOT run the build or the app. Кожне виправлення
         Task A має відповідати правилу Vercel, названому в коміті
         (`fix(<rule-id>)`), і документації Next.js 16: перевір, що зміна
@@ -256,7 +267,8 @@ reviews:
 
     - path: "components/**"
       instructions: |
-        Код застосунку: виправлення Task A і фіча «запит на кошторис» (Task C).
+        Код застосунку: два виправлення Task A і фіча «запит на кошторис»,
+        перенесена з прогону B (Task D).
         Статичне рев'ю — do NOT run the build or the app. Кожне виправлення
         Task A має відповідати правилу Vercel, названому в коміті
         (`fix(<rule-id>)`), і документації Next.js 16: перевір, що зміна
@@ -352,13 +364,15 @@ reviews:
           file), and skills-lock.json pins source vercel-labs/agent-skills to an
           immutable ref — a release tag or a full commit SHA, not a branch. The
           vendored rules/ files and AGENTS.md are excluded from review on purpose;
-          do not report them as missing. (3) docs/verification.md lists at least
-          three fixes, each with a Vercel rule id, the commit, before/after
-          numbers and how they were measured, and the matching code changes
-          under app/, components/ or lib/ implement those rules correctly for
-          Next.js 16. PASS if all three hold; FAIL if the review is missing or
-          left as a template, the install is unpinned or a link, or there are
-          fewer than three measured fixes with rule ids.
+          do not report them as missing. (3) docs/verification.md lists two
+          fixes, each with a Vercel rule id and the commit, and for ONE of them
+          before/after numbers plus how they were measured (the other only needs
+          the rule id and a short explanation of what changed and why); the
+          matching code changes under app/, components/ or lib/ implement those
+          rules correctly for Next.js 16. PASS if all three hold; FAIL if the
+          review is missing or left as a template, the install is unpinned or a
+          link, there are fewer than two fixes with rule ids, or none of them
+          carries before/after numbers.
 
       - mode: "warning"
         name: "Task B — building-client-form skill"
@@ -396,17 +410,17 @@ reviews:
           callback signature sha256=HMAC-SHA256(secret, "<timestamp>.<raw body>")
           verified on the raw body with a length check and timingSafeEqual, a
           300 s window and idempotency; async 202 + callback for long workflows;
-          no /webhook-test/ URLs). Check the «запит на кошторис» feature exists
-          (a /quotes/new page, a Server Action, a callback Route Handler, a
-          /quotes/[id] status page) and follows that contract. Check
-          docs/verification.md records the request that triggered the skill,
-          check-contract.mjs output on main (with failures) and on the final code
-          (0 FAIL), and a mock log of the form → callback → status scenario.
-          PASS if the skill, the checker, the feature and the evidence are all
-          present and consistent; FAIL otherwise.
+          no /webhook-test/ URLs). Task C is the skill only: the «запит на
+          кошторис» feature is NOT part of it — do not ask for the feature, for a
+          request that triggered the skill or for a mock log here (that is Task D,
+          docs/ab-validation.md). Check docs/verification.md records the
+          check-contract.mjs output on main (with failures), evidence that the
+          checker was tried against deliberately bad code, and the output on the
+          final code (0 FAIL). PASS if the skill, the checker and this evidence
+          are present and consistent; FAIL otherwise.
 
       - mode: "warning"
-        name: "Task D — A/B validation"
+        name: "Task D — A/B validation and quote feature"
         instructions: >
           Static review of the diff only. Polarity: run A is WITHOUT the
           integrating-n8n-webhooks skill, run B is WITH it. Check
@@ -425,8 +439,16 @@ reviews:
           grounded in those observations. Both diffs are required:
           docs/ab/a-without-skill.diff and docs/ab/b-with-skill.diff. An honest "no difference" conclusion that explains where the
           agent learned the contract (for example from the mock's --help) is
-          acceptable. PASS if both runs are documented with these observations;
-          FAIL otherwise.
+          acceptable. The feature is built in these runs, not in the branch:
+          check that the «запит на кошторис» feature (a /quotes/new page, a
+          Server Action, a callback Route Handler and a /quotes/[id] status page)
+          is present under app/, components/ and lib/ and follows the contract of
+          materials/n8n-webhooks-brief.md, and that docs/ab-validation.md says
+          how the run-B result was carried into the branch (diff, merge or
+          copied files), what had to be finished by hand, the check-contract.mjs
+          output on the final code (0 FAIL) and that the form → callback →
+          /quotes/[id] scenario was re-run on the branch. PASS if both runs and
+          the carried-over feature are documented this way; FAIL otherwise.
 
       - mode: "warning"
         name: "Task E — bonus (one of three)"
@@ -441,8 +463,8 @@ reviews:
           into should-trigger and should-not-trigger, each run in a fresh
           session, with results and any description change; (E3) a "Cursor"
           section in docs/verification.md records which skills Cursor saw and
-          whether they triggered on the Task B and C requests. PASS if one option
-          is complete.
+          whether they triggered on the Task B request and on the prompt from
+          materials/ab-task.md. PASS if one option is complete.
 
       - mode: "warning"
         name: "Protected paths and secrets"
