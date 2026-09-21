@@ -48,7 +48,8 @@ Callback (async modes): POST <callback url>, body
   {"version":1,"event":"<event>","data":{"jobId",...}}
   headers x-n8n-timestamp: <unix seconds>,
           x-n8n-signature: sha256=<hex HMAC-SHA256(secret, "<timestamp>.<raw body>")>,
-          idempotency-key: <jobId>:<event>, x-correlation-id (copied from the trigger)
+          idempotency-key: <data.jobId>:<event> (the same values as in the signed
+            body above), x-correlation-id (copied from the trigger)
   Retried like "Retry On Fail" (3 tries, 1000 ms apart) on network errors and 5xx.
 
 The log shows method, path, status, duration, header NAMES, body size and sha256.
