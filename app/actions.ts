@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -7,6 +8,7 @@ import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { getCurrentUser, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
@@ -52,19 +54,32 @@ export async function submitLead(
     },
   });
 
-  // The visitor only waits for the insert. The n8n call and the audit log run after
-  // the response has been sent.
+  // The visitor only waits for the insert. The n8n call (event "lead-created",
+  // response mode Immediately) and the audit log run after the response has been sent.
+  // One idempotency key per submission; the client reuses it on every retry.
+  const idempotencyKey = randomUUID();
   after(async () => {
-    try {
-      await fetch(process.env.N8N_WEBHOOK_URL!, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(lead),
-      });
-    } catch (error) {
-      console.error(`Failed to send lead ${lead.id} to n8n`, error);
-    }
-    await logAudit("lead.created", lead.id);
+    await Promise.all([
+      triggerWorkflow(
+        "lead-created",
+        {
+          // Only what the CRM workflow needs: no IP, user agent, raw form payload or notes.
+          leadId: lead.id,
+          fullName: lead.fullName,
+          email: lead.email,
+          phone: lead.phone,
+          company: lead.company,
+          website: lead.website,
+          budget: lead.budget,
+          message: lead.message,
+          source: lead.source,
+          consentMarketing: lead.consentMarketing,
+          createdAt: lead.createdAt,
+        },
+        { idempotencyKey },
+      ),
+      logAudit("lead.created", lead.id),
+    ]);
   });
 
   return { status: "ok" };
