@@ -25,7 +25,9 @@ metadata:
 
 **Змінні середовища — лише серверні (жодного `NEXT_PUBLIC_`):**
 `N8N_WEBHOOK_BASE_URL` (закінчується на `/webhook`), `N8N_WEBHOOK_TOKEN`, `N8N_CALLBACK_SECRET`,
-`APP_BASE_URL`. У `.env.example` — ці ключі зі значеннями `change-me-…`; справжні — у `.env.local`.
+`APP_BASE_URL`. У `.env.example` — ці ключі: секрети (`N8N_WEBHOOK_TOKEN`, `N8N_CALLBACK_SECRET`) —
+лише `change-me-…`, адреси — локальні (`http://127.0.0.1:5678/webhook`, `http://127.0.0.1:3000`),
+жодного `/webhook-test/`. Справжні значення — у `.env.local`.
 
 **Next.js → n8n** (`lib/n8n/client.ts`, перший рядок `import "server-only"`):
 - `POST ${N8N_WEBHOOK_BASE_URL}/<event>`; `<event>` у kebab-case = шлях вебхука в n8n.
@@ -48,8 +50,10 @@ Finishes; **усе, що може тривати ≥ 100 с або тривал�
 4. HMAC-SHA256(`N8N_CALLBACK_SECRET`, `` `${ts}.${raw}` ``) проти `x-n8n-signature: sha256=<hex>`:
    спершу довжина, потім `crypto.timingSafeEqual` → інакше 401 без подробиць;
 5. «застовпити» `idempotency-key` (`<jobId>:<event>`) → уже був: 200 `{"duplicate":true}`;
-6. лише тепер `JSON.parse` і перевірка форми → 400; невідомий запис → 404 (звільнити ключ);
+6. лише тепер `JSON.parse` і перевірка форми → 400; невідомий запис → 404;
 7. мінімальний durable-запис **до** відповіді → 202 `{"ok":true}`; повільне — в `after()`.
+   Будь-яка 4xx/5xx на кроках 6–7 **звільняє** ключ — інакше повтор n8n стане «дублікатом», і
+   результат загубиться.
 
 Шаблони коду — `references/nextjs-patterns.md`. Заголовки, коди, версії — `references/contract.md`.
 
@@ -62,7 +66,8 @@ Finishes; **усе, що може тривати ≥ 100 с або тривал�
         не-React клієнт → Route Handler. Виклик n8n — в after(), не в очікуванні користувача
 - [ ] 4. Довга задача: запис зі статусом queued ДО виклику; callbackUrl = ${APP_BASE_URL}/api/n8n/<event>
 - [ ] 5. Колбек-роут у порядку «сирі байти → час → підпис → ключ → parse → запис → 202 → after()»
-- [ ] 6. .env.example: 4 ключі з change-me-…; .env* у .gitignore (крім .env.example)
+- [ ] 6. .env.example: 4 ключі — секрети change-me-…, адреси локальні, без /webhook-test/;
+        .env* у .gitignore (крім .env.example)
 - [ ] 7. Рядок у docs/n8n-integrations.md: event | напрям | шлях n8n | режим | власник
 - [ ] 8. Налаштування на боці n8n — текстом для людини з references/n8n-side-setup.md (без JSON воркфлоу)
 - [ ] 9. Перевірка (нижче) — усе зелене

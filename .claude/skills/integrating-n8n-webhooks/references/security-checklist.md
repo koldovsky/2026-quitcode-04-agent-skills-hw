@@ -1,7 +1,8 @@
 # Безпека — одним списком
 
 - [ ] **Секрети** лише в серверних змінних: жодного `NEXT_PUBLIC_N8N_*`, секрету в query string, у
-      Client Component чи в журналі. У git — тільки `.env.example` з `change-me-…`. (C2, C9)
+      Client Component чи в журналі. У git — тільки `.env.example`: секрети — `change-me-…`, адреси —
+      локальні, жодного `/webhook-test/`. (C1, C2, C9)
 - [ ] **Модуль клієнта** `lib/n8n/client.ts` починається з `import "server-only"` — імпорт у Client
       Component стає помилкою збірки. Прямих `fetch` до n8n поза `lib/n8n/` немає. (C3)
 - [ ] **Вихідна автентифікація**: Header Auth `x-n8n-token`, довгий випадковий токен, лише HTTPS.
