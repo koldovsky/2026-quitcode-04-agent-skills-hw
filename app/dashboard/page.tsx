@@ -31,7 +31,7 @@ export default async function DashboardPage() {
         <DashboardStats stats={stats} />
       </Suspense>
       <LeadsToolbar sources={sources} />
-      <LeadSearch />
+      <LeadSearch rows={leads} />
       <LeadsTable leads={leads} />
     </div>
   );

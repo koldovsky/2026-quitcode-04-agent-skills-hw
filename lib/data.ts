@@ -27,7 +27,7 @@ export const getWorkspace = cache(async (slug: string) => {
 
 export async function getLeadList(workspaceId: string): Promise<LeadListItem[]> {
   const leads = await db.getLeads(workspaceId);
-  return leads.map(({ id, fullName, company, status, createdAt }) => ({ id, fullName, company, status, createdAt }));
+  return leads.map(({ id, fullName, company, email, status, createdAt }) => ({ id, fullName, company, email, status, createdAt }));
 }
 
 export async function getLeadStats(workspaceId: string) {

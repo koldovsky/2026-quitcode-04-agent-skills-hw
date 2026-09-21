@@ -3,25 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { debounce } from "lodash";
+import type { LeadListItem } from "@/lib/types";
 
-type SearchRow = {
-  id: string;
-  fullName: string;
-  company: string;
-  email: string;
-  status: string;
-};
+type SearchRow = Pick<LeadListItem, "id" | "fullName" | "company" | "email">;
 
-export function LeadSearch() {
-  const [leads, setLeads] = useState<SearchRow[]>([]);
+// The rows come from the server page (the same list the table shows): no second
+// request to /api/leads from an effect, no empty state while it loads.
+export function LeadSearch({ rows: leads }: { rows: SearchRow[] }) {
   const [query, setQuery] = useState("");
   const [filtered, setFiltered] = useState<SearchRow[]>([]);
-
-  useEffect(() => {
-    fetch("/api/leads")
-      .then((response) => response.json())
-      .then((data: { leads: SearchRow[] }) => setLeads(data.leads));
-  }, []);
 
   const applyFilter = useMemo(
     () =>

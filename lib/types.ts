@@ -51,9 +51,10 @@ export type Lead = {
   updatedAt: string;
 };
 
-// What the dashboard list sends to the browser: only the fields the table renders.
-// Full rows carry e-mail, phone, IP, user agent, raw form payload and internal notes.
-export type LeadListItem = Pick<Lead, "id" | "fullName" | "company" | "status" | "createdAt">;
+// What the dashboard list sends to the browser: only the fields the table and the search
+// use (the search also matches on e-mail). Full rows carry phone, IP, user agent, raw
+// form payload and internal notes.
+export type LeadListItem = Pick<Lead, "id" | "fullName" | "company" | "email" | "status" | "createdAt">;
 
 export type NewLead = Omit<
   Lead,
