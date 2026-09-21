@@ -31,8 +31,8 @@
 не стосується форм чи n8n, тож прогони нижче ними не «забруднені».
 
 **Відповідність специфікації** (name = тека, `description` ≤ 1024 символи з «що» + «коли», `SKILL.md`
-< 500 рядків, посилання на файли скіла існують): `building-client-form` — 794 символи, 99 рядків;
-`integrating-n8n-webhooks` — 822 символи, 140 рядків; `vercel-react-best-practices` — 329 символів,
+< 500 рядків, посилання на файли скіла існують): `building-client-form` — 794 символи, 98 рядків;
+`integrating-n8n-webhooks` — 822 символи, 151 рядок; `vercel-react-best-practices` — 329 символів,
 149 рядків. Усі три — PASS.
 
 > `claude plugin validate .claude/skills` друкує «✔ Validation passed», але з `--json` видно
@@ -91,7 +91,7 @@
 
 ## Task C — `integrating-n8n-webhooks`
 
-Завдання C — сам скіл: `SKILL.md` (140 рядків) з контрактом, чеклістом і правилами зупинки,
+Завдання C — сам скіл: `SKILL.md` (151 рядок) з контрактом, чеклістом і правилами зупинки,
 `references/` з деталями й `scripts/` (`check-contract.mjs`, `send-signed-callback.mjs`,
 `mock-n8n.mjs`). Фічі в цьому завданні немає: її будує агент у прогонах Task D. Основний доказ
 спрацювання скіла — **прогони B** у `docs/ab-validation.md` (скіл викликано 3 з 3).
@@ -139,9 +139,10 @@ grep -o '"name":"Skill","input":{[^}]*}' run.jsonl   # чи викликано �
 
 ### Скрипти скіла: що вони показали
 
-**`check-contract.mjs` на `main`** (файли з `git archive main`) — 5 FAIL, exit 1. Код
-застосунку, `.env.example` і `tools/` на `main` не змінювались з виміряного `ea73649` (пізніші
-коміти — лише документація, матеріали й налаштування перевірки):
+**`check-contract.mjs` на `main`** (файли з `git archive main`) — 5 FAIL, exit 1. `app/`, `lib/`,
+`components/` і `.env.example` на `main` не змінювались з виміряного `ea73649`; `tools/mock-n8n.mjs`
+змінено лише в тексті `--help` (`2454163`), `AGENTS.md` — розділ безпеки курсу (`cf460e1`). На
+перевірки й заміри це не впливає:
 
 ```
 C1  FAIL no /webhook-test/ URL in code or .env.example
@@ -171,9 +172,11 @@ callers: none» у проєкті, який очевидно викликає n8
 **На `ws04/sample`** — `0 failed, 10 passed, 0 n/a (10 checks)`, exit 0 (n8n callers:
 `lib/n8n/client.ts`; callback routes: `app/api/n8n/[event]/route.ts`).
 
-**Самоперевірка скрипта** — набір із 16 міні-проєктів (автор тримає його поза репозиторієм разом з
-іншими тестами, прогін `run-fixtures.mjs`): еталонний проєкт за контрактом, обидві гілки репозиторію
-й 13 випадків, зібраних з типових помилок агента. Останній прогін — **16 з 16**. Що він ловить:
+**Самоперевірка скрипта** — набір із 31 випадку (автор тримає його поза репозиторієм разом з
+іншими тестами, прогін `run-fixtures.mjs`): еталонний проєкт за контрактом, обидві гілки репозиторію,
+15 випадків з типових помилок агента, 7 — на `--changed-since` і шість записаних прогонів A/B з
+`docs/ab-validation.md` (кожен — і весь проєкт, і `--changed-since`). Останній прогін — **31 з 31**.
+Що він ловить:
 
 - навмисно поганий код (`req.json()`, `signature !== expected`, `NEXT_PUBLIC_N8N_WEBHOOK_URL`,
   тестовий URL, лог тіла, `runtime = "edge"`, справжній токен у `.env.example`) — **10 з 10 FAIL**;
@@ -187,9 +190,19 @@ callers: none» у проєкті, який очевидно викликає n8
   "string" || signature === ""` (не C5), `const init: RequestInit = { …, signal }; fetch(url, init)`
   і `fetch(url, { ...baseInit, body })` (обидва — не C6).
 
-> Другий із цих двох випадків (`{ ...baseInit }`) був **хибним FAIL** до 21.09.2026: C6 умів іти
-> за іменем, яке саме є аргументом, але не за іменем, розпакованим усередині об'єкта. Виправлено
-> разом з новою фікстурою `init-spread-signal`, яка на старому скрипті падає, а на новому — ні.
+- довжина підпису, «запінена» регуляркою `/^sha256=([0-9a-f]{64})$/` перед `timingSafeEqual`, —
+  теж перевірка довжини (C5 PASS); а `timingSafeEqual` без жодної перевірки довжини поруч з UUID-регуляркою
+  (`{8}`, `{12}`, не `{64}`) — C5 FAIL, як і раніше;
+- `--changed-since`: старий виклик n8n і тестовий URL, яких робота не торкалась, не рахуються, а
+  новий виклик без таймауту в тому самому файлі — рахується (FAIL на новому рядку, не на старому);
+  рахуються і незакомічені, і закомічені після `ref` зміни, і нові файли, ще не додані в git; якщо
+  нічого не змінилось — усі десять N/A, не PASS; тека не в git або невідомий `ref` — помилка
+  використання (exit 2), а не тихий прогін по всьому проєкту.
+
+> Два хибні FAIL виправлено 21.09.2026, кожен — разом з фікстурою, яка на старому скрипті падає, а на
+> новому — ні: C6 не йшов за іменем, розпакованим усередині об'єкта (`{ ...baseInit }`,
+> `init-spread-signal`); C5 не вважав регулярку `{64}` перевіркою довжини (`regex-length-pin`) —
+> саме так прогони A2 і A3 з `docs/ab-validation.md` отримали хибний FAIL.
 
 **Фіча «запит на кошторис» (результат «зі скілом») проти мока: 202 + підписаний колбек.**
 У студентському варіанті ці рядки йдуть у `docs/ab-validation.md` — як докази прогону B і
@@ -200,31 +213,33 @@ N8N_WEBHOOK_TOKEN=… N8N_CALLBACK_SECRET=… node .claude/skills/integrating-n8
   --port <port> --mode respond-202 --delay 3000 --callback-url http://127.0.0.1:<app>/api/n8n/quote-request
 ```
 
-Відправка форми `/quotes/new` (без JS) → **HTTP 200 за 181 мс** (попередні прогони — 139–183 мс),
+Відправка форми `/quotes/new` (без JS) → **HTTP 200 за 178 мс** (попередні прогони — 139–183 мс),
 хоча «воркфлоу» триває 3 с; сторінка статусу пройшла «У черзі» → «Готуємо кошторис» → «Готово» з
 посиланням на PDF одразу після колбека. Журнал мока (sha256 скорочено):
 
 ```
-POST /webhook/quote-request -> 202 in 1 ms auth=ok idempotency=new | headers: accept,accept-language,content-type,idempotency-key,user-agent,x-correlation-id,x-n8n-token | body 366 B sha256=b6c904c2…
-workflow 37ddbecb-… running for 3000 ms, then callback event=quote-request.completed
-callback POST http://127.0.0.1:<app>/api/n8n/quote-request -> 202 in 176 ms (try 1/3) event=quote-request.completed body 382 B sha256=0908ec8a…
+POST /webhook/quote-request -> 202 in 1 ms auth=ok idempotency=new | headers: accept,accept-language,content-type,idempotency-key,user-agent,x-correlation-id,x-n8n-token | body 366 B sha256=2077642a…
+workflow ca4110d5-… running for 3000 ms, then callback event=quote-request.completed
+callback POST http://127.0.0.1:<app>/api/n8n/quote-request -> 202 in 177 ms (try 1/3) event=quote-request.completed body 382 B sha256=193eadb0…
 ```
 
 Журнал застосунку (фрагмент) — подія, статус, тривалість, correlation id, розмір і хеш тіла; ні email,
 ні назви компанії, ні токена, ні підпису:
 
 ```
-quote request 221a7e08-… queued
-n8n -> quote-request 202 in 10 ms (try 1/3) corr=5599e34c-… 366 B sha256=b6c904c2b1db5e16
-n8n <- quote-request completed accepted corr=5599e34c-…
-quote 221a7e08-… completed: customer notification queued (demo: no e-mail is sent)
-n8n <- quote-request rejected: bad-signature corr=0d03ff4b-… 382 B
-n8n <- quote-request rejected: stale-timestamp corr=d49e7449-… 382 B
-n8n <- quote-request rejected: key does not match the signed job corr=624d4f78-…
+quote request 8752a483-… queued
+n8n -> quote-request 202 in 11 ms (try 1/3) corr=09546dd5-… 366 B sha256=2077642af9c06cd2
+n8n <- quote-request completed accepted corr=09546dd5-…
+quote 8752a483-… completed: customer notification queued (demo: no e-mail is sent)
+n8n <- quote-request rejected: bad-signature corr=6ed35f57-… 382 B
+n8n <- quote-request rejected: stale-timestamp corr=a118f849-… 382 B
+n8n <- quote-request rejected: key does not match the signed job corr=b98d72da-…
+n8n <- quote-request rejected: callback for another job corr=928cf9f7-…
 ```
 
-**`send-signed-callback.mjs`** проти `/api/n8n/quote-request` з `--request-key` = id щойно створеного
-запиту — **17 з 17 PASS**, exit 0:
+**`send-signed-callback.mjs`** проти `/api/n8n/quote-request` для запиту, який ще **чекає** колбека
+(мок перезапущено на тому самому порту з `--delay 600000`, одна відправка форми): `--request-key` = id
+запиту, `--job-id` — з рядка мока `workflow <jobId> running`. **18 з 18 PASS**, exit 0:
 
 ```
 PASS  wrong-content-type     expected 415  got 415   only application/json is accepted
@@ -244,8 +259,9 @@ PASS  unknown-event          expected 404  got 404   valid signature, route for 
 PASS  valid                  expected 202  got 202   fresh, correctly signed callback for a real job
 PASS  replay-same-key        expected 200  got 200   same idempotency-key again (n8n Retry On Fail): acknowledged, not applied twice
 PASS  replay-new-key         expected 400  got 400   captured callback replayed under a fresh key: the key must equal <jobId>:<event> from the signed body
+PASS  other-job-same-request expected 409  got 409   correctly signed callback from another job for the same request: the request is bound to its own job
 
-0 failed, 17 passed (17 cases)
+0 failed, 18 passed (18 cases)
 ```
 
 Пара `json-lookalike-type` / `json-with-charset` з'явилась після того, як рев'ю знайшло дірку в
@@ -257,6 +273,16 @@ PASS  replay-new-key         expected 400  got 400   captured callback replayed 
 той самий час і той самий підпис, що й у `valid`, лише з іншим `idempotency-key`. До цієї перевірки
 роут приймав такий запит (202) і виконував `after()` ще раз; тепер — 400, а в журналі
 `rejected: key does not match the signed job`.
+
+Випадок `other-job-same-request` — з рев'ю 21.09.2026: колбек **іншої** задачі (новий `jobId`, свій
+правильний ключ, правильний підпис) для запиту, який уже готовий. Раніше роут шукав запис лише за
+`requestIdempotencyKey`, `data.jobId` із записаним `job_id` не звіряв, а `completeQuote` перезаписував
+навіть готовий кошторис: три такі колбеки поспіль отримали 202 і щоразу міняли посилання на PDF. Тепер
+запит прив'язаний до `job_id` з відповіді 202 (інший `jobId` → 409, ключ звільнено), а готовий
+кошторис не перезаписується (`completeQuote`/`failQuote` не чіпають `ready`). Це захист у глибину —
+для такого колбека потрібен секрет, — але саме так поводиться другий чи «застарілий» запуск
+воркфлоу. Тому ж матриця тепер бере задачу, яка ще чекає колбека: раніше випадок `valid`
+«проходив» на вже готовому кошторисі саме завдяки цій дірці.
 
 Додатково: сервер **без** `N8N_CALLBACK_SECRET` на правильно підписаний колбек відповідає 500 (не 2xx і
 не 400) — HMAC із порожнім ключем не приймається. Сторінка статусу не показує email і опис задачі;

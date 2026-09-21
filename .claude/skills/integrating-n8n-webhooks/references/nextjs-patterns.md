@@ -238,6 +238,15 @@ export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]
       await db.releaseCallbackKey(key);
       return Response.json({ error: "unknown job" }, { status: 404 });
     }
+    if (outcome.status === "other-job") {
+      await db.releaseCallbackKey(key);
+      console.warn(`n8n <- ${event} rejected: callback for another job corr=${correlationId}`);
+      return Response.json({ error: "callback is for another job" }, { status: 409 });
+    }
+    if (outcome.status === "already-final") {
+      console.info(`n8n <- ${event} duplicate (already final) corr=${correlationId}`);
+      return Response.json({ duplicate: true }, { status: 200 });
+    }
     if (outcome.afterResponse) after(outcome.afterResponse); // slow side effects after the 2xx
     const jobStatus = envelope.data.status;
     console.info(`n8n <- ${event} ${jobStatus} accepted corr=${correlationId}`);
@@ -255,8 +264,31 @@ export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]
 ліміту → одразу `null`) і `parseCallbackEnvelope` (`JSON.parse` у try/catch + перевірка форми:
 `version === 1`, `event`, `data.jobId`, `data.status ∈ {completed, failed}`, `data.requestIdempotencyKey`,
 `result.documentUrl` лише `https:`). Обробник події (тут `handleQuoteCallback` з `lib/quotes.ts`) знаходить
-запис за `requestIdempotencyKey`, робить короткий запис і повертає `{ status: "applied", afterResponse? }`
-або `{ status: "unknown-job" }`.
+запис за `requestIdempotencyKey`, звіряє задачу й стан, робить короткий запис і повертає одне з
+чотирьох: `applied` (+ `afterResponse?`), `already-final`, `other-job`, `unknown-job`:
+
+```ts
+// lib/quotes.ts (import "server-only")
+export async function handleQuoteCallback(data: CallbackData): Promise<CallbackOutcome> {
+  const quote = await db.getQuote(data.requestIdempotencyKey);
+  if (!quote) return { status: "unknown-job" };
+  // Bound to the job from the 202; null only if a fast callback beat markQuoteProcessing.
+  if (quote.jobId && quote.jobId !== data.jobId) return { status: "other-job" };
+  if (quote.status === "ready") return { status: "already-final" }; // a result is final
+  const applied =
+    data.status === "completed" && data.documentUrl
+      ? await db.completeQuote(quote.id, { jobId: data.jobId, documentUrl: data.documentUrl })
+      : await db.failQuote(quote.id, data.errorCode ?? "workflow-failed", data.jobId);
+  if (!applied) return { status: "already-final" };
+  return { status: "applied", afterResponse: async () => { /* e-mail, CRM note... */ } };
+}
+```
+
+Чому ще й `jobId`: ключ ідемпотентності захищає від повтору **того самого** колбека, але не від
+колбека **іншої** задачі з тим самим `requestIdempotencyKey` (другий запуск воркфлоу, старий запуск,
+що «прокинувся»). Без звірки такий колбек отримав би 202 і перезаписав би готовий документ. Запис
+прив'язаний до `job_id` з відповіді 202 (`markQuoteProcessing`), а `completeQuote`/`failQuote` у
+сховищі не чіпають запис зі статусом `ready`.
 
 Ключ ідемпотентності звіряємо з тілом: заголовок `idempotency-key` не входить у HMAC, тому сам по
 собі він нічого не доводить. Хто перехопив підписаний колбек, міг би надіслати ті самі байти з новим

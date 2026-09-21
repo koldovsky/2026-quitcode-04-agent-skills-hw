@@ -15,6 +15,9 @@
 | Колбек → **413** | У колбеку файл або великий масив | Лише посилання на файл |
 | Колбек → **404** «unknown job» | `requestIdempotencyKey` не той (n8n узяв не той заголовок) або запис видалено | `{{ $('Webhook').item.json.headers['idempotency-key'] }}` |
 | Колбек → **400** «idempotency-key does not match the signed body» | Заголовок `idempotency-key` в HTTP Request зібрано не з тих полів (інший `$execution.id` чи інша подія), ніж тіло | `{{ $execution.id }}:<event>.completed`, і в тілі `data.jobId` = `{{ $execution.id }}` |
+| Колбек → **409** «callback is for another job» | Запит уже прив'язаний до іншого `job_id` (з 202): прийшов колбек від другого чи старого запуску воркфлоу, або в тілі `data.jobId` не той `$execution.id` | Один запуск на запит (Remove Duplicates за `idempotency-key`); у тілі й заголовку — `{{ $execution.id }}` того самого запуску |
+| Матриця: `valid` → **409** або **200** замість 202 | `--job-id` не той, або мок уже сам надіслав колбек для цієї задачі (задача вже готова) | Мок з `--delay 600000`, нова відправка форми, `--job-id` з рядка `workflow <jobId> running` |
+| `check-contract` FAIL на старому коді, якого задача не торкалась | Перевірка дивиться на весь проєкт | `--changed-since <коміт до задачі>` — лише змінені файли й рядки; старе — окремою задачею, спитай людину |
 | Запис оновився **двічі** / два листи | Немає ідемпотентності: повтори без `idempotency-key`, у n8n немає Remove Duplicates, роут не «застовплює» ключ | Ключ на кожен виклик, Remove Duplicates у n8n, claim у роуті |
 | Статус завис на `queued` | Виклик n8n не відбувся: немає `N8N_WEBHOOK_BASE_URL`/`N8N_WEBHOOK_TOKEN`/`APP_BASE_URL` або 4xx | Журнал сервера: рядок `n8n → <event>` з кодом і причиною |
 | Статус завис на `processing` | Колбек не прийшов: воркфлоу впав, не той `callbackUrl`, опублікована стара версія | Executions у n8n; Publish; `callbackUrl` = `${APP_BASE_URL}/api/n8n/<event>` |

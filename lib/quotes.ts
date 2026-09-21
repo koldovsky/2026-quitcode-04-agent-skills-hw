@@ -43,12 +43,18 @@ export async function startQuoteWorkflow(id: string) {
 export async function handleQuoteCallback(data: CallbackData): Promise<CallbackOutcome> {
   const quote = await db.getQuote(data.requestIdempotencyKey);
   if (!quote) return { status: "unknown-job" };
+  // The request belongs to the job n8n started for it (job_id from the 202). A callback from any
+  // other job - a second run, a stale one - must not touch it. jobId is still null only when a
+  // fast workflow calls back before the 202 was recorded.
+  if (quote.jobId && quote.jobId !== data.jobId) return { status: "other-job" };
+  // A ready quote is final: the document link the client already saw is never replaced.
+  if (quote.status === "ready") return { status: "already-final" };
 
-  if (data.status === "completed" && data.documentUrl) {
-    await db.completeQuote(quote.id, { jobId: data.jobId, documentUrl: data.documentUrl });
-  } else {
-    await db.failQuote(quote.id, data.errorCode ?? "workflow-failed");
-  }
+  const applied =
+    data.status === "completed" && data.documentUrl
+      ? await db.completeQuote(quote.id, { jobId: data.jobId, documentUrl: data.documentUrl })
+      : await db.failQuote(quote.id, data.errorCode ?? "workflow-failed", data.jobId);
+  if (!applied) return { status: "already-final" }; // another callback made it ready in between
 
   return {
     status: "applied",

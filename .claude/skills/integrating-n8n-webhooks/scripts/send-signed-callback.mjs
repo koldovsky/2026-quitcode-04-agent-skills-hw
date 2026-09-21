@@ -3,9 +3,9 @@
 // Next.js callback route and compares the HTTP status with the team contract.
 //
 //   node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-signed-callback.mjs \
-//     --url http://127.0.0.1:3000/api/n8n/quote-request --request-key <idempotency key of a real job>
+//     --url http://127.0.0.1:3000/api/n8n/quote-request --request-key <idempotency key of a real job> --job-id <its job_id>
 //
-// Without --request-key only the negative cases run (nothing in the app changes).
+// Without --request-key/--job-id only the negative cases run (nothing in the app changes).
 // The secret comes from N8N_CALLBACK_SECRET in the environment only - never from a flag.
 // Exit code: 0 = every case matched, 1 = at least one mismatch, 2 = usage error.
 // Zero dependencies (node: built-ins + global fetch). Prints statuses only, never the secret or signatures.
@@ -15,13 +15,17 @@ import { parseArgs } from "node:util";
 const HELP = `send-signed-callback: signed-callback matrix against a Next.js route (n8n -> Next.js contract)
 
 Usage:
-  node --env-file=.env.local send-signed-callback.mjs --url <callback url> [--request-key <key>] [options]
+  node --env-file=.env.local send-signed-callback.mjs --url <callback url> [--request-key <key> --job-id <id>] [options]
 
 Options:
   --url <url>            Callback route, e.g. http://127.0.0.1:3000/api/n8n/quote-request (required)
-  --request-key <key>    idempotency-key of the request that started a real job (for quotes: the quote id).
-                         Enables the positive cases: valid (202), replay with the same key
-                         (200 {"duplicate":true}) and replay with a fresh key (400).
+  --request-key <key>    idempotency-key of the request that started a real job (for quotes: the quote id)
+  --job-id <id>          job_id n8n answered that request with (202 {"job_id"}); the mock logs it as
+                         "workflow <jobId> running". Together with --request-key it enables the positive
+                         cases: valid (202), replay with the same key (200 {"duplicate":true}), replay
+                         with a fresh key (400) and a callback from another job for the same request (409).
+                         The job must still be waiting for its callback: run the mock with a long
+                         --delay (e.g. 600000) so its own callback does not complete the job first.
                          Note: the valid case completes that job in the app.
   --event <name>         "event" in the body (default: <last path segment>.completed)
   --only <a,b,...>       Run only these cases (names from the table)
@@ -42,6 +46,7 @@ try {
     options: {
       url: { type: "string" },
       "request-key": { type: "string" },
+      "job-id": { type: "string" },
       event: { type: "string" },
       only: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
@@ -77,6 +82,11 @@ try {
 const pathEvent = target.pathname.split("/").filter(Boolean).pop() ?? "event";
 const event = args.event ?? `${pathEvent}.completed`;
 const requestKey = args["request-key"] ?? null;
+const jobId = args["job-id"] ?? null;
+if (Boolean(requestKey) !== Boolean(jobId)) {
+  console.error("send-signed-callback: --request-key and --job-id go together (the request and the job n8n started for it)");
+  process.exit(2);
+}
 const unknownEventUrl = new URL(target);
 unknownEventUrl.pathname = target.pathname.replace(/[^/]+\/?$/, "unknown-event-check");
 
@@ -161,7 +171,7 @@ const negative = [
   { name: "unknown-event", expect: 404, why: "valid signature, route for an event the app does not handle", build: () => request({ url: unknownEventUrl }) },
 ];
 
-const validJob = randomUUID();
+const validJob = jobId ?? randomUUID();
 const validKey = `${validJob}:${event}`;
 let captured = null; // the exact bytes, timestamp and signature of the "valid" case
 const positive = [
@@ -187,6 +197,15 @@ const positive = [
       return { url: source.url, init: { ...source.init, headers: { ...source.init.headers, "idempotency-key": `replay-${randomUUID()}` } } };
     },
   },
+  {
+    name: "other-job-same-request",
+    expect: 409,
+    why: "correctly signed callback from another job for the same request: the request is bound to its own job",
+    build: () => {
+      const otherJob = randomUUID();
+      return request({ jobId: otherJob, key: `${otherJob}:${event}` });
+    },
+  },
 ];
 
 const only = args.only ? new Set(args.only.split(",").map((s) => s.trim())) : null;
@@ -194,7 +213,7 @@ let cases = [...negative, ...(requestKey ? positive : [])];
 if (only) cases = cases.filter((c) => only.has(c.name));
 
 console.log(`send-signed-callback -> ${target.origin}${target.pathname}  event=${event}`);
-if (!requestKey) console.log("(positive cases skipped: pass --request-key <idempotency key of a real job> to run valid + replay)");
+if (!requestKey) console.log("(positive cases skipped: pass --request-key <key of a real job> --job-id <its job_id> to run valid + replays)");
 console.log("");
 
 const rows = [];

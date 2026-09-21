@@ -12,7 +12,11 @@ export type CallbackData = {
   completedAt: string | null;
 };
 
-export type CallbackOutcome = { status: "applied"; afterResponse?: () => Promise<void> } | { status: "unknown-job" };
+export type CallbackOutcome =
+  | { status: "applied"; afterResponse?: () => Promise<void> }
+  | { status: "already-final" } // the record already holds its final result: acknowledge, change nothing
+  | { status: "other-job" } // the record is bound to another n8n job: reject
+  | { status: "unknown-job" };
 
 export type CallbackHandler = (data: CallbackData) => Promise<CallbackOutcome>;
 

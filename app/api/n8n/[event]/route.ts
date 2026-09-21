@@ -64,6 +64,15 @@ export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]
       await db.releaseCallbackKey(key);
       return Response.json({ error: "unknown job" }, { status: 404 });
     }
+    if (outcome.status === "other-job") {
+      await db.releaseCallbackKey(key);
+      console.warn(`n8n <- ${event} rejected: callback for another job corr=${correlationId}`);
+      return Response.json({ error: "callback is for another job" }, { status: 409 });
+    }
+    if (outcome.status === "already-final") {
+      console.info(`n8n <- ${event} duplicate (already final) corr=${correlationId}`);
+      return Response.json({ duplicate: true }, { status: 200 });
+    }
     if (outcome.afterResponse) after(outcome.afterResponse); // slow side effects after the 2xx
     const jobStatus = envelope.data.status;
     console.info(`n8n <- ${event} ${jobStatus} accepted corr=${correlationId}`);

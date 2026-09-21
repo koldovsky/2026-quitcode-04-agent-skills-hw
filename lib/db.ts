@@ -433,10 +433,11 @@ export const db = {
     });
   },
 
+  // A ready quote is final: completeQuote and failQuote never overwrite it.
   completeQuote(id: string, result: { jobId: string; documentUrl: string }) {
     return query("updateQuote", () => {
       const quote = store.quotes.find((q) => q.id === id);
-      if (!quote) return false;
+      if (!quote || quote.status === "ready") return false;
       Object.assign(quote, {
         status: "ready",
         jobId: result.jobId,
@@ -448,11 +449,12 @@ export const db = {
     });
   },
 
-  failQuote(id: string, failureCode: string) {
+  // jobId: the job that reported the failure (a callback); omitted when the trigger itself failed.
+  failQuote(id: string, failureCode: string, jobId?: string) {
     return query("updateQuote", () => {
       const quote = store.quotes.find((q) => q.id === id);
       if (!quote || quote.status === "ready") return false;
-      Object.assign(quote, { status: "failed", failureCode, updatedAt: new Date().toISOString() });
+      Object.assign(quote, { status: "failed", failureCode, ...(jobId ? { jobId } : {}), updatedAt: new Date().toISOString() });
       return true;
     });
   },

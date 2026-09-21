@@ -3,6 +3,7 @@
 //
 //   node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs            # project = cwd
 //   node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --root <dir>
+//   node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --changed-since <git-ref>
 //   node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --json
 //
 // Exit code: 0 = no failures, 1 = at least one FAIL, 2 = usage error.
@@ -11,14 +12,25 @@
 // Static only: reads source files (app/, lib/, components/, src/ and root proxy/middleware/
 // instrumentation/next.config files), .env.example and .gitignore. It never reads .env.local
 // or any other real env file and never prints values - only file:line and a short reason.
+// --changed-since asks git (read-only: rev-parse, diff, ls-files) which files and lines changed.
 // Zero dependencies (node: built-ins only).
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
 const HELP = `check-contract: static check of the Next.js <-> n8n contract (C1-C10)
 
-Usage: node check-contract.mjs [--root <project dir>] [--json]
+Usage: node check-contract.mjs [--root <project dir>] [--changed-since <git-ref>] [--json]
+
+  --root <dir>              project to check (default: the current directory)
+  --changed-since <git-ref> check only what changed since <git-ref> (a commit, tag or branch in
+                            the project's git repository): files changed since then plus new
+                            untracked files; in files that already existed, only changed lines.
+                            Scores new work without the FAILs of old code, e.g. an A/B run:
+                            --root ../leaddesk-ab-a --changed-since base
+                            Without it: the whole project.
+  --json                    machine-readable report
 
   C1  no /webhook-test/ URL in code or .env.example
   C2  no NEXT_PUBLIC_ n8n variables; no N8N_* in Client Components
@@ -31,13 +43,20 @@ Usage: node check-contract.mjs [--root <project dir>] [--json]
   C9  .env.example has the contract keys with placeholder secrets; .env.local is git-ignored
   C10 every call to n8n sends idempotency-key + x-n8n-token; no secrets in the URL
 
-A check with nothing to look at (no n8n call, no callback route) prints N/A, not PASS.
+A check with nothing to look at (no n8n call, no callback route; with --changed-since: nothing
+of it changed) prints N/A, not PASS. C9 counts with --changed-since when .env.example or
+.gitignore changed or changed code reads an n8n variable.
 `;
 
 let args;
 try {
   args = parseArgs({
-    options: { root: { type: "string" }, json: { type: "boolean", default: false }, help: { type: "boolean", short: "h", default: false } },
+    options: {
+      root: { type: "string" },
+      "changed-since": { type: "string" },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
     strict: true,
   }).values;
 } catch (error) {
@@ -49,11 +68,13 @@ if (args.help) {
   process.exit(0);
 }
 
-const root = resolve(args.root ?? process.cwd());
-if (!existsSync(join(root, "package.json"))) {
-  console.error(`check-contract: ${root} has no package.json - pass --root <project dir>`);
+const usageError = (message) => {
+  console.error(`check-contract: ${message}`);
   process.exit(2);
-}
+};
+
+const root = resolve(args.root ?? process.cwd());
+if (!existsSync(join(root, "package.json"))) usageError(`${root} has no package.json - pass --root <project dir>`);
 
 const CODE_DIRS = ["app", "lib", "components", "src"];
 const ROOT_FILES = /^(proxy|middleware|instrumentation|next\.config)\.(ts|tsx|js|jsx|mjs|cjs)$/;
@@ -271,6 +292,77 @@ function firstArgument(argsText) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// --changed-since: what changed, according to git
+// ---------------------------------------------------------------------------------------------
+
+const ALL_LINES = "all";
+
+// Paths git prints in C quotes when they hold ", \ or control characters.
+function unquoteGitPath(path) {
+  if (!path.startsWith('"')) return path;
+  return path.slice(1, -1).replace(/\\(["\\tn])/g, (_, c) => ({ t: "\t", n: "\n" })[c] ?? c);
+}
+
+// Files changed since `ref` (tracked: working tree vs the commit, so staged, unstaged and
+// committed-after-ref changes all count; untracked: new files git does not ignore), as
+// Map<path relative to root, Set of changed line numbers | ALL_LINES>.
+function changedSince(ref) {
+  if (!ref || ref.startsWith("-")) usageError(`--changed-since needs a git ref (commit, tag or branch), got '${ref}'`);
+  const git = (...argv) =>
+    spawnSync("git", ["-C", root, "-c", "core.quotePath=false", ...argv], { encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
+  const inRepo = git("rev-parse", "--is-inside-work-tree");
+  if (inRepo.error) usageError(`--changed-since needs git, and git could not be started (${inRepo.error.code ?? inRepo.error.message})`);
+  if (inRepo.status !== 0 || inRepo.stdout.trim() !== "true") usageError(`--changed-since needs ${toPosix(root)} to be inside a git work tree`);
+  const resolved = git("rev-parse", "--verify", "--quiet", `${ref}^{commit}`);
+  if (resolved.status !== 0) usageError(`--changed-since: '${ref}' is not a commit in the git repository of ${toPosix(root)}`);
+  const commit = resolved.stdout.trim();
+
+  const files = new Map();
+  const diff = git("diff", "--no-renames", "--no-ext-diff", "--no-color", "--relative", "-U0", "--src-prefix=a/", "--dst-prefix=b/", commit, "--");
+  if (diff.status !== 0) usageError(`--changed-since: git diff failed: ${diff.stderr.trim()}`);
+  let current = null;
+  let isNew = false;
+  for (const line of diff.stdout.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      current = null;
+      isNew = false;
+    } else if (line.startsWith("--- ")) {
+      isNew = line === "--- /dev/null";
+    } else if (line.startsWith("+++ ")) {
+      const path = unquoteGitPath(line.slice(4).replace(/\t$/, ""));
+      current = path === "/dev/null" ? null : path.replace(/^b\//, ""); // deleted file: nothing to check
+      if (current) files.set(current, isNew ? ALL_LINES : (files.get(current) ?? new Set()));
+    } else if (current && line.startsWith("@@")) {
+      const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      const lines = files.get(current);
+      if (hunk && lines !== ALL_LINES) {
+        const start = Number(hunk[1]);
+        const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
+        for (let n = start; n < start + count; n++) lines.add(n);
+      }
+    }
+  }
+  const untracked = git("ls-files", "--others", "--exclude-standard", "-z");
+  if (untracked.status !== 0) usageError(`--changed-since: git ls-files failed: ${untracked.stderr.trim()}`);
+  for (const path of untracked.stdout.split("\0").filter(Boolean)) files.set(path, ALL_LINES);
+  return { ref, commit, files };
+}
+
+const scope = args["changed-since"] !== undefined ? changedSince(args["changed-since"]) : null;
+// Without --changed-since everything is in scope.
+const touched = (rel) => !scope || scope.files.has(rel);
+function touchedLines(rel, from, to = from) {
+  if (!scope) return true;
+  const lines = scope.files.get(rel);
+  if (!lines) return false;
+  if (lines === ALL_LINES) return true;
+  for (let n = from; n <= to; n++) if (lines.has(n)) return true;
+  return false;
+}
+// N/A note: whole project -> `whole`; --changed-since -> the same, limited to what changed.
+const naNote = (whole, scoped) => (scope ? `${scoped} changed since ${scope.ref}` : whole);
+
+// ---------------------------------------------------------------------------------------------
 // Collect files
 // ---------------------------------------------------------------------------------------------
 
@@ -353,7 +445,9 @@ for (const f of files) {
     const urlText = [first, ...argIdentifiers(first).concat(first.match(/[A-Za-z_$][\w$]*/g) ?? []).map((id) => initializerOf(f.code, id) ?? "")].join(" ");
     const looksLikeN8n = /n8n|webhook|workflow/i.test(urlText) || fromConfig.some((b) => new RegExp(String.raw`\b${b}\b`).test(urlText));
     if (fileLevel || looksLikeN8n) {
-      n8nCalls.push({ file: f, rel: f.rel, line: lineOf(f.code, m.index), args: argsText, url: urlText });
+      const line = lineOf(f.code, m.index);
+      const endLine = lineOf(f.code, m.index + m[0].length + argsText.length);
+      n8nCalls.push({ file: f, rel: f.rel, line, endLine, args: argsText, url: urlText });
     }
   }
 }
@@ -420,33 +514,52 @@ function check(id, title, run) {
   results.push({ id, title, status: findings.length ? "FAIL" : na ? "N/A" : "PASS", note, findings });
 }
 
-check("C1", "no /webhook-test/ URL in code or .env.example", (fail) => {
-  for (const f of files) {
-    for (const m of f.code.matchAll(/\/webhook-test\b/g)) fail(f.rel, lineOf(f.code, m.index), "test URL works only 120 s after 'Listen for test event'; use the production /webhook/ URL");
+// What the checks look at: the whole project, or with --changed-since only what changed - calls
+// whose text touches a changed line, callback units with a changed file, changed lines elsewhere.
+const scopedCalls = n8nCalls.filter((c) => touchedLines(c.rel, c.line, c.endLine));
+const scopedOutbound = [...new Set(scopedCalls.map((c) => c.file))];
+const scopedUnits = callbackUnits.filter((u) => u.all.some((f) => touched(f.rel)));
+const scopedFiles = files.filter((f) => touched(f.rel));
+const scopedEnvExample = (envExample ?? []).filter(({ line }) => touchedLines(".env.example", line));
+
+check("C1", "no /webhook-test/ URL in code or .env.example", (fail, note) => {
+  if (scope && !scopedFiles.length && !touched(".env.example")) note(naNote("", "no source file or .env.example"));
+  for (const f of scopedFiles) {
+    for (const m of f.code.matchAll(/\/webhook-test\b/g)) {
+      const line = lineOf(f.code, m.index);
+      if (touchedLines(f.rel, line)) fail(f.rel, line, "test URL works only 120 s after 'Listen for test event'; use the production /webhook/ URL");
+    }
   }
-  for (const { line, text } of envExample ?? []) {
+  for (const { line, text } of scopedEnvExample) {
     if (/\/webhook-test\b/.test(text)) fail(".env.example", line, `${text.split("=")[0].trim()} points at a /webhook-test/ URL`);
   }
 });
 
-check("C2", "no NEXT_PUBLIC_ n8n variables; no N8N_* in Client Components", (fail) => {
+check("C2", "no NEXT_PUBLIC_ n8n variables; no N8N_* in Client Components", (fail, note) => {
+  if (scope && !scopedFiles.length && !touched(".env.example")) note(naNote("", "no source file or .env.example"));
   const publicN8n = /NEXT_PUBLIC_\w*(N8N|WEBHOOK|CALLBACK_SECRET)\w*/g;
-  for (const f of files) {
-    for (const m of f.code.matchAll(publicN8n)) fail(f.rel, lineOf(f.code, m.index), `${m[0]}: NEXT_PUBLIC_ variables are inlined into the browser bundle`);
+  for (const f of scopedFiles) {
+    for (const m of f.code.matchAll(publicN8n)) {
+      const line = lineOf(f.code, m.index);
+      if (touchedLines(f.rel, line)) fail(f.rel, line, `${m[0]}: NEXT_PUBLIC_ variables are inlined into the browser bundle`);
+    }
     if (isClientComponent(f)) {
-      for (const m of f.code.matchAll(/process\.env\.N8N_\w+/g)) fail(f.rel, lineOf(f.code, m.index), `${m[0]} in a 'use client' file`);
+      for (const m of f.code.matchAll(/process\.env\.N8N_\w+/g)) {
+        const line = lineOf(f.code, m.index);
+        if (touchedLines(f.rel, line)) fail(f.rel, line, `${m[0]} in a 'use client' file`);
+      }
     }
   }
-  for (const { line, text } of envExample ?? []) {
+  for (const { line, text } of scopedEnvExample) {
     const key = text.split("=")[0].trim();
     if (/^NEXT_PUBLIC_\w*(N8N|WEBHOOK|CALLBACK_SECRET)/.test(key)) fail(".env.example", line, `${key}: n8n settings are server-only`);
   }
 });
 
 check("C3", "n8n is called only from lib/n8n/*, which starts with import 'server-only'", (fail, note) => {
-  const libFiles = files.filter((f) => inN8nLib(f) && (hasFetch(f) || readsN8nEnv(f)));
-  if (!n8nCalls.length && !libFiles.length) note("no call to n8n found in app/, lib/, components/ or src/");
-  for (const call of n8nCalls) {
+  const libFiles = scopedFiles.filter((f) => inN8nLib(f) && (hasFetch(f) || readsN8nEnv(f)));
+  if (!scopedCalls.length && !libFiles.length) note(naNote("no call to n8n found in app/, lib/, components/ or src/", "no call to n8n or lib/n8n/ file"));
+  for (const call of scopedCalls) {
     if (!inN8nLib(call.file)) fail(call.rel, call.line, "fetch to n8n outside lib/n8n/ (all calls go through lib/n8n/client.ts)");
   }
   for (const f of libFiles) {
@@ -456,8 +569,10 @@ check("C3", "n8n is called only from lib/n8n/*, which starts with import 'server
 });
 
 check("C4", "callback route reads the raw body; parses only after the signature check", (fail, note) => {
-  if (!callbackUnits.length) note("no callback route found (app/**/route.ts mentioning n8n/callback/webhook/signature)");
-  for (const { route, helpers, all, verifyNames, parseNames } of callbackUnits) {
+  if (!scopedUnits.length) {
+    note(naNote("no callback route found (app/**/route.ts mentioning n8n/callback/webhook/signature)", "no callback route or its helpers"));
+  }
+  for (const { route, helpers, all, verifyNames, parseNames } of scopedUnits) {
     const param = postParam(route.code);
     for (const f of all) {
       const names = ["req", "request", ...(param ? [param] : [])].join("|");
@@ -488,12 +603,22 @@ check("C4", "callback route reads the raw body; parses only after the signature 
   }
 });
 
+// timingSafeEqual throws on buffers of different length, so the length has to be pinned first:
+// a length comparison (a.length !== b.length, Buffer.byteLength(sig) !== 71) or a fixed-width
+// hex pattern for the signature (/^sha256=([0-9a-f]{64})$/: a match is always 32 bytes).
+const LENGTH_CHECKS = [
+  /\.(?:byteLength|length)\s*[!=]==?/,
+  /[!=]==?\s*[\w$.]+\.(?:byteLength|length)\b/,
+  /\bbyteLength\s*\([^)]*\)\s*[!=]==?/,
+  /\[(?:\\d|[0-9a-fA-F-])+\]\{64\}/,
+];
+
 check("C5", "signature: length check + timingSafeEqual, never === / !==", (fail, note) => {
-  if (!callbackUnits.length) note("no callback route found");
-  for (const { route, all } of callbackUnits) {
+  if (!scopedUnits.length) note(naNote("no callback route found", "no callback route or its helpers"));
+  for (const { route, all } of scopedUnits) {
     const text = all.map((f) => f.code).join("\n");
     if (!/\btimingSafeEqual\s*\(/.test(text)) fail(route.rel, null, "no crypto.timingSafeEqual (in the route or the helpers it imports)");
-    else if (!/\.(byteLength|length)\s*!==|\.(byteLength|length)\s*===|!==\s*\w+\.(byteLength|length)\b/.test(text)) {
+    else if (!LENGTH_CHECKS.some((p) => p.test(text))) {
       fail(route.rel, null, "no length check before timingSafeEqual (it throws on different lengths)");
     }
     for (const f of all) {
@@ -508,8 +633,8 @@ check("C5", "signature: length check + timingSafeEqual, never === / !==", (fail,
 });
 
 check("C6", "every fetch to n8n has signal: AbortSignal.timeout(...)", (fail, note) => {
-  if (!n8nCalls.length) note("no call to n8n found");
-  for (const call of n8nCalls) {
+  if (!scopedCalls.length) note(naNote("no call to n8n found", "no call to n8n"));
+  for (const call of scopedCalls) {
     if (/\bsignal\b/.test(call.args)) continue;
     // fetch(url, init) / fetch(url, { ...init }): follow the object one level.
     const viaVariable = argIdentifiers(call.args).some((id) => /\bsignal\b/.test(initializerOf(call.file.code, id) ?? ""));
@@ -518,25 +643,41 @@ check("C6", "every fetch to n8n has signal: AbortSignal.timeout(...)", (fail, no
 });
 
 check("C7", "no bodies, payloads or headers in console.* in n8n code", (fail, note) => {
-  const n8nFiles = new Set([...outboundFiles, ...callbackUnits.flatMap((u) => u.all), ...files.filter(inN8nLib)]);
-  if (!n8nFiles.size) note("no n8n code found (no call to n8n, no callback route, no lib/n8n/)");
+  const n8nFiles = new Set([...outboundFiles, ...callbackUnits.flatMap((u) => u.all), ...files.filter(inN8nLib)].filter((f) => touched(f.rel)));
+  if (!n8nFiles.size) note(naNote("no n8n code found (no call to n8n, no callback route, no lib/n8n/)", "no n8n code"));
   const leaky = /\b(raw|rawBody|body|payload|envelope|formData|headers|text)\b(?!\s*\.\s*(length|byteLength)\b)|JSON\.stringify\s*\(|[,(]\s*(data|lead|quote|input|values|result|request|req)\s*[,)]/;
   for (const f of n8nFiles) {
     for (const m of f.code.matchAll(/\bconsole\s*\.\s*(log|info|warn|error|debug)\s*\(/g)) {
-      const argsText = codeOnly(callArgs(f.code, m.index + m[0].length - 1)).replace(/\b(sha256|hash|digest|byteLength)\s*\([^)]*\)/g, "");
+      const rawArgs = callArgs(f.code, m.index + m[0].length - 1);
+      const line = lineOf(f.code, m.index);
+      if (!touchedLines(f.rel, line, lineOf(f.code, m.index + m[0].length + rawArgs.length))) continue;
+      const argsText = codeOnly(rawArgs).replace(/\b(sha256|hash|digest|byteLength)\s*\([^)]*\)/g, "");
       const hit = leaky.exec(argsText);
-      if (hit) fail(f.rel, lineOf(f.code, m.index), `console.${m[1]} logs '${hit[0].replace(/[,()\s]/g, "")}': log event, status, duration, correlation id, body length + sha256 only`);
+      if (hit) fail(f.rel, line, `console.${m[1]} logs '${hit[0].replace(/[,()\s]/g, "")}': log event, status, duration, correlation id, body length + sha256 only`);
     }
   }
 });
 
-check("C8", "no runtime = 'edge'", (fail) => {
-  for (const f of files) {
-    for (const m of f.code.matchAll(/\bruntime\s*[:=]\s*["']edge["']/g)) fail(f.rel, lineOf(f.code, m.index), "edge runtime is deprecated in Next.js 16 and has no node:crypto");
+check("C8", "no runtime = 'edge'", (fail, note) => {
+  if (scope && !scopedFiles.length) note(naNote("", "no source file"));
+  for (const f of scopedFiles) {
+    for (const m of f.code.matchAll(/\bruntime\s*[:=]\s*["']edge["']/g)) {
+      const line = lineOf(f.code, m.index);
+      if (touchedLines(f.rel, line)) fail(f.rel, line, "edge runtime is deprecated in Next.js 16 and has no node:crypto");
+    }
   }
 });
 
-check("C9", ".env.example has the contract keys with placeholder secrets; .env.local is git-ignored", (fail) => {
+// With --changed-since, C9 is about the change: it counts when .env.example or .gitignore changed,
+// or when a changed line reads an n8n variable (a new variable belongs in .env.example).
+const readsN8nEnvOnChangedLine = (f) =>
+  [...f.code.matchAll(new RegExp(N8N_ENV.source, "g"))].some((m) => touchedLines(f.rel, lineOf(f.code, m.index)));
+
+check("C9", ".env.example has the contract keys with placeholder secrets; .env.local is git-ignored", (fail, note) => {
+  if (scope && !touched(".env.example") && !touched(".gitignore") && !scopedFiles.some(readsN8nEnvOnChangedLine)) {
+    note(naNote("", "no .env.example, no .gitignore and no read of an n8n variable"));
+    return;
+  }
   if (!envExample) {
     fail(".env.example", null, "missing: commit an .env.example with the contract keys");
   } else {
@@ -558,9 +699,9 @@ check("C9", ".env.example has the contract keys with placeholder secrets; .env.l
 });
 
 check("C10", "every call to n8n sends idempotency-key + x-n8n-token; no secrets in the URL", (fail, note) => {
-  if (!n8nCalls.length) note("no call to n8n found");
-  for (const f of outboundFiles) {
-    const line = n8nCalls.find((c) => c.file === f).line;
+  if (!scopedCalls.length) note(naNote("no call to n8n found", "no call to n8n"));
+  for (const f of scopedOutbound) {
+    const line = scopedCalls.find((c) => c.file === f).line;
     if (!/["']idempotency-key["']/i.test(f.code)) {
       fail(f.rel, line, "no idempotency-key header (UUID created once per operation, reused on retries)");
     }
@@ -568,12 +709,13 @@ check("C10", "every call to n8n sends idempotency-key + x-n8n-token; no secrets 
       fail(f.rel, line, "no x-n8n-token header (n8n Header Auth; a missing or wrong token is a 403)");
     }
   }
-  for (const call of n8nCalls) {
+  for (const call of scopedCalls) {
     if (SECRET_IN_URL.test(call.url)) fail(call.rel, call.line, "token/secret in the query string: it lands in logs and proxies - send it as a header");
   }
-  for (const f of outboundFiles) {
+  for (const f of scopedOutbound) {
     for (const m of f.code.matchAll(/searchParams\s*\.\s*(?:set|append)\s*\(\s*["'](token|secret|key|apikey|api_key|access_token|auth)["']/gi)) {
-      fail(f.rel, lineOf(f.code, m.index), `${m[1]} added to the query string: n8n auth goes in the x-n8n-token header`);
+      const line = lineOf(f.code, m.index);
+      if (touchedLines(f.rel, line)) fail(f.rel, line, `${m[1]} added to the query string: n8n auth goes in the x-n8n-token header`);
     }
   }
 });
@@ -585,10 +727,19 @@ check("C10", "every call to n8n sends idempotency-key + x-n8n-token; no secrets 
 const failed = results.filter((r) => r.status === "FAIL");
 const passed = results.filter((r) => r.status === "PASS");
 const skipped = results.filter((r) => r.status === "N/A");
+const changedScanned = scope ? [...scopedFiles.map((f) => f.rel), ...[".env.example", ".gitignore"].filter(touched)] : [];
 if (args.json) {
-  console.log(JSON.stringify({ root: toPosix(root), failed: failed.length, passed: passed.length, na: skipped.length, results }, null, 2));
+  const changedSinceReport = scope ? { ref: scope.ref, commit: scope.commit, files: changedScanned } : null;
+  console.log(
+    JSON.stringify({ root: toPosix(root), changedSince: changedSinceReport, failed: failed.length, passed: passed.length, na: skipped.length, results }, null, 2),
+  );
 } else {
   console.log(`check-contract (integrating-n8n-webhooks) - ${toPosix(root)}`);
+  if (scope) {
+    console.log(
+      `scope: changed since ${scope.ref} (${scope.commit.slice(0, 7)}) - ${changedScanned.length} checked file(s): ${changedScanned.join(", ") || "none"}; findings on unchanged lines are left out`,
+    );
+  }
   console.log(`scanned ${files.length} source files; n8n callers: ${outboundFiles.map((f) => f.rel).join(", ") || "none"}; callback routes: ${callbackRoutes.map((f) => f.rel).join(", ") || "none"}\n`);
   for (const r of results) {
     console.log(`${r.id.padEnd(3)} ${r.status.padEnd(4)} ${r.title}${r.note ? `  (${r.note})` : ""}`);
