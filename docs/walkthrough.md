@@ -630,9 +630,8 @@ grep -rlE "x-n8n-token|timingSafeEqual|idempotency-key" ../leaddesk-ab-a --exclu
    git apply --3way docs/ab/b-with-skill.diff
    git status --short
    ```
-   Альтернатива — злити історію копії (`git remote add ab-b ../leaddesk-ab-b && git fetch ab-b &&
-   git merge --allow-unrelated-histories ab-b/main`) або просто скопіювати нові й змінені файли
-   руками. Спосіб — на ваш вибір, але **запишіть у звіт, який саме**. Не переносьте `.env.local`
+   Альтернатива — скопіювати нові й змінені файли з копії руками. Спосіб — на ваш вибір, але
+   **запишіть у звіт, який саме**. Не переносьте `.env.local`
    і `node_modules/`; якщо агент у копії щось доставив, у діфі будуть і `package.json` з
    `package-lock.json` — залиште їх, лише якщо фіча справді потребує нової залежності.
 2. **Ключі контракту — у два файли.** У `.env.example` — ключі з таблиці розділу 1 записки:
