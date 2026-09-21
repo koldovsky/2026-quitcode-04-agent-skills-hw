@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   Lead,
@@ -5,6 +6,8 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
   SourceCount,
   User,
   Workspace,
@@ -20,6 +23,10 @@ type Store = {
   leads: Lead[];
   audit: AuditEntry[];
   nextLeadNumber: number;
+  quotes: Quote[];
+  // Idempotency keys of n8n callbacks already processed. In production this is a table
+  // with a unique constraint (INSERT ... ON CONFLICT DO NOTHING); memory is demo-only.
+  callbackKeys: Set<string>;
 };
 
 const LATENCY_MS = {
@@ -35,6 +42,11 @@ const LATENCY_MS = {
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuote: 120,
+  getQuote: 60,
+  updateQuote: 60,
+  claimCallbackKey: 20,
+  releaseCallbackKey: 20,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -261,7 +273,7 @@ function createStore(): Store {
     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
   ];
   const leads = seedLeads(200, workspaces, users);
-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
+  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1, quotes: [], callbackKeys: new Set() };
 }
 
 // One store per server process (also survives module reloads in `next dev`).
@@ -381,6 +393,81 @@ export const db = {
   insertAuditEntry(entry: AuditEntry) {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
+    });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        id: randomUUID(),
+        correlationId: randomUUID(),
+        status: "queued",
+        jobId: null,
+        documentUrl: null,
+        failureCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      store.quotes.push(quote);
+      return { ...quote };
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      return quote ? { ...quote } : null;
+    });
+  },
+
+  // queued -> processing only: a fast workflow's callback may arrive before the 202 is recorded.
+  markQuoteProcessing(id: string, jobId: string | null) {
+    return query("updateQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      if (!quote || quote.status !== "queued") return false;
+      Object.assign(quote, { status: "processing", jobId, updatedAt: new Date().toISOString() });
+      return true;
+    });
+  },
+
+  completeQuote(id: string, result: { jobId: string; documentUrl: string }) {
+    return query("updateQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      if (!quote) return false;
+      Object.assign(quote, {
+        status: "ready",
+        jobId: result.jobId,
+        documentUrl: result.documentUrl,
+        failureCode: null,
+        updatedAt: new Date().toISOString(),
+      });
+      return true;
+    });
+  },
+
+  failQuote(id: string, failureCode: string) {
+    return query("updateQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      if (!quote || quote.status === "ready") return false;
+      Object.assign(quote, { status: "failed", failureCode, updatedAt: new Date().toISOString() });
+      return true;
+    });
+  },
+
+  // true = first time this key is seen (the caller now owns it); false = duplicate.
+  claimCallbackKey(key: string) {
+    return query("claimCallbackKey", () => {
+      if (store.callbackKeys.has(key)) return false;
+      store.callbackKeys.add(key);
+      return true;
+    });
+  },
+
+  releaseCallbackKey(key: string) {
+    return query("releaseCallbackKey", () => {
+      store.callbackKeys.delete(key);
     });
   },
 };

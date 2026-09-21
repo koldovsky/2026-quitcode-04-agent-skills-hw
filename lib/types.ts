@@ -98,6 +98,27 @@ export type SourceCount = {
   count: number;
 };
 
+export const QUOTE_STATUSES = ["queued", "processing", "ready", "failed"] as const;
+
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
+export type Quote = {
+  id: string; // random UUID; also the idempotency-key of the quote-request call to n8n
+  correlationId: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  jobId: string | null;
+  documentUrl: string | null;
+  failureCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Pick<Quote, "company" | "email" | "description" | "budget">;
+
 export type AuditEntry = {
   action: string;
   leadId: string;
