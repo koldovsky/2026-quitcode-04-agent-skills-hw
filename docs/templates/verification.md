@@ -8,7 +8,7 @@
 
 ## Скіли видно у свіжій сесії
 
-- Як перевіряли: <`/context` → Skills / `/skills` / `claude -p "/context"` / «які skills тобі доступні?»>
+- Як перевіряли: <`/context` → Skills / `/skills` / `MSYS_NO_PATHCONV=1 claude -p "/context"` (Git Bash) / «які skills тобі доступні?»>
 
 | Skill | Звідки (Project / Personal / вбудований) | Примітка |
 |---|---|---|
