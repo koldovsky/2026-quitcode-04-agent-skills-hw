@@ -86,7 +86,9 @@ grep -o '"name":"Skill","input":{[^}]*}' run.jsonl   # чи викликано �
 
 ### Скрипти скіла: що вони показали
 
-**`check-contract.mjs` на `main`** (`ea73649`, файли з `git archive main`) — 5 FAIL, exit 1:
+**`check-contract.mjs` на `main`** (`ea73649`, файли з `git archive main`) — 5 FAIL, exit 1. Код
+застосунку, `.env.example` і `tools/` на `main` відтоді не змінювались (пізніші коміти — лише
+документація, матеріали й налаштування перевірки); повтор на `40398d6` дав той самий результат:
 
 ```
 C1  FAIL  no /webhook-test/ URL in code or .env.example
