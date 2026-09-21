@@ -61,8 +61,10 @@ export type QuoteFormState =
   повідомлення про помилки однакові, бо їх дає сервер.
 - Кожне поле: `<label htmlFor>` + `id`, `name`, доречний `autoComplete` і `type`.
 - **Введене не зникає**: React 19 після дії скидає неконтрольовані поля, тому
-  `defaultValue={values.<field>}` зі стану (для `select` — теж `defaultValue`, для checkbox —
-  `defaultChecked`).
+  `defaultValue={values.<field>}` зі стану. Для `<select>` цього мало: змонтований select тримає
+  перший `defaultValue` і після скидання повертається до першої опції — додай
+  `key={values.<field> ?? ""}`, щоб він перемонтувався зі значенням від сервера (перевірено в браузері
+  на Next.js 16.3.5 / React 19.2.8). Checkbox — так само `key` + `defaultChecked`.
 - **Помилки доступні**: `aria-invalid={Boolean(errors.x)}`, `aria-describedby="x-error"` лише коли
   помилка є, текст помилки в `<p id="x-error">`. Над кнопкою — підсумок у `role="alert"`
   («Перевірте 2 поля») або текст `error`.
