@@ -4,8 +4,9 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { getCurrentUser, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import type { LeadStatus } from "@/lib/types";
+import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -65,13 +66,33 @@ export async function submitLead(
   return { status: "ok" };
 }
 
-export async function updateLeadStatus(id: string, status: LeadStatus) {
-  await db.updateLeadStatus(id, status);
-  revalidatePath("/dashboard");
-  revalidatePath(`/dashboard/leads/${id}`);
+export type LeadActionResult = { status: "ok" } | { status: "invalid" } | { status: "not-found" };
+
+// Server Actions are public POST endpoints: proxy.ts only checks that a cookie exists,
+// so every mutating action verifies the session and the lead's workspace itself.
+async function findOwnLead(id: unknown) {
+  const user = await getCurrentUser(); // redirects to /login without a valid session
+  if (typeof id !== "string" || id.length > 64) return null;
+  const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), db.getLead(id)]);
+  return lead && lead.workspaceId === workspace.id ? lead : null;
 }
 
-export async function deleteLead(id: string) {
-  await db.deleteLead(id);
+export async function updateLeadStatus(id: string, status: LeadStatus): Promise<LeadActionResult> {
+  if (!(LEAD_STATUSES as readonly string[]).includes(status)) return { status: "invalid" };
+  const lead = await findOwnLead(id);
+  if (!lead) return { status: "not-found" };
+
+  await db.updateLeadStatus(lead.id, status);
   revalidatePath("/dashboard");
+  revalidatePath(`/dashboard/leads/${lead.id}`);
+  return { status: "ok" };
+}
+
+export async function deleteLead(id: string): Promise<LeadActionResult> {
+  const lead = await findOwnLead(id);
+  if (!lead) return { status: "not-found" };
+
+  await db.deleteLead(lead.id);
+  revalidatePath("/dashboard");
+  return { status: "ok" };
 }
