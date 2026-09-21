@@ -7,24 +7,30 @@
 
 - **Інструмент і версія:** <напр. Claude Code 2.1.x / Cursor <версія>>
 - **Модель і рівень міркування (effort), однакові в обох прогонах:** <…>
-- **Код:** BASE = `<sha>` (останній коміт до коду n8n з Task C) · скіли з `<sha HEAD>`
-- **Копії:** `../leaddesk-ab-a` (без `integrating-n8n-webhooks`), `../leaddesk-ab-b`
-- **Що видалено з обох копій:** `materials/`, `docs/`, `README.md`, `.coderabbit.yaml`, `.github/` <перевірено: `ls -A` / вивід>
+- **Код:** BASE = `<sha>` (ваш коміт після Task C: три скіли й виправлення Task A, ще без `/quotes` і
+  змін у виклику n8n) · скіл `integrating-n8n-webhooks` для копії B — з `<sha HEAD>`
+- **Копії:** `../leaddesk-ab-a` (без жодного скіла), `../leaddesk-ab-b` (лише `integrating-n8n-webhooks`);
+  у кожній — коміт `start` з тегом `base`
+- **Що видалено з обох копій:** `tools/`, `materials/`, `docs/`, `README.md`, `.coderabbit.yaml`, `.github/`
+  і всі скіли (у B повернуто лише `integrating-n8n-webhooks`) <перевірено: вивід `find … -name SKILL.md`,
+  `ls -A` і `grep` з кроку 1 — «no hints - ok», «no contract - ok»>
 - **Особисті копії скіла** (`~/.claude/skills`, `~/.cursor/skills`, `~/.agents/skills`, `~/.codex/skills`): <перевірено — немає>
 - **Запит:** `materials/ab-task.md` без змін, нова сесія на кожен прогін
 - **Відповідь на уточнення, однакова в обох:** <«Роби, як вважаєш правильним» / агент не питав>
-- **Мок, однаковий для обох:** <`node --env-file=.env.local tools/mock-n8n.mjs --mode respond-202 --delay 5000` [+ `--callback-url …`]>
-- **Базова лінія `check-contract.mjs` на копії до прогону:** <скільки FAIL і PASS; які id>
+- **Мок, однаковий для обох** (з робочого репозиторію, термінал у теці копії):
+  <`node --env-file=.env.local ../2026-quitcode-04-agent-skills-hw/tools/mock-n8n.mjs --mode respond-202 --delay 5000` [+ `--callback-url …`]>
+- **Базова лінія `check-contract.mjs` на копії до прогону** (увесь код, без `--changed-since`): <скільки FAIL
+  і PASS; які id> — це старий код, в оцінку прогонів він не йде
 
 ## A — без скіла
 
 - Які скіли бачив агент (окремий запуск `/context`): <…>
 - Що зробив агент — своїми словами: <…>
-- Звідки агент узяв домовленості: <мок і його `--help` / наявний код / документація Next.js / ніде>
+- Звідки агент узяв домовленості: <загальні знання / документація Next.js у `node_modules` / наявний код / ніде — з журналу сесії>
 - Запитання агента і фінальна відповідь (цитата, скорочено): <…>
-- Змінені файли (`git diff --cached --stat`): <…>; діф: `docs/ab/a-without-skill.diff`
+- Змінені файли (`git diff --cached --stat base`): <…>; діф: `docs/ab/a-without-skill.diff`
 - Змінні середовища, які додав агент: <назви>
-- `check-contract.mjs` (id + PASS/FAIL):
+- `check-contract.mjs --root <копія> --changed-since base` — лише код прогону (id + PASS/FAIL/N/A):
   ```
   <вивід>
   ```
@@ -42,9 +48,9 @@
 - **Чи викликав агент скіл** (інструмент `Skill` / читання `references/`, `scripts/`): <…>
 - Що зробив агент — своїми словами: <…>
 - Запитання агента і фінальна відповідь (цитата, скорочено): <…>
-- Змінені файли (`git diff --cached --stat`): <…>; діф: `docs/ab/b-with-skill.diff`
+- Змінені файли (`git diff --cached --stat base`): <…>; діф: `docs/ab/b-with-skill.diff`
 - Змінні середовища, які додав агент: <назви>
-- `check-contract.mjs` (id + PASS/FAIL):
+- `check-contract.mjs --root <копія> --changed-since base` — лише код прогону (id + PASS/FAIL/N/A):
   ```
   <вивід>
   ```
@@ -61,7 +67,7 @@
 | Що дивимось | A — без скіла | B — зі скілом |
 |---|---|---|
 | Скіл викликано | — | |
-| `check-contract.mjs`: FAIL (id), нові порівняно з базовою лінією | | |
+| `check-contract.mjs --changed-since base`: FAIL (id) у коді прогону | | |
 | URL вебхука: `/webhook/` чи `/webhook-test/` | | |
 | `auth=` / `idempotency=` у журналі мока | | |
 | Колбек дійшов; код відповіді застосунку | | |
@@ -83,7 +89,7 @@
   ```
 - Сценарій «форма → колбек → `/quotes/<id>`» ще раз, уже на гілці: <що показала сторінка, час
   відповіді форми, чи прийшов колбек>
-- Рядок у `docs/n8n-integrations.md`: <…>
+- Рядок у `docs/n8n-integrations.md` (рекомендовано, не оцінюється): <…>
 
 ## Висновок
 
