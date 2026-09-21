@@ -7,8 +7,9 @@
 - **Інструмент і версія:** <напр. Claude Code 2.1.x / Cursor <версія>>
 - **Модель і рівень міркування (effort), однакові в обох прогонах:** <…>
 - **Код:** BASE = `<sha>` (останній коміт до коду n8n з Task C) · скіли з `<sha HEAD>`
-- **Копії:** `../leaddesk-ab-a` (без `integrating-n8n-webhooks`), `../leaddesk-ab-b`; `materials/` немає в обох
-- **Особисті копії скіла** (`~/.claude/skills`, `~/.cursor/skills`, `~/.agents/skills`): <перевірено — немає>
+- **Копії:** `../leaddesk-ab-a` (без `integrating-n8n-webhooks`), `../leaddesk-ab-b`
+- **Що видалено з обох копій:** `materials/`, `docs/`, `README.md`, `.coderabbit.yaml`, `.github/` <перевірено: `ls -A` / вивід>
+- **Особисті копії скіла** (`~/.claude/skills`, `~/.cursor/skills`, `~/.agents/skills`, `~/.codex/skills`): <перевірено — немає>
 - **Запит:** `materials/ab-task.md` без змін, нова сесія на кожен прогін
 - **Відповідь на уточнення, однакова в обох:** <«Роби, як вважаєш правильним» / агент не питав>
 - **Мок, однаковий для обох:** <`node --env-file=.env.local tools/mock-n8n.mjs --mode respond-202 --delay 5000` [+ `--callback-url …`]>

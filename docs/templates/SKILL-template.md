@@ -19,10 +19,11 @@ metadata:
                      За description модель вирішує, чи завантажити скіл. Решта файлу в цей момент
                      їй невідома.
        metadata    — пари «рядок: рядок» (тому version у лапках).
-     Поля, які розуміє лише Claude Code (disable-model-invocation, context, hooks, paths…), на
-     claude.ai чи в Skills API дають помилку «Unexpected key(s) in SKILL.md frontmatter» — додавайте
-     їх свідомо. allowed-tools не обмежує інструменти, а заздалегідь ДОЗВОЛЯЄ їх; у скілі без скриптів
-     він не потрібен.
+     Поля поза специфікацією (disable-model-invocation, context, hooks, paths…) — розширення
+     інструментів: частину розуміє лише Claude Code, частину ще й Cursor (disable-model-invocation,
+     paths). На claude.ai чи в Skills API вони дають помилку «Unexpected key(s) in SKILL.md
+     frontmatter» — додавайте їх свідомо. allowed-tools не обмежує інструменти, а заздалегідь
+     ДОЗВОЛЯЄ їх; у скілі без скриптів він не потрібен.
 
      Тіло — те, що агент має ЗРОБИТИ, коротко; до 500 рядків (краще до ~150). Деталі й «чому» —
      у references/<файл>.md з прямими посиланнями звідси (один рівень, без ланцюжків). Те, що має

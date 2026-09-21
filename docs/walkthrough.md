@@ -63,18 +63,19 @@ node tools/mock-n8n.mjs          # «n8n» на http://127.0.0.1:5678
 | `AGENTS.md`, `CLAUDE.md` | Блок Next.js від `create-next-app` і розділ безпеки курсу; `CLAUDE.md` імпортує `@AGENTS.md` |
 
 > ⚠️ Дані синтетичні (домени `*.example.test`), секрети в прикладах — `change-me-…`.
-> `tools/**` і `materials/**` не змінюйте: це інструменти й матеріали перевірки.
+> `tools/**`, `materials/**`, `.coderabbit.yaml` і `.github/**` не змінюйте: це інструменти,
+> матеріали й налаштування перевірки.
 
 ### Де живуть скіли
 
 Скіли проєкту кладемо в `.claude/skills/<назва>/SKILL.md`. Цю теку читають **обидва**
-інструменти: Claude Code — як свою, Cursor — «для сумісності» поряд із `.agents/skills/` і
-`.cursor/skills/`. Одна копія в git — і скіл є в усієї команди.
+інструменти: Claude Code — як свою, Cursor — «для сумісності» поряд із `.agents/skills/`,
+`.cursor/skills/` і `.codex/skills/`. Одна копія в git — і скіл є в усієї команди.
 
 | | Claude Code | Cursor |
 |---|---|---|
-| Скіли проєкту | `.claude/skills/<назва>/` | `.claude/skills/`, а також `.agents/skills/`, `.cursor/skills/` |
-| Особисті скіли | `~/.claude/skills/` | `~/.cursor/skills/`, `~/.agents/skills/`, `~/.claude/skills/` |
+| Скіли проєкту | `.claude/skills/<назва>/` | `.claude/skills/`, а також `.agents/skills/`, `.cursor/skills/`, `.codex/skills/` |
+| Особисті скіли | `~/.claude/skills/` | `~/.cursor/skills/`, `~/.agents/skills/`, `~/.claude/skills/`, `~/.codex/skills/` |
 | Хто вирішує, що скіл потрібен | модель — за `description`; вручну — `/<назва>` | модель — за `description`; вручну — `/<назва>` у чаті |
 
 ### Як перевірити, що агент бачить скіли
@@ -104,6 +105,9 @@ node tools/mock-n8n.mjs          # «n8n» на http://127.0.0.1:5678
   лише свої процеси; або запустіть на іншому порту: `npm start -- -p 3001`.
 - `npx skills add` за замовчуванням створює на Windows **junction**, який git комітить як другу
   повну копію. Тому в Task A — `--copy` (пояснення там).
+- Версію CLI закріплено: `npx skills@1.7.0`. Поведінку, описану в Task A (junction, `--copy`,
+  показ аудитів, `--yes` в агентській сесії), перевірено саме на 1.7.0; нова версія може поводитись
+  інакше.
 
 ---
 
@@ -125,7 +129,7 @@ node tools/mock-n8n.mjs          # «n8n» на http://127.0.0.1:5678
 1. **Подивитись, не встановлюючи.** CLI клонує тег у тимчасову теку й показує скіли з описами;
    у репозиторій нічого не пише:
    ```bash
-   DISABLE_TELEMETRY=1 npx skills add "vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278" --list
+   DISABLE_TELEMETRY=1 npx skills@1.7.0 add "vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278" --list
    ```
 2. **Прочитати файли саме цієї версії**, а не `main`:
    [skills/react-best-practices на тезі](https://github.com/vercel-labs/agent-skills/tree/agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278/skills/react-best-practices).
@@ -154,11 +158,14 @@ node tools/mock-n8n.mjs          # «n8n» на http://127.0.0.1:5678
 Запускайте **самі, у своєму терміналі** — не просіть агента (див. вище про `--yes`):
 
 ```bash
-DISABLE_TELEMETRY=1 npx skills add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 \
+DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 \
   --skill vercel-react-best-practices -a claude-code --copy
 ```
 
-- `#<тег>` — закріплена версія: CLI клонує саме її, а `npx skills update` перевіряє скіл за цим тегом.
+Щоб побачити аудити перед підтвердженням (крок 1.3), запустіть ту саму команду **без**
+`DISABLE_TELEMETRY=1`: з цією змінною блоку «Security Risk Assessments» не буде.
+
+- `#<тег>` — закріплена версія: CLI клонує саме її, а `npx skills@1.7.0 update` перевіряє скіл за цим тегом.
 - `--copy` — справжні файли. Без нього CLI кладе файли в `.agents/skills/`, а в `.claude/skills/`
   ставить посилання: на Windows — junction з абсолютним шляхом `D:\…`, який git комітить як
   **другу повну копію** (150 файлів замість 75); на macOS/Linux — symlink, який у клоні на Windows
@@ -176,7 +183,7 @@ git add .claude/skills/vercel-react-best-practices skills-lock.json
 git commit -m "skills: vendor vercel-react-best-practices pinned to agent-skills-063bee9"
 ```
 
-`skills-lock.json` фіксує джерело, тег і хеш. Відновлення з нього (`npx skills experimental_install`)
+`skills-lock.json` фіксує джерело, тег і хеш. Відновлення з нього (`npx skills@1.7.0 experimental_install`)
 пише лише в `.agents/skills/`, яку Claude Code не читає, — тому справжні файли тримаємо в git.
 
 ### 3. Скіл видно?
@@ -391,7 +398,9 @@ git log --oneline -1          # запишіть SHA: це BASE для Task D
 ### 5. Перевірка з моком: 202 + підписаний колбек
 
 1. Допишіть у `.env.local` ключі з контракту — значення для локальної розробки є в таблиці розділу 1
-   записки (у `.env.example` — ті самі ключі зі значеннями `change-me-…`). Секрети генеруйте:
+   записки. У `.env.example` — ті самі ключі: секрети (`N8N_WEBHOOK_TOKEN`, `N8N_CALLBACK_SECRET`)
+   лише зі значеннями `change-me-…`, адреси — локальні (`http://127.0.0.1:5678/webhook`,
+   `http://127.0.0.1:3000`), жодного `/webhook-test/`. Секрети генеруйте:
    ```bash
    node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
    ```
@@ -428,8 +437,11 @@ git log --oneline -1          # запишіть SHA: це BASE для Task D
 
 Запит і протокол — у `materials/ab-task.md`. Коротко: той самий запит, дві **свіжі** сесії, та сама
 модель і рівень міркування (effort). **A — без скіла `integrating-n8n-webhooks`, B — зі скілом.**
-Записки (`materials/`) агент не бачить в обох прогонах. Скіли `vercel-react-best-practices` і
-`building-client-form` є в обох.
+Записки (`materials/`) агент не бачить в обох прогонах. Так само з копій прибираємо все, що
+описує контракт n8n або перевірку: `docs/` (ця інструкція, шаблони), `README.md`,
+`.coderabbit.yaml`, `.github/`. Інакше агент без скіла прочитає контракт звідти, і A/B нічого не
+покаже. Скіли `vercel-react-best-practices` і `building-client-form` є в обох; `AGENTS.md`,
+`CLAUDE.md` і `tools/` — теж.
 
 Проблема: у вашій гілці фіча вже є (Task C), а приховане в робочому репозиторії агент знайде в
 `git status` та історії. Тому кожен прогін іде в **окремій копії** поза репозиторієм. Ваша гілка
@@ -442,11 +454,12 @@ git log --oneline -1          # запишіть SHA: це BASE для Task D
 ```bash
 BASE=<sha з Task C, крок 3>
 
-# код — з BASE, скіли — з вашого фінального коміту (HEAD), materials/ — немає
+# код — з BASE, скіли — з вашого фінального коміту (HEAD);
+# записки, документації й налаштувань перевірки в копіях немає
 for ARM in a b; do
   mkdir ../leaddesk-ab-$ARM
   git archive "$BASE" | tar -x -C ../leaddesk-ab-$ARM
-  rm -rf ../leaddesk-ab-$ARM/.claude/skills ../leaddesk-ab-$ARM/materials
+  rm -rf ../leaddesk-ab-$ARM/{.claude/skills,materials,docs,.coderabbit.yaml,.github,README.md}
   git archive HEAD .claude/skills | tar -x -C ../leaddesk-ab-$ARM
 done
 rm -rf ../leaddesk-ab-a/.claude/skills/integrating-n8n-webhooks     # A — без скіла
@@ -457,6 +470,8 @@ for ARM in a b; do
 done
 
 ls ../leaddesk-ab-a/.claude/skills ../leaddesk-ab-b/.claude/skills   # A: 2 скіли, B: 3
+ls -A ../leaddesk-ab-a ../leaddesk-ab-b | grep -xE 'materials|docs|README.md|.coderabbit.yaml|.github' \
+  || echo "no hints - ok"                                             # має бути «no hints - ok»
 ```
 
 Повторюєте з нуля — спершу `rm -rf ../leaddesk-ab-a ../leaddesk-ab-b`.
@@ -469,7 +484,7 @@ ls ../leaddesk-ab-a/.claude/skills ../leaddesk-ab-b/.claude/skills   # A: 2 ск
 
 1. **Особистих копій скіла немає** — інакше прогін A буде зі скілом:
    ```bash
-   ls ~/.claude/skills ~/.cursor/skills ~/.agents/skills 2>/dev/null
+   ls ~/.claude/skills ~/.cursor/skills ~/.agents/skills ~/.codex/skills 2>/dev/null
    ```
 2. **Базова лінія `check-contract.mjs`** — на копії до прогону (з робочого репозиторію):
    ```bash
@@ -496,7 +511,7 @@ ls ../leaddesk-ab-a/.claude/skills ../leaddesk-ab-b/.claude/skills   # A: 2 ск
    git add -A
    git diff --cached --stat
    ```
-   Повний діф — у робочий репозиторій (тека `docs/ab/`, створіть її):
+   Повний діф — у робочий репозиторій (тека `docs/ab/`, створіть її); обидва діфи обов'язкові:
    ```bash
    git diff --cached > ../2026-quitcode-04-agent-skills-hw/docs/ab/a-without-skill.diff   # для B: b-with-skill.diff
    ```
@@ -528,7 +543,7 @@ ls ../leaddesk-ab-a/.claude/skills ../leaddesk-ab-b/.claude/skills   # A: 2 ск
 
 Скопіюйте `docs/templates/ab-validation.md` у `docs/ab-validation.md` і заповніть: для кожного
 прогону — видимі скіли, виклик скіла, `check-contract.mjs` (id + PASS/FAIL), журнал мока, час
-форми, журнал сервера, змінені файли; таблиця порівняння; висновок.
+форми, журнал сервера, змінені файли й посилання на діф у `docs/ab/`; таблиця порівняння; висновок.
 
 > **Мок доступний в обох прогонах**, і в його `--help` описано схему підпису колбека. Якщо агент без
 > скіла прочитав мок і взяв контракт звідти — це чесний результат. Запишіть, **звідки саме** агент
@@ -539,9 +554,10 @@ ls ../leaddesk-ab-a/.claude/skills ../leaddesk-ab-b/.claude/skills   # A: 2 ск
 
 Копії після звіту можна видалити: `rm -rf ../leaddesk-ab-a ../leaddesk-ab-b ../leaddesk-main ../review-agent-skills`.
 
-**Перевірка:** один запит без змін, дві нові сесії, у копії A немає скіла, `materials/` немає в
-обох; для кожного прогону — `check-contract.mjs`, журнал мока, час форми, журнал сервера, змінені
-файли; висновок спирається на ці дані.
+**Перевірка:** один запит без змін, дві нові сесії, у копії A немає скіла; `materials/`, `docs/`,
+`README.md`, `.coderabbit.yaml` і `.github/` немає в обох; для кожного прогону — `check-contract.mjs`,
+журнал мока, час форми, журнал сервера, змінені файли, діф у `docs/ab/`; висновок спирається на ці
+дані.
 
 ---
 
@@ -565,11 +581,13 @@ ls ../leaddesk-ab-a/.claude/skills ../leaddesk-ab-b/.claude/skills   # A: 2 ск
 
 ```bash
 claude -p --output-format stream-json --verbose --allowedTools "Skill,Read,Grep,Glob" \
-  < prompt.txt > run.jsonl
+  --disallowedTools "Edit,Write,NotebookEdit,Bash" < prompt.txt > run.jsonl
 grep -o '"skill":"[^"]*"' run.jsonl        # які скіли викликано
 ```
 
-`--allowedTools` лише з читанням: агент не змінить файлів, а виклик скіла видно. Таблиця «запит →
+`--allowedTools` лише **заздалегідь дозволяє** інструменти, а не обмежує їх: у режимі `acceptEdits`
+чи з дозволами з ваших налаштувань агент однаково міг би змінювати файли. Забороняє
+`--disallowedTools` — з ним агент не змінить файлів, а виклик скіла видно. Таблиця «запит →
 очікування → результат» і що ви змінили в `description` — у `docs/trigger-evals.md`. Файли `run.jsonl`
 не комітьте.
 
