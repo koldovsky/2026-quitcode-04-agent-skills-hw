@@ -23,9 +23,10 @@
 149 рядків. Усі три — PASS.
 
 > `claude plugin validate .claude/skills` друкує «✔ Validation passed», але з `--json` видно
-> `"contents": []` — у 2.1.276 він **нічого не перевірив**. Контрольний приклад (name ≠ тека, опис на
-> 1100 символів) теж «passed». Тому відповідність перевіряли власним скриптом за правилами
-> [agentskills.io/specification](https://agentskills.io/specification).
+> `"contents": []`: для теки `.claude/skills` у 2.1.276 він не перевірив жодного скіла. Контрольна тека
+> (name ≠ тека, опис на 1100 символів) теж «passed». Маніфест плагіна (`.claude-plugin/plugin.json`)
+> він перевіряє, але й там у наших пробах `contents` лишався порожнім. Тому відповідність перевіряли
+> власним скриптом за правилами [agentskills.io/specification](https://agentskills.io/specification).
 
 ## Task B — `building-client-form`
 
