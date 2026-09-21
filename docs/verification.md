@@ -19,7 +19,7 @@
 
 **Відповідність специфікації** (name = тека, `description` ≤ 1024 символи з «що» + «коли», `SKILL.md`
 < 500 рядків, посилання на файли скіла існують): `building-client-form` — 794 символи, 99 рядків;
-`integrating-n8n-webhooks` — 822 символи, 135 рядків; `vercel-react-best-practices` — 329 символів,
+`integrating-n8n-webhooks` — 822 символи, 140 рядків; `vercel-react-best-practices` — 329 символів,
 149 рядків. Усі три — PASS.
 
 > `claude plugin validate .claude/skills` друкує «✔ Validation passed», але з `--json` видно
@@ -38,9 +38,11 @@
 **Результат: ОЧІКУЄ ПРОГОНУ.** Під час збірки еталону CLI на цій машині не був авторизований:
 `claude auth status` → `"loggedIn": false`, а `claude -p` завершувався за 0,1 с з
 `Failed to authenticate: OAuth session expired and could not be refreshed` (`/context` працює, бо не
-звертається до API). Команда для прогону — в кінці розділу C; записати: чи був виклик інструмента
-`Skill` з `building-client-form` (або читання його `SKILL.md`), які файли змінено, чи дія перевіряє
-сесію й належність ліда (`server-auth-actions`), чи поле має `aria-invalid`/`aria-describedby`,
+звертається до API). Повторна перевірка перед фіналізацією (21.09.2026) нічого не змінила:
+`"loggedIn": false`, і всі 10 спроб калібрування `claude -p` зупинились на тій самій помилці.
+Команда для прогону — в кінці розділу C; записати: чи був виклик інструмента `Skill` з
+`building-client-form` (або читання його `SKILL.md`), які файли змінено, чи дія перевіряє сесію й
+належність ліда (`server-auth-actions`), чи поле має `aria-invalid`/`aria-describedby`,
 `npm run lint`/`build`.
 
 **Де патерн уже застосовано й перевірено** — форма `/quotes/new` (`components/quote-form.tsx`,
