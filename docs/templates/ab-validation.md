@@ -30,7 +30,8 @@
 - Запитання агента і фінальна відповідь (цитата, скорочено): <…>
 - Змінені файли (`git diff --cached --stat base`): <…>; діф: `docs/ab/a-without-skill.diff`
 - Змінні середовища, які додав агент: <назви>
-- `check-contract.mjs --root <копія> --changed-since base` — лише код прогону (id + PASS/FAIL/N/A):
+- `check-contract.mjs --root <копія> --changed-since base` — лише код прогону (id + PASS/FAIL/N/A; якщо
+  ваш скрипт не має `--changed-since` — вивід без прапорця, FAIL з базової лінії позначте «старий код»):
   ```
   <вивід>
   ```
@@ -50,7 +51,8 @@
 - Запитання агента і фінальна відповідь (цитата, скорочено): <…>
 - Змінені файли (`git diff --cached --stat base`): <…>; діф: `docs/ab/b-with-skill.diff`
 - Змінні середовища, які додав агент: <назви>
-- `check-contract.mjs --root <копія> --changed-since base` — лише код прогону (id + PASS/FAIL/N/A):
+- `check-contract.mjs --root <копія> --changed-since base` — лише код прогону (id + PASS/FAIL/N/A; якщо
+  ваш скрипт не має `--changed-since` — вивід без прапорця, FAIL з базової лінії позначте «старий код»):
   ```
   <вивід>
   ```
@@ -67,7 +69,7 @@
 | Що дивимось | A — без скіла | B — зі скілом |
 |---|---|---|
 | Скіл викликано | — | |
-| `check-contract.mjs --changed-since base`: FAIL (id) у коді прогону | | |
+| `check-contract.mjs` на коді прогону (`--changed-since base` або без FAIL базової лінії): FAIL (id) | | |
 | URL вебхука: `/webhook/` чи `/webhook-test/` | | |
 | `auth=` / `idempotency=` у журналі мока | | |
 | Колбек дійшов; код відповіді застосунку | | |
