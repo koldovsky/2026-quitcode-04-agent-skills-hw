@@ -12,7 +12,7 @@
 
 ## Що зроблено (Definition of Done)
 
-- [ ] **Task A:** `docs/skill-review.md` — рев'ю до встановлення; `vercel-react-best-practices` встановлено з закріпленим тегом і `--copy`, 75 файлів і `skills-lock.json` у git; **2 виправлення** — окремі коміти з id правила, для одного з них числа до/після в `docs/verification.md`
+- [ ] **Task A:** `docs/skill-review.md` — рев'ю до встановлення; `vercel-react-best-practices` встановлено з закріпленим тегом і `--copy`, 75 файлів і `skills-lock.json` у git; **щонайменше 2 виправлення** (досить двох) — окремі коміти з id правила, для одного з них числа до/після в `docs/verification.md`
 - [ ] **Task B:** `.claude/skills/building-client-form/SKILL.md`; спрацювання на звичайний запит у свіжій сесії — у `docs/verification.md`
 - [ ] **Task C:** `.claude/skills/integrating-n8n-webhooks/` — `SKILL.md` з правилами зупинки, `references/`, `scripts/check-contract.mjs` (≥ 5 перевірок з id, для FAIL — файл:рядок, `--root <тека>`, `--help`); вивід на коді `main` — у `docs/verification.md`
 - [ ] **Task D:** `docs/ab-validation.md` з обома прогонами (A — без жодного скіла, B — лише з `integrating-n8n-webhooks`; у копіях немає `tools/`, `materials/`, `docs/`, `README.md`, `.coderabbit.yaml`, `.github/`); `check-contract.mjs` для кожного прогону — на коді прогону (`--changed-since base` або з позначеними старими FAIL); діфи в `docs/ab/`; **фіча «запит на кошторис» у гілці — це перенесений результат прогону B** (`/quotes/new`, Server Action, колбек-роут, `/quotes/[id]`), працює з моком, `check-contract.mjs` — 0 FAIL
