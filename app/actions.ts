@@ -2,6 +2,7 @@
 
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { getCurrentUser, getWorkspace } from "@/lib/data";
@@ -51,17 +52,20 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
-
-  await logAudit("lead.created", lead.id);
+  // The visitor only waits for the insert. The n8n call and the audit log run after
+  // the response has been sent.
+  after(async () => {
+    try {
+      await fetch(process.env.N8N_WEBHOOK_URL!, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(lead),
+      });
+    } catch (error) {
+      console.error(`Failed to send lead ${lead.id} to n8n`, error);
+    }
+    await logAudit("lead.created", lead.id);
+  });
 
   return { status: "ok" };
 }
