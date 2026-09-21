@@ -181,7 +181,7 @@ Route Handler — публічний HTTP-ендпоінт
 | `content-type` | `application/json` |
 | `x-n8n-timestamp` | Unix-час у секундах, коли n8n підписав запит |
 | `x-n8n-signature` | `sha256=<hex HMAC-SHA256(N8N_CALLBACK_SECRET, "${timestamp}.${rawBody}")>` |
-| `idempotency-key` | `<jobId>:<event>` |
+| `idempotency-key` | `<data.jobId>:<event>` — ті самі значення, що в підписаному тілі (`5f0c…:quote-request.completed`) |
 | `x-correlation-id` | Скопійований із запиту, що запустив воркфлоу |
 
 **Тіло:**
@@ -221,8 +221,9 @@ Route Handler — публічний HTTP-ендпоінт
    Не збігається → **401** без подробиць у тілі.
 6. «Застовпити» `idempotency-key` (унікальний запис у БД). Вже був → **200**
    `{"duplicate": true}`: n8n не повторюватиме, а дані не зміняться вдруге.
-7. Тепер `JSON.parse(raw)` і перевірка форми. Не та форма або подія в тілі не
-   відповідає шляху → **400**.
+7. Тепер `JSON.parse(raw)` і перевірка форми. Не та форма, подія в тілі не
+   відповідає шляху або `idempotency-key` не дорівнює `` `${data.jobId}:${event}` ``
+   з тіла → **400**.
 8. Зберегти мінімальний стан (наприклад, `status = ready`, посилання на документ)
    **до** відповіді. Якщо після кроку 6 обробка впала (4xx/5xx на кроках 7–8) —
    **звільнити** `idempotency-key`: інакше повтор n8n (Retry On Fail) отримає
@@ -232,6 +233,12 @@ Route Handler — публічний HTTP-ендпоінт
 
 Чому запис до відповіді: отримавши 2xx, n8n колбек не повторить. Якщо критичний
 запис жив би лише в `after()` і впав, результат загубився б назавжди.
+
+Чому ключ звіряємо з тілом (крок 7): заголовок `idempotency-key` підписом не
+захищений — HMAC рахуємо лише від `` `${timestamp}.${raw}` ``. Хто перехопив один
+підписаний колбек, міг би в межах вікна 300 с надіслати ті самі байти з новим
+ключем, і застосунок обробив би їх удруге. Коли ключ мусить дорівнювати полям
+підписаного тіла, повтор із тим самим ключем — дублікат, з іншим — 400.
 
 Сховище для `idempotency-key` — база чи KV з унікальним обмеженням. Пам'ять процесу
 годиться лише для демо: на serverless-хостингах обробники не ділять стан між
@@ -244,7 +251,8 @@ Route Handler — публічний HTTP-ендпоінт
   Executions» з ключем `idempotency-key`
   ([remove duplicates](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.removeduplicates/)).
 - n8n → Next.js: HTTP Request з Retry On Fail повторює колбек; Next.js відсікає повтори
-  за `idempotency-key` (крок 6 вище).
+  за `idempotency-key` (крок 6 вище) і приймає лише ключ, що збігається з підписаним
+  тілом (крок 7).
 - Ідемпотентність — не «приємний бонус»: і наші повтори, і Retry On Fail в n8n
   роблять дублікати неминучими.
 
@@ -279,7 +287,7 @@ Route Handler — публічний HTTP-ендпоінт
    `{"job_id": "{{ $execution.id }}"}`.
 4. … робота воркфлоу (генерація PDF тощо) …
 5. **Edit Fields**: поле `ts` = `{{ Math.floor($now.toSeconds()) }}`, поле `body` =
-   `{{ JSON.stringify({ version: 1, event: 'quote-request.completed', data: { … } }) }}`.
+   `{{ JSON.stringify({ version: 1, event: 'quote-request.completed', data: { jobId: $execution.id, … } }) }}`.
    Тіло підписуємо й відправляємо **одним і тим самим рядком**.
 6. **Crypto** (v2): Action `Hmac`, Type `SHA256`, Encoding `HEX`, значення
    `{{ $json.ts + '.' + $json.body }}`, credential **Crypto** з Hmac Secret =
@@ -288,9 +296,9 @@ Route Handler — публічний HTTP-ендпоінт
 7. **HTTP Request**: `POST` на `callbackUrl` із запиту
    (`{{ $('Webhook').item.json.body.callbackUrl }}`). Заголовки `x-n8n-timestamp`,
    `x-n8n-signature` (`sha256=` + результат Crypto), `idempotency-key`
-   (`{{ $execution.id }}:quote-request.completed`), `x-correlation-id` (з вхідних
-   заголовків). Body Content Type — **Raw**, Content Type `application/json`,
-   Body — поле `body`. Options → Timeout `10000`. Settings → Retry On Fail, Max Tries
+   (`{{ $execution.id }}:quote-request.completed` — ті самі `jobId` і `event`, що
+   в тілі), `x-correlation-id` (з вхідних заголовків). Body Content Type — **Raw**,
+   Content Type `application/json`, Body — поле `body`. Options → Timeout `10000`. Settings → Retry On Fail, Max Tries
    `3`, Wait Between Tries `1000`
    ([HTTP Request](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.httprequest/)).
    Якщо n8n у Docker, а застосунок на хості, — `host.docker.internal`, не `localhost`.

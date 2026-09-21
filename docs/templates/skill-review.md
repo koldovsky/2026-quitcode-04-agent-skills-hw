@@ -44,7 +44,7 @@
 
 ```bash
 S=../review-agent-skills/skills/react-best-practices
-find "$S" -type f | wc -l                                   # скільки файлів
+find "$S" -type f | wc -l                                   # скільки файлів (у клоні тега їх на один більше: CLI не копіює metadata.json)
 find "$S" -type f ! -name "*.md"                            # усе, що не markdown
 awk '/^---$/{n++; next} n==1' "$S/SKILL.md"                 # frontmatter
 find "$S" -name "*hooks*.json" -o -name "*mcp*.json" -o -name "plugin.json" -o -name "settings*.json"

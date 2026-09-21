@@ -34,6 +34,10 @@ cp .env.example .env.local
 npm run dev                      # http://localhost:3000
 ```
 
+> Попередження `npm warn deprecated …` і `npm warn allow-scripts …` — очікувані. Нічого з їхніми
+> порадами не запускайте (`npm audit fix`, `npm approve-scripts`) і не комітьте змін у
+> `package-lock.json`: `npm run lint` і `npm run build` проходять і так.
+
 В іншому терміналі, з кореня репозиторію:
 
 ```bash
@@ -45,6 +49,8 @@ node tools/mock-n8n.mjs          # «n8n» на http://127.0.0.1:5678
 
 1. `http://localhost:3000` — надішліть заявку через форму. **Подивіться, що мок записав у свій
    журнал** у відповідь на цю заявку, і запам'ятайте — повернетеся до цього в Task C.
+   Якщо журнал мока й повідомлення форми «не сходяться» — це не поломка вашого середовища, а перша
+   знахідка домашки: нічого не налаштовуйте й не виправляйте тут, це робота Task C.
 2. «Вхід для команди» → оберіть користувача (пароль не потрібен) → `/dashboard`: статистика,
    таблиця лідів, пошук, експорт в Excel, графік джерел, сторінка ліда.
 
@@ -102,9 +108,13 @@ node tools/mock-n8n.mjs          # «n8n» на http://127.0.0.1:5678
   аргументом.
 - Порт зайнятий (`EADDRINUSE`): зупиніть свій попередній сервер (Ctrl+C). Якщо він «загубився»:
   `netstat -ano | grep :3000` → `taskkill //PID <pid> //F` (у Git Bash — саме `//`). Зупиняйте
-  лише свої процеси; або запустіть на іншому порту: `npm start -- -p 3001`.
-- `npx skills add` за замовчуванням створює на Windows **junction**, який git комітить як другу
-  повну копію. Тому в Task A — `--copy` (пояснення там).
+  лише свої процеси. Перевірити, що на `:3000` саме LeadDesk, а не чужий застосунок:
+  `curl -s localhost:3000 | grep -o "<title>[^<]*"`. Якщо звільнити порт не вдається, запустіть на
+  іншому (`npm start -- -p 3001`) — але тоді той самий порт має бути **скрізь**: `U=…` у замірах,
+  `APP_BASE_URL` у `.env.local` (із перезапуском `npm start`) і `--callback-url` мока. Інакше
+  виміряєте чужий застосунок, а колбеки n8n підуть не на той сервер.
+- `npx skills@1.7.0 add` за замовчуванням створює на Windows **junction**, який git комітить як
+  другу повну копію. Тому в Task A — `--copy` (пояснення там).
 - Версію CLI закріплено: `npx skills@1.7.0`. Поведінку, описану в Task A (junction, `--copy`,
   показ аудитів, `--yes` в агентській сесії), перевірено саме на 1.7.0; нова версія може поводитись
   інакше.
@@ -121,7 +131,7 @@ node tools/mock-n8n.mjs          # «n8n» на http://127.0.0.1:5678
 
 ### 1. Рев'ю до встановлення
 
-Скопіюйте `docs/templates/skill-review.md` у `docs/skill-review.md` і заповнюйте по ходу.
+Скопіюйте `docs/templates/skill-review.md` у `docs/skill-review.md` і заповнюйте під час роботи.
 Рев'ю стосується скіла **`vercel-react-best-practices`** з репозиторію
 [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills), закріпленого на release-тезі
 `agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278`.
@@ -162,6 +172,13 @@ DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-0
   --skill vercel-react-best-practices -a claude-code --copy
 ```
 
+CLI перепитає (у звичайному терміналі, не в агентській сесії):
+
+- `npx` при першому запуску — `Ok to proceed? (y)` → `y`;
+- `Installation scope` → **Project**. `Global` кладе скіл у `~/.claude/skills/`: у git не потрапить
+  нічого, а особиста копія потім «забруднить» прогін A в Task D;
+- `Proceed with installation?` → `Yes`.
+
 Щоб побачити аудити перед підтвердженням (крок 1.3), запустіть ту саму команду **без**
 `DISABLE_TELEMETRY=1`: з цією змінною блоку «Security Risk Assessments» не буде.
 
@@ -176,7 +193,7 @@ DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-0
 Перевірте й закомітьте:
 
 ```bash
-find .claude/skills/vercel-react-best-practices -type f | wc -l   # 75
+find .claude/skills/vercel-react-best-practices -type f | wc -l   # 75 (у клоні тега — 76: CLI не копіює metadata.json)
 ls .agents 2>/dev/null || echo "no .agents - ok"
 git status --short                                                  # тека скіла + skills-lock.json
 git add .claude/skills/vercel-react-best-practices skills-lock.json
@@ -222,14 +239,24 @@ curl -sL -b "$C" -H "RSC: 1" "$U" | wc -c                           # розмі
 | Що потрапляє в клієнтський JS | JS, який браузер вантажить при відкритті `/dashboard` | DevTools → Network → JS, Disable cache, сума внизу; або `npx next experimental-analyze` (враховує й чанки, що вантажаться пізніше) |
 | Що відбувається після відповіді | час відправки форми | DevTools → Network → запит `POST /` після «Надіслати» |
 
-Для форми: мок у режимі, коли вебхук відповідає після завершення воркфлоу (2 с):
+Для форми: мок у режимі, коли вебхук відповідає після завершення воркфлоу (2 с). Щоб замір був
+чесним, у **`.env.local`** (це налаштування, не код; `.env.example` не чіпаємо — він знадобиться
+в Task C) поставте production-URL мока й перезапустіть `npm start` — змінні читаються на старті:
 
 ```bash
-node tools/mock-n8n.mjs --mode last-node --listen
+# .env.local
+N8N_WEBHOOK_URL=http://127.0.0.1:5678/webhook/lead-created
 ```
 
-`--listen` потрібен, поки URL у `.env.local` — тестовий (`/webhook-test/…`): такі URL мок, як і
-n8n, приймає лише 120 секунд. Минуло — перезапустіть мок.
+```bash
+node tools/mock-n8n.mjs --mode last-node
+```
+
+Замір рахується, лише якщо в журналі мока на вашу відправку є `POST /webhook/lead-created -> 200
+in ~2000 ms`. Рядок `-> 404 in 2 ms` означає, що «воркфлоу» не запускався, а форма здається швидкою
+через те, що код не дивиться на відповідь, — такий замір не записуйте. (Тестові URL `/webhook-test/…`
+мок, як і n8n, приймає лише 120 секунд після запуску з `--listen`; для кількох замірів до і після
+виправлень це незручно.)
 
 ### 5. Рев'ю застосунку зі скілом і виправлення
 
@@ -397,10 +424,12 @@ git log --oneline -1          # запишіть SHA: це BASE для Task D
 
 ### 5. Перевірка з моком: 202 + підписаний колбек
 
-1. Допишіть у `.env.local` ключі з контракту — значення для локальної розробки є в таблиці розділу 1
-   записки. У `.env.example` — ті самі ключі: секрети (`N8N_WEBHOOK_TOKEN`, `N8N_CALLBACK_SECRET`)
-   лише зі значеннями `change-me-…`, адреси — локальні (`http://127.0.0.1:5678/webhook`,
-   `http://127.0.0.1:3000`), жодного `/webhook-test/`. Секрети генеруйте:
+1. **Додайте ключі контракту в обидва файли.** У `.env.example` — ключі з таблиці розділу 1
+   записки: секрети (`N8N_WEBHOOK_TOKEN`, `N8N_CALLBACK_SECRET`) лише зі значеннями `change-me-…`,
+   адреси — локальні (`http://127.0.0.1:5678/webhook`, `http://127.0.0.1:3000`); рядок зі старим
+   тестовим URL (`/webhook-test/…`) приберіть або виправте — залежно від того, чи читає код ще цю
+   змінну. У `.env.local` — ті самі ключі зі справжніми значеннями для мока (після зміни
+   перезапустіть `npm start`). Секрети генеруйте:
    ```bash
    node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
    ```
@@ -472,7 +501,14 @@ done
 ls ../leaddesk-ab-a/.claude/skills ../leaddesk-ab-b/.claude/skills   # A: 2 скіли, B: 3
 ls -A ../leaddesk-ab-a ../leaddesk-ab-b | grep -xE 'materials|docs|README.md|.coderabbit.yaml|.github' \
   || echo "no hints - ok"                                             # має бути «no hints - ok»
+
+# і за змістом: що в копії A взагалі згадує контракт
+grep -rlE "x-n8n-token|timingSafeEqual|idempotency-key" ../leaddesk-ab-a --exclude-dir=node_modules
 ```
+
+У відповідь на `grep` має бути **лише** `tools/mock-n8n.mjs`: його `--help` доступний обом прогонам
+(див. кінець завдання). Будь-який інший файл — підказка, якої в копії бути не повинно: подивіться,
+звідки він, і приберіть його з **обох** копій, щоб умови лишились однаковими.
 
 Повторюєте з нуля — спершу `rm -rf ../leaddesk-ab-a ../leaddesk-ab-b`.
 
@@ -505,7 +541,9 @@ ls -A ../leaddesk-ab-a ../leaddesk-ab-b | grep -xE 'materials|docs|README.md|.co
 1. Нова сесія **в теці копії** (`cd ../leaddesk-ab-a && claude`, у Cursor — File → Open Folder).
 2. Вставте запит між лініями з `materials/ab-task.md` **без змін**. Нічого не підказуйте. Якщо агент
    питає, як діяти, — однакова відповідь в обох прогонах: «Роби, як вважаєш правильним». Дозволи на
-   зміну файлів — теж однакові.
+   зміну файлів — теж однакові. Якщо агент проситься прочитати щось **поза текою копії** (наприклад
+   `../2026-quitcode-04-agent-skills-hw`, де є і записка, і готова фіча) — відмовте в обох прогонах
+   і запишіть це: інакше прогін читає відповідь замість того, щоб її вивести.
 3. Коли агент закінчив, у теці копії:
    ```bash
    git add -A
@@ -613,7 +651,7 @@ git push -u origin ws04/<github-username>
 gh pr create --web
 ```
 
-Заголовок PR — `WS4: Ім'я Прізвище`; у шаблоні заповніть **«Ім'я та Прізвище»** і відмітьте
+Заголовок PR — `WS4: Ім'я Прізвище`; у шаблоні заповніть **«Ім'я та Прізвище»** і позначте
 виконані пункти. Не додавайте `--fill`: з ним шаблон з обов'язковим полем не підставляється.
 Definition of Done — у [README](../README.md#definition-of-done).
 

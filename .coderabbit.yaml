@@ -73,7 +73,7 @@ reviews:
   path_instructions:
     - path: ".claude/skills/vercel-react-best-practices/**"
       instructions: |
-        Task A — сторонній скіл, встановлений через `npx skills add` з
+        Task A — сторонній скіл, встановлений через `npx skills@1.7.0 add` з
         закріпленим тегом і `--copy`. Зміст файлів Vercel НЕ рев'юй (це чужий
         текст; rules/ і AGENTS.md навмисно виключені з рев'ю). Перевір лише:
         SKILL.md — справжній файл з frontmatter `name: vercel-react-best-practices`;
@@ -226,7 +226,8 @@ reviews:
         202 + колбек, Server Action не чекає n8n; колбек-роут читає сире тіло
         (`request.text()`), перевіряє час (±300 с) і підпис (перевірка довжини
         + timingSafeEqual, не ===) ДО JSON.parse, «застовплює»
-        idempotency-key, зберігає стан до відповіді 202; жодного
+        idempotency-key і звіряє його з jobId та подією з підписаного тіла,
+        зберігає стан до відповіді 202; жодного
         `runtime = "edge"`, `NEXT_PUBLIC_N8N_*`, тестових URL; у журналах
         немає тіл, email, телефонів, токенів і підписів.
 
@@ -248,7 +249,8 @@ reviews:
         202 + колбек, Server Action не чекає n8n; колбек-роут читає сире тіло
         (`request.text()`), перевіряє час (±300 с) і підпис (перевірка довжини
         + timingSafeEqual, не ===) ДО JSON.parse, «застовплює»
-        idempotency-key, зберігає стан до відповіді 202; жодного
+        idempotency-key і звіряє його з jobId та подією з підписаного тіла,
+        зберігає стан до відповіді 202; жодного
         `runtime = "edge"`, `NEXT_PUBLIC_N8N_*`, тестових URL; у журналах
         немає тіл, email, телефонів, токенів і підписів.
 
@@ -270,7 +272,8 @@ reviews:
         202 + колбек, Server Action не чекає n8n; колбек-роут читає сире тіло
         (`request.text()`), перевіряє час (±300 с) і підпис (перевірка довжини
         + timingSafeEqual, не ===) ДО JSON.parse, «застовплює»
-        idempotency-key, зберігає стан до відповіді 202; жодного
+        idempotency-key і звіряє його з jobId та подією з підписаного тіла,
+        зберігає стан до відповіді 202; жодного
         `runtime = "edge"`, `NEXT_PUBLIC_N8N_*`, тестових URL; у журналах
         немає тіл, email, телефонів, токенів і підписів.
 
