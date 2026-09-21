@@ -244,9 +244,12 @@ function declarationText(file, name) {
   return con ? balancedFrom(file.code, con.index + con[0].length) : null;
 }
 
-// Identifiers passed as a whole argument: fetch(url, init), fetch(url, { ...init }).
-const argIdentifiers = (argsText) =>
-  [...argsText.matchAll(/(?:^|,)\s*(?:\.\.\.)?\s*([A-Za-z_$][\w$]*)\s*(?=,|$)/g)].map((m) => m[1]);
+// Identifiers that carry a whole argument object: fetch(url, init), fetch(url, ...rest) - and
+// fetch(url, { ...init, headers }), where the object literal spreads the identifier instead.
+const argIdentifiers = (argsText) => [
+  ...[...argsText.matchAll(/(?:^|,)\s*(?:\.\.\.)?\s*([A-Za-z_$][\w$]*)\s*(?=,|$)/g)].map((m) => m[1]),
+  ...[...argsText.matchAll(/\.\.\.\s*([A-Za-z_$][\w$]*)/g)].map((m) => m[1]),
+];
 
 // First argument of a call (top-level comma; strings and brackets aware).
 function firstArgument(argsText) {

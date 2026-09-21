@@ -17,7 +17,10 @@ export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]
   const handler = Object.hasOwn(HANDLERS, event) ? HANDLERS[event] : undefined;
   if (!handler) return Response.json({ error: "unknown event" }, { status: 404 });
 
-  if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+  // Media type only, parameters dropped: "application/json; charset=utf-8" is JSON,
+  // "application/jsonx" is not (startsWith would have accepted it).
+  const mediaType = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (mediaType !== "application/json") {
     return Response.json({ error: "unsupported media type" }, { status: 415 });
   }
 

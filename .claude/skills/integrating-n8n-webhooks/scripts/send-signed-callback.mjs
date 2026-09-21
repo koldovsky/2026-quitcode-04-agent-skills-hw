@@ -121,6 +121,18 @@ const negative = [
     build: () => request({ contentType: "text/plain" }),
   },
   {
+    name: "json-lookalike-type",
+    expect: 415,
+    why: "application/jsonx only starts with application/json - parse the media type",
+    build: () => request({ contentType: "application/jsonx" }),
+  },
+  {
+    name: "json-with-charset",
+    expect: 401,
+    why: "application/json; charset=utf-8 passes the media-type gate (401, not 415) and dies on the signature",
+    build: () => request({ contentType: "application/json; charset=utf-8", signature: `sha256=${randomBytes(32).toString("hex")}` }),
+  },
+  {
     name: "oversized-body",
     expect: 413,
     why: "callbacks carry links, not files (limit 64 KB)",
