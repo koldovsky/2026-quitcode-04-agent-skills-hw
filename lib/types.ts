@@ -46,6 +46,9 @@ export type Lead = {
   ipAddress: string;
   userAgent: string;
   rawPayload: Record<string, unknown>;
+  // idempotency-key of the lead-created call to n8n: created once with the lead and stored with
+  // it, so a re-drive reuses it. null for the seeded rows, which never went through the form.
+  n8nIdempotencyKey: string | null;
   internalNotes: string;
   createdAt: string;
   updatedAt: string;

@@ -180,7 +180,7 @@ import { handleQuoteCallback } from "@/lib/quotes";
 
 // Callbacks from n8n (HTTP Request node), skill integrating-n8n-webhooks.
 // Order: event -> content type -> raw bytes -> timestamp + HMAC -> idempotency claim
-// -> parse -> durable write -> 202 -> after().
+// -> parse -> key matches the signed body -> durable write -> 202 -> after().
 
 const MAX_BODY_BYTES = 64 * 1024;
 const HANDLERS: Record<string, CallbackHandler> = { "quote-request": handleQuoteCallback };
@@ -223,6 +223,13 @@ export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]
       await db.releaseCallbackKey(key);
       return Response.json({ error: "invalid payload" }, { status: 400 });
     }
+    // The header is outside the HMAC: without this, a captured callback could be replayed
+    // inside the 300 s window under a fresh key and applied again.
+    if (key !== `${envelope.data.jobId}:${event}.completed`) {
+      await db.releaseCallbackKey(key);
+      console.warn(`n8n <- ${event} rejected: key does not match the signed job corr=${correlationId}`);
+      return Response.json({ error: "idempotency-key does not match the signed body" }, { status: 400 });
+    }
     const outcome = await handler(envelope.data); // small durable write BEFORE the 2xx
     if (outcome.status === "unknown-job") {
       await db.releaseCallbackKey(key);
@@ -247,6 +254,11 @@ export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]
 `result.documentUrl` лише `https:`). Обробник події (тут `handleQuoteCallback` з `lib/quotes.ts`) знаходить
 запис за `requestIdempotencyKey`, робить короткий запис і повертає `{ status: "applied", afterResponse? }`
 або `{ status: "unknown-job" }`.
+
+Ключ ідемпотентності звіряємо з тілом: заголовок `idempotency-key` не входить у HMAC, тому сам по
+собі він нічого не доводить. Хто перехопив підписаний колбек, міг би надіслати ті самі байти з новим
+ключем у межах вікна 300 с — і обробник виконався б удруге. Звідси `key !== ${data.jobId}:${event}`
+→ 400 (зі звільненням ключа).
 
 У журнал — лише похідні значення (`const jobStatus = envelope.data.status`), не сам об'єкт конверта:
 `check-contract` (C7) навмисно суворий до `body`, `payload`, `envelope`, `headers` у `console.*`.

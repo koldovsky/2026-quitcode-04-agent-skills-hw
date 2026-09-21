@@ -6,7 +6,7 @@ import { handleQuoteCallback } from "@/lib/quotes";
 
 // Callbacks from n8n (HTTP Request node), skill integrating-n8n-webhooks.
 // Order: event -> content type -> raw bytes -> timestamp + HMAC -> idempotency claim
-// -> parse -> durable write -> 202 -> after().
+// -> parse -> key matches the signed body -> durable write -> 202 -> after().
 
 const MAX_BODY_BYTES = 64 * 1024;
 const HANDLERS: Record<string, CallbackHandler> = { "quote-request": handleQuoteCallback };
@@ -48,6 +48,13 @@ export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]
     if (!envelope) {
       await db.releaseCallbackKey(key);
       return Response.json({ error: "invalid payload" }, { status: 400 });
+    }
+    // The header is outside the HMAC: without this, a captured callback could be replayed
+    // inside the 300 s window under a fresh key and applied again.
+    if (key !== `${envelope.data.jobId}:${event}.completed`) {
+      await db.releaseCallbackKey(key);
+      console.warn(`n8n <- ${event} rejected: key does not match the signed job corr=${correlationId}`);
+      return Response.json({ error: "idempotency-key does not match the signed body" }, { status: 400 });
     }
     const outcome = await handler(envelope.data); // small durable write BEFORE the 2xx
     if (outcome.status === "unknown-job") {

@@ -86,37 +86,53 @@ grep -o '"name":"Skill","input":{[^}]*}' run.jsonl   # чи викликано �
 
 ### Скрипти скіла: що вони показали
 
-**`check-contract.mjs` на `main`** (`ea73649`, файли з `git archive main`) — 5 FAIL, exit 1. Код
-застосунку, `.env.example` і `tools/` на `main` відтоді не змінювались (пізніші коміти — лише
-документація, матеріали й налаштування перевірки); повтор на `40398d6` дав той самий результат:
+**`check-contract.mjs` на `main`** (файли з `git archive main`) — 5 FAIL, exit 1. Код
+застосунку, `.env.example` і `tools/` на `main` не змінювались з виміряного `ea73649` (пізніші
+коміти — лише документація, матеріали й налаштування перевірки):
 
 ```
-C1  FAIL  no /webhook-test/ URL in code or .env.example
+C1  FAIL no /webhook-test/ URL in code or .env.example
       .env.example:6  N8N_WEBHOOK_URL points at a /webhook-test/ URL
-C2  PASS  no NEXT_PUBLIC_ n8n variables; no N8N_* in Client Components
-C3  FAIL  n8n is called only from lib/n8n/*, which starts with import 'server-only'
+C2  PASS no NEXT_PUBLIC_ n8n variables; no N8N_* in Client Components
+C3  FAIL n8n is called only from lib/n8n/*, which starts with import 'server-only'
       app/actions.ts:54  fetch to n8n outside lib/n8n/ (all calls go through lib/n8n/client.ts)
-C4  PASS  callback route reads the raw body; parses only after the signature check  (n/a: no callback route found …)
-C5  PASS  signature: length check + timingSafeEqual, never === / !==  (n/a: no callback route found)
-C6  FAIL  every fetch to n8n has signal: AbortSignal.timeout(...)
+C4  N/A  callback route reads the raw body; parses only after the signature check  (no callback route found …)
+C5  N/A  signature: length check + timingSafeEqual, never === / !==  (no callback route found)
+C6  FAIL every fetch to n8n has signal: AbortSignal.timeout(...)
       app/actions.ts:54  fetch without signal: add AbortSignal.timeout(10_000)
-C7  PASS  no bodies, payloads or headers in console.* in n8n code
-C8  PASS  no runtime = 'edge'
-C9  FAIL  .env.example has the contract keys with placeholder secrets; .env.local is git-ignored
+C7  PASS no bodies, payloads or headers in console.* in n8n code
+C8  PASS no runtime = 'edge'
+C9  FAIL .env.example has the contract keys with placeholder secrets; .env.local is git-ignored
       .env.example  key N8N_WEBHOOK_BASE_URL is missing   (+ N8N_WEBHOOK_TOKEN, N8N_CALLBACK_SECRET, APP_BASE_URL)
-C10 FAIL  every call to n8n sends an idempotency-key header
+C10 FAIL every call to n8n sends idempotency-key + x-n8n-token; no secrets in the URL
       app/actions.ts:54  no idempotency-key header (UUID created once per operation, reused on retries)
+      app/actions.ts:54  no x-n8n-token header (n8n Header Auth; a missing or wrong token is a 403)
 
-5 failed, 5 passed (10 checks)
+5 failed, 3 passed, 2 n/a (10 checks)
 ```
 
-**На `ws04/sample`** — `0 failed, 10 passed (10 checks)`, exit 0 (n8n callers: `lib/n8n/client.ts`;
-callback routes: `app/api/n8n/[event]/route.ts`).
+**Чому N/A, а не PASS:** на `main` ще немає колбек-роуту, тож C4 і C5 нічого не перевіряли. Скрипт
+каже це прямо — інакше «усе зелене» означало б «нікуди не дивились» (та сама пастка, що й «n8n
+callers: none» у проєкті, який очевидно викликає n8n).
 
-**Самоперевірка скрипта** на навмисно поганому коді (типові помилки агента без скіла: `req.json()`,
-`signature !== expected`, `NEXT_PUBLIC_N8N_WEBHOOK_URL`, тестовий URL, лог тіла, `runtime = "edge"`,
-справжній токен у `.env.example`) — **10 з 10 FAIL**. Окремо: роут, що читає `request.text()`, але робить
-`JSON.parse` до перевірки підпису в імпортованому helper-і, — C4 FAIL на рядку `JSON.parse`.
+**На `ws04/sample`** — `0 failed, 10 passed, 0 n/a (10 checks)`, exit 0 (n8n callers:
+`lib/n8n/client.ts`; callback routes: `app/api/n8n/[event]/route.ts`).
+
+**Самоперевірка скрипта** — набір із 15 міні-проєктів (автор тримає його поза репозиторієм разом з
+іншими тестами, прогін `run-fixtures.mjs`): еталонний проєкт за контрактом, обидві гілки репозиторію
+й 13 випадків, зібраних з типових помилок агента. Останній прогін — **15 з 15**. Що він ловить:
+
+- навмисно поганий код (`req.json()`, `signature !== expected`, `NEXT_PUBLIC_N8N_WEBHOOK_URL`,
+  тестовий URL, лог тіла, `runtime = "edge"`, справжній токен у `.env.example`) — **10 з 10 FAIL**;
+- парсинг до перевірки підпису — і `JSON.parse` у самому роуті, і виклик **імпортованої** функції,
+  яка парсить (C4 FAIL на рядку виклику), і `POST` у формі `export const POST = async (r) => …`
+  з `r.json()` та HMAC від `JSON.stringify(...)`;
+- виклик n8n через модуль конфігурації чи типізованого env (`fetch(env.N8N_…)`, `fetch(config.…)`):
+  C3, C6 і C10 FAIL, хоча ні URL, ні `process.env` немає поряд із `fetch`;
+- токен у query string і відсутній `x-n8n-token` — C10 FAIL;
+- **і навпаки**, коректний код, на якому перевірки не мають спрацьовувати: `typeof signature !==
+  "string" || signature === ""` (не C5) і `const init: RequestInit = { …, signal }; fetch(url, init)`
+  (не C6).
 
 **Мок у режимі 202 + колбек на запущений застосунок:**
 
@@ -125,28 +141,31 @@ N8N_WEBHOOK_TOKEN=… N8N_CALLBACK_SECRET=… node .claude/skills/integrating-n8
   --port <port> --mode respond-202 --delay 3000 --callback-url http://127.0.0.1:<app>/api/n8n/quote-request
 ```
 
-Відправка форми `/quotes/new` (без JS) → **HTTP 200 за 139 мс**; сторінка статусу: «У черзі» (94 мс) →
-«Готуємо кошторис» (455 мс) → «Готово» з посиланням на PDF (3304 мс, після колбека). Журнал мока:
+Відправка форми `/quotes/new` (без JS) → **HTTP 200 за 183 мс** (попередні прогони — 139–154 мс),
+хоча «воркфлоу» триває 3 с; сторінка статусу пройшла «У черзі» → «Готуємо кошторис» → «Готово» з
+посиланням на PDF одразу після колбека. Журнал мока (sha256 скорочено):
 
 ```
-POST /webhook/quote-request -> 202 in 1 ms auth=ok idempotency=new | headers: accept,accept-language,content-type,idempotency-key,user-agent,x-correlation-id,x-n8n-token | body 349 B sha256=b8eee1d6…
-workflow 0bbdc152-… running for 3000 ms, then callback event=quote-request.completed
-callback POST http://127.0.0.1:<app>/api/n8n/quote-request -> 202 in 178 ms (try 1/3) event=quote-request.completed body 382 B sha256=f4b64e43…
+POST /webhook/quote-request -> 202 in 1 ms auth=ok idempotency=new | headers: accept,accept-language,content-type,idempotency-key,user-agent,x-correlation-id,x-n8n-token | body 366 B sha256=b6c904c2…
+workflow 37ddbecb-… running for 3000 ms, then callback event=quote-request.completed
+callback POST http://127.0.0.1:<app>/api/n8n/quote-request -> 202 in 176 ms (try 1/3) event=quote-request.completed body 382 B sha256=0908ec8a…
 ```
 
 Журнал застосунку (фрагмент) — подія, статус, тривалість, correlation id, розмір і хеш тіла; ні email,
 ні назви компанії, ні токена, ні підпису:
 
 ```
-quote request 79cb356d-… queued
-n8n -> quote-request 202 in 12 ms (try 1/3) corr=3483f3a4-… 349 B sha256=b8eee1d6a433d378
-n8n <- quote-request completed accepted corr=3483f3a4-…
-n8n <- quote-request rejected: bad-signature corr=1418a8c6-… 382 B
-n8n <- quote-request rejected: stale-timestamp corr=edcb3148-… 382 B
+quote request 221a7e08-… queued
+n8n -> quote-request 202 in 10 ms (try 1/3) corr=5599e34c-… 366 B sha256=b6c904c2b1db5e16
+n8n <- quote-request completed accepted corr=5599e34c-…
+quote 221a7e08-… completed: customer notification queued (demo: no e-mail is sent)
+n8n <- quote-request rejected: bad-signature corr=0d03ff4b-… 382 B
+n8n <- quote-request rejected: stale-timestamp corr=d49e7449-… 382 B
+n8n <- quote-request rejected: key does not match the signed job corr=624d4f78-…
 ```
 
 **`send-signed-callback.mjs`** проти `/api/n8n/quote-request` з `--request-key` = id щойно створеного
-запиту — **14 з 14 PASS**, exit 0:
+запиту — **15 з 15 PASS**, exit 0:
 
 ```
 PASS  wrong-content-type     expected 415  got 415   only application/json is accepted
@@ -163,9 +182,15 @@ PASS  malformed-json         expected 400  got 400   valid signature over a body
 PASS  unknown-event          expected 404  got 404   valid signature, route for an event the app does not handle
 PASS  valid                  expected 202  got 202   fresh, correctly signed callback for a real job
 PASS  replay-same-key        expected 200  got 200   same idempotency-key again (n8n Retry On Fail): acknowledged, not applied twice
+PASS  replay-new-key         expected 400  got 400   captured callback replayed under a fresh key: the key must equal <jobId>:<event> from the signed body
 
-0 failed, 14 passed (14 cases)
+0 failed, 15 passed (15 cases)
 ```
+
+Випадок `replay-new-key` — це саме той сценарій, заради якого ключ звіряється з тілом: ті самі байти,
+той самий час і той самий підпис, що й у `valid`, лише з іншим `idempotency-key`. До цієї перевірки
+роут приймав такий запит (202) і виконував `after()` ще раз; тепер — 400, а в журналі
+`rejected: key does not match the signed job`.
 
 Додатково: сервер **без** `N8N_CALLBACK_SECRET` на правильно підписаний колбек відповідає 500 (не 2xx і
 не 400) — HMAC із порожнім ключем не приймається. Сторінка статусу не показує email і опис задачі;

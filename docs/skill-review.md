@@ -11,11 +11,11 @@
 | Репозиторій | [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) |
 | Тека → `name` | `skills/react-best-practices` → `name: vercel-react-best-practices` (у `--skill` — саме `name`) |
 | Версія | release-тег `agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278` = коміт `063bee9` від 28.08.2026 |
-| Навіщо нам | ревʼю й виправлення продуктивності LeadDesk (Next.js 16.3.5, React 19.2.8) |
+| Навіщо нам | рев'ю й виправлення продуктивності LeadDesk (Next.js 16.3.5, React 19.2.8) |
 
 ## 1. Подивитись, не встановлюючи
 
-- `DISABLE_TELEMETRY=1 npx skills add "vercel-labs/agent-skills#agent-skills-063bee9…" --list` — CLI
+- `DISABLE_TELEMETRY=1 npx skills@1.7.0 add "vercel-labs/agent-skills#agent-skills-063bee9…" --list` — CLI
   клонував тег і показав 9 скілів з описами; у репозиторій нічого не записав.
 - Файли читали з окремого неглибокого клону **саме цього тега** (`git clone --depth 1 --branch
   agent-skills-063bee9… https://github.com/vercel-labs/agent-skills.git` у тимчасову теку), не з `main`.
@@ -99,7 +99,7 @@ Next.js 16.3.5 (`node_modules/next/dist/docs/`) і з вимірюваннями
 
 - Команда встановлення (фінальна):
   ```bash
-  DISABLE_TELEMETRY=1 npx skills add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 \
+  DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 \
     --skill vercel-react-best-practices -a claude-code --copy
   ```
 - **Чому `--copy` і лише `-a claude-code`** (перевірено на цій машині):
@@ -115,7 +115,7 @@ Next.js 16.3.5 (`node_modules/next/dist/docs/`) і з вимірюваннями
   тегом (`diff -r --strip-trailing-cr`); CLI не копіює лише `metadata.json`. Коміт `287e4f1`; свіжий
   `git clone` на Windows дає звичайну теку з читабельним `SKILL.md`.
 - `skills-lock.json` закомічено (source, ref, `computedHash`). Відновлення з нього
-  (`npx skills experimental_install`) пише лише в `.agents/skills/`, яку Claude Code не читає, — тому
+  (`npx skills@1.7.0 experimental_install`) пише лише в `.agents/skills/`, яку Claude Code не читає, — тому
   справжні файли лежать у git.
 - Оновлення: та сама команда з новим тегом → `git diff .claude/skills/vercel-react-best-practices` →
   рев'ю змін за цим чеклістом → коміт.

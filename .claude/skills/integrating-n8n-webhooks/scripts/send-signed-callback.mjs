@@ -20,7 +20,8 @@ Usage:
 Options:
   --url <url>            Callback route, e.g. http://127.0.0.1:3000/api/n8n/quote-request (required)
   --request-key <key>    idempotency-key of the request that started a real job (for quotes: the quote id).
-                         Enables the positive cases: valid (202) and replay (200 {"duplicate":true}).
+                         Enables the positive cases: valid (202), replay with the same key
+                         (200 {"duplicate":true}) and replay with a fresh key (400).
                          Note: the valid case completes that job in the app.
   --event <name>         "event" in the body (default: <last path segment>.completed)
   --only <a,b,...>       Run only these cases (names from the table)
@@ -32,7 +33,7 @@ Environment:
 Signature (team contract):
   x-n8n-timestamp: <unix seconds>
   x-n8n-signature: sha256=<hex HMAC-SHA256(secret, "<timestamp>.<raw body>")>
-  idempotency-key: <jobId>:<event>
+  idempotency-key: <jobId>:<event>   (the same values as data.jobId and event in the body)
 `;
 
 let args;
@@ -150,14 +151,29 @@ const negative = [
 
 const validJob = randomUUID();
 const validKey = `${validJob}:${event}`;
+let captured = null; // the exact bytes, timestamp and signature of the "valid" case
 const positive = [
-  { name: "valid", expect: 202, why: "fresh, correctly signed callback for a real job", build: () => request({ jobId: validJob, key: validKey }) },
+  {
+    name: "valid",
+    expect: 202,
+    why: "fresh, correctly signed callback for a real job",
+    build: () => (captured = request({ jobId: validJob, key: validKey })),
+  },
   {
     name: "replay-same-key",
     expect: 200,
     why: "same idempotency-key again (n8n Retry On Fail): acknowledged, not applied twice",
     expectBody: /"duplicate"\s*:\s*true/,
     build: () => request({ jobId: validJob, key: validKey }),
+  },
+  {
+    name: "replay-new-key",
+    expect: 400,
+    why: "captured callback replayed under a fresh key: the key must equal <jobId>:<event> from the signed body",
+    build: () => {
+      const source = captured ?? request({ jobId: validJob, key: validKey });
+      return { url: source.url, init: { ...source.init, headers: { ...source.init.headers, "idempotency-key": `replay-${randomUUID()}` } } };
+    },
   },
 ];
 

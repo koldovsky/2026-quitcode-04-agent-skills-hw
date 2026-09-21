@@ -6,6 +6,8 @@
 //   node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --json
 //
 // Exit code: 0 = no failures, 1 = at least one FAIL, 2 = usage error.
+// A check whose subject does not exist in the project (no call to n8n, no callback route)
+// reports N/A, never PASS: "everything is green" must not mean "nothing was looked at".
 // Static only: reads source files (app/, lib/, components/, src/ and root proxy/middleware/
 // instrumentation/next.config files), .env.example and .gitignore. It never reads .env.local
 // or any other real env file and never prints values - only file:line and a short reason.
@@ -27,7 +29,9 @@ Usage: node check-contract.mjs [--root <project dir>] [--json]
   C7  no request/response bodies, payloads or headers in console.* in n8n code
   C8  no runtime = 'edge'
   C9  .env.example has the contract keys with placeholder secrets; .env.local is git-ignored
-  C10 every call to n8n sends an idempotency-key header
+  C10 every call to n8n sends idempotency-key + x-n8n-token; no secrets in the URL
+
+A check with nothing to look at (no n8n call, no callback route) prints N/A, not PASS.
 `;
 
 let args;
@@ -57,6 +61,7 @@ const CODE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const SKIP_DIRS = new Set(["node_modules", ".next", ".git", "dist", "build", "out", "coverage"]);
 const ENV_KEYS = ["N8N_WEBHOOK_BASE_URL", "N8N_WEBHOOK_TOKEN", "N8N_CALLBACK_SECRET", "APP_BASE_URL"];
 const SECRET_KEYS = ["N8N_WEBHOOK_TOKEN", "N8N_CALLBACK_SECRET"];
+const SECRET_IN_URL = /[?&]\s*(token|secret|key|apikey|api_key|access_token|auth|signature)\s*=/i;
 
 const toPosix = (p) => p.split(sep).join("/");
 const readText = (file) => readFileSync(file, "utf8").replace(/\r\n/g, "\n");
@@ -203,6 +208,65 @@ function callArgs(code, openIndex) {
 
 const lineOf = (code, index) => code.slice(0, index).split("\n").length;
 
+// Text from `start` up to where its brackets close (or the first top-level ";" / newline):
+// enough to capture an object literal, a call or a function body.
+function balancedFrom(code, start) {
+  let depth = 0;
+  let quote = null;
+  for (let i = start; i < code.length; i++) {
+    const c = code[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") {
+      if (depth === 0) return code.slice(start, i);
+      depth--;
+    } else if ((c === ";" || c === "\n") && depth === 0) return code.slice(start, i);
+  }
+  return code.slice(start);
+}
+
+// `const <name> = <this>` in the same file: lets a check follow `fetch(url, init)`.
+function initializerOf(code, name) {
+  const m = new RegExp(String.raw`\b(?:const|let|var)\s+${name}\b[^=;\n]*=\s*`).exec(code);
+  return m ? balancedFrom(code, m.index + m[0].length) : null;
+}
+
+// Signature + body of `export function name(...)` / `export const name = ...` in a module.
+function declarationText(file, name) {
+  const fn = new RegExp(String.raw`\bexport\s+(?:async\s+)?function\s+${name}\s*\(`).exec(file.code);
+  if (fn) return balancedFrom(file.code, fn.index + fn[0].length - 1);
+  const con = new RegExp(String.raw`\bexport\s+(?:const|let|var)\s+${name}\b[^=;\n]*=\s*`).exec(file.code);
+  return con ? balancedFrom(file.code, con.index + con[0].length) : null;
+}
+
+// Identifiers passed as a whole argument: fetch(url, init), fetch(url, { ...init }).
+const argIdentifiers = (argsText) =>
+  [...argsText.matchAll(/(?:^|,)\s*(?:\.\.\.)?\s*([A-Za-z_$][\w$]*)\s*(?=,|$)/g)].map((m) => m[1]);
+
+// First argument of a call (top-level comma; strings and brackets aware).
+function firstArgument(argsText) {
+  let depth = 0;
+  let quote = null;
+  for (let i = 0; i < argsText.length; i++) {
+    const c = argsText[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) return argsText.slice(0, i);
+  }
+  return argsText;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Collect files
 // ---------------------------------------------------------------------------------------------
@@ -227,12 +291,70 @@ const envExample = existsSync(envExamplePath)
 
 const isClientComponent = (f) => /^\s*["']use client["']/.test(f.code.replace(/^\s+/, ""));
 const inN8nLib = (f) => /(^|\/)lib\/n8n\//.test(f.rel);
-const readsN8nEnv = (f) => /process\.env\.(NEXT_PUBLIC_)?N8N_|process\.env\[\s*["'](NEXT_PUBLIC_)?N8N_/.test(f.code);
+// N8N_*, but also the names agents invent for the same thing (WEBHOOK_URL, QUOTE_WORKFLOW_URL).
+const N8N_ENV = /process\.env\.(?:NEXT_PUBLIC_)?\w*(?:N8N|WEBHOOK|WORKFLOW)\w*|process\.env\[\s*["'](?:NEXT_PUBLIC_)?\w*(?:N8N|WEBHOOK|WORKFLOW)/;
+const readsN8nEnv = (f) => N8N_ENV.test(f.code);
 const mentionsWebhookUrl = (f) => /\/webhook(-test)?\//.test(f.code);
 const hasFetch = (f) => /\bfetch\s*\(/.test(f.code);
 
-// Files that call n8n: they fetch and either live in lib/n8n/, read N8N_* env or contain a webhook URL.
-const outboundFiles = files.filter((f) => hasFetch(f) && (inN8nLib(f) || readsN8nEnv(f) || mentionsWebhookUrl(f)));
+// Local modules a file imports (@/..., ./..., ../...), with the names it binds from them.
+function localImportBindings(f) {
+  const out = [];
+  for (const m of f.code.matchAll(/\bimport\s+([^;]*?)\s*from\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) {
+    const spec = m[2] ?? m[3];
+    const clause = m[1] ?? "";
+    let base;
+    if (spec.startsWith("@/")) base = join(root, spec.slice(2));
+    else if (spec.startsWith(".")) base = resolve(dirname(f.full), spec);
+    else continue;
+    let target;
+    for (const candidate of [base, ...[".ts", ".tsx", ".js", ".mjs"].map((e) => base + e), ...["index.ts", "index.js"].map((e) => join(base, e))]) {
+      if (byFull.has(candidate)) {
+        target = byFull.get(candidate);
+        break;
+      }
+    }
+    if (!target) continue;
+    const bindings = [];
+    const named = /\{([^}]*)\}/.exec(clause);
+    if (named) {
+      for (const part of named[1].split(",")) {
+        const [imported, local] = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/);
+        if (imported) bindings.push({ imported: imported.trim(), local: (local ?? imported).trim() });
+      }
+    }
+    const def = /^\s*([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause.replace(/\{[^}]*\}/, ""));
+    if (def) bindings.push({ imported: "default", local: def[1] });
+    out.push({ module: target, bindings });
+  }
+  return out;
+}
+
+// Modules that only hold configuration (typed env, config object) for n8n: a fetch that uses
+// one of their exports is a call to n8n even though the URL is nowhere near the fetch.
+const configModules = files.filter((f) => !inN8nLib(f) && !hasFetch(f) && (readsN8nEnv(f) || mentionsWebhookUrl(f)));
+
+// Every fetch that goes to n8n: inside lib/n8n/, or in a file that reads N8N_* / holds a webhook
+// URL, or whose URL argument (directly or through a `const url = ...`) mentions n8n / a webhook
+// or comes from a config module.
+const n8nCalls = [];
+for (const f of files) {
+  if (!hasFetch(f)) continue;
+  const fromConfig = localImportBindings(f)
+    .filter(({ module }) => configModules.includes(module))
+    .flatMap(({ bindings }) => bindings.map((b) => b.local));
+  const fileLevel = inN8nLib(f) || readsN8nEnv(f) || mentionsWebhookUrl(f);
+  for (const m of f.code.matchAll(/\bfetch\s*\(/g)) {
+    const argsText = callArgs(f.code, m.index + m[0].length - 1);
+    const first = firstArgument(argsText);
+    const urlText = [first, ...argIdentifiers(first).concat(first.match(/[A-Za-z_$][\w$]*/g) ?? []).map((id) => initializerOf(f.code, id) ?? "")].join(" ");
+    const looksLikeN8n = /n8n|webhook|workflow/i.test(urlText) || fromConfig.some((b) => new RegExp(String.raw`\b${b}\b`).test(urlText));
+    if (fileLevel || looksLikeN8n) {
+      n8nCalls.push({ file: f, rel: f.rel, line: lineOf(f.code, m.index), args: argsText, url: urlText });
+    }
+  }
+}
+const outboundFiles = [...new Set(n8nCalls.map((c) => c.file))];
 
 // Callback routes: route handlers whose path or source mentions n8n, callback, webhook or a signature.
 const callbackRoutes = files.filter(
@@ -241,30 +363,40 @@ const callbackRoutes = files.filter(
     (/n8n|callback|webhook/i.test(f.rel) || /n8n|x-n8n-signature|callback|webhook|signature/i.test(f.raw)),
 );
 
-// Local modules a file imports (@/..., ./..., ../...), resolved to scanned files.
-function localImports(f) {
-  const out = [];
-  for (const m of f.code.matchAll(/\bfrom\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) {
-    const spec = m[1] ?? m[2];
-    let base;
-    if (spec.startsWith("@/")) base = join(root, spec.slice(2));
-    else if (spec.startsWith(".")) base = resolve(dirname(f.full), spec);
-    else continue;
-    for (const candidate of [base, ...[".ts", ".tsx", ".js", ".mjs"].map((e) => base + e), ...["index.ts", "index.js"].map((e) => join(base, e))]) {
-      if (byFull.has(candidate)) {
-        out.push(byFull.get(candidate));
-        break;
-      }
+const VERIFY_CALL = /\btimingSafeEqual\s*\(|\bcreateHmac\s*\(/;
+const PARSE_CALL = /\bJSON\.parse\s*\(|\.\s*(?:json|formData)\s*\(\s*\)/;
+
+// A callback "unit" = the route, the local modules it imports that do the crypto, and the names
+// the route imported: which of them verify (crypto inside) and which parse the body.
+const callbackUnits = callbackRoutes.map((route) => {
+  const imports = localImportBindings(route);
+  const helpers = imports.map((i) => i.module).filter((m) => /timingSafeEqual|createHmac/.test(m.code));
+  const verifyNames = [];
+  const parseNames = [];
+  for (const { module, bindings } of imports) {
+    for (const b of bindings) {
+      const text = declarationText(module, b.imported) ?? "";
+      if (!text) continue;
+      if (VERIFY_CALL.test(text)) verifyNames.push(b.local);
+      else if (PARSE_CALL.test(text)) parseNames.push(b.local);
     }
   }
-  return out;
-}
-
-// A callback "unit" = the route + local modules it imports that do the crypto (verification helpers).
-const callbackUnits = callbackRoutes.map((route) => {
-  const helpers = localImports(route).filter((m) => /timingSafeEqual|createHmac/.test(m.code));
-  return { route, helpers, all: [route, ...helpers] };
+  return { route, helpers: [...new Set(helpers)], all: [route, ...new Set(helpers)], verifyNames, parseNames };
 });
+
+// The request parameter of POST, in any of the shapes an agent writes it.
+function postParam(code) {
+  const patterns = [
+    /export\s+(?:async\s+)?function\s+POST\s*\(\s*(\w+)/,
+    /export\s+const\s+POST\s*(?::[^=]+)?=\s*(?:async\s*)?\(\s*(\w+)/,
+    /export\s+const\s+POST\s*(?::[^=]+)?=\s*(?:async\s+)?function\s*\w*\s*\(\s*(\w+)/,
+  ];
+  for (const p of patterns) {
+    const m = p.exec(code);
+    if (m) return m[1];
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Checks
@@ -274,19 +406,23 @@ const results = [];
 function check(id, title, run) {
   const findings = [];
   let note = "";
+  let na = false;
   run(
     (file, line, reason) => findings.push({ where: line ? `${file}:${line}` : file, reason }),
-    (text) => (note = text),
+    (text) => {
+      note = text;
+      na = true;
+    },
   );
-  results.push({ id, title, status: findings.length ? "FAIL" : "PASS", note, findings });
+  results.push({ id, title, status: findings.length ? "FAIL" : na ? "N/A" : "PASS", note, findings });
 }
 
 check("C1", "no /webhook-test/ URL in code or .env.example", (fail) => {
   for (const f of files) {
-    for (const m of f.code.matchAll(/\/webhook-test\//g)) fail(f.rel, lineOf(f.code, m.index), "test URL works only 120 s after 'Listen for test event'; use the production /webhook/ URL");
+    for (const m of f.code.matchAll(/\/webhook-test\b/g)) fail(f.rel, lineOf(f.code, m.index), "test URL works only 120 s after 'Listen for test event'; use the production /webhook/ URL");
   }
   for (const { line, text } of envExample ?? []) {
-    if (/\/webhook-test\//.test(text)) fail(".env.example", line, `${text.split("=")[0].trim()} points at a /webhook-test/ URL`);
+    if (/\/webhook-test\b/.test(text)) fail(".env.example", line, `${text.split("=")[0].trim()} points at a /webhook-test/ URL`);
   }
 });
 
@@ -306,12 +442,9 @@ check("C2", "no NEXT_PUBLIC_ n8n variables; no N8N_* in Client Components", (fai
 
 check("C3", "n8n is called only from lib/n8n/*, which starts with import 'server-only'", (fail, note) => {
   const libFiles = files.filter((f) => inN8nLib(f) && (hasFetch(f) || readsN8nEnv(f)));
-  if (!outboundFiles.length && !libFiles.length) note("n/a: no calls to n8n found");
-  for (const f of outboundFiles) {
-    if (!inN8nLib(f)) {
-      const m = /\bfetch\s*\(/.exec(f.code);
-      fail(f.rel, lineOf(f.code, m.index), "fetch to n8n outside lib/n8n/ (all calls go through lib/n8n/client.ts)");
-    }
+  if (!n8nCalls.length && !libFiles.length) note("no call to n8n found in app/, lib/, components/ or src/");
+  for (const call of n8nCalls) {
+    if (!inN8nLib(call.file)) fail(call.rel, call.line, "fetch to n8n outside lib/n8n/ (all calls go through lib/n8n/client.ts)");
   }
   for (const f of libFiles) {
     const firstStatement = f.code.replace(/^\s+/, "").split("\n")[0];
@@ -320,26 +453,29 @@ check("C3", "n8n is called only from lib/n8n/*, which starts with import 'server
 });
 
 check("C4", "callback route reads the raw body; parses only after the signature check", (fail, note) => {
-  if (!callbackUnits.length) note("n/a: no callback route found (app/**/route.ts mentioning n8n/callback/webhook/signature)");
-  for (const { route, helpers, all } of callbackUnits) {
-    const param = /export\s+(?:async\s+)?function\s+POST\s*\(\s*(\w+)/.exec(route.code)?.[1];
+  if (!callbackUnits.length) note("no callback route found (app/**/route.ts mentioning n8n/callback/webhook/signature)");
+  for (const { route, helpers, all, verifyNames, parseNames } of callbackUnits) {
+    const param = postParam(route.code);
     for (const f of all) {
       const names = ["req", "request", ...(param ? [param] : [])].join("|");
       for (const m of f.code.matchAll(new RegExp(`\\b(${names})\\s*\\.\\s*(json|formData)\\s*\\(\\s*\\)`, "g"))) {
         fail(f.rel, lineOf(f.code, m.index), `${m[0]} parses/re-serialises the body: read it once with .text() or .arrayBuffer()`);
       }
+      for (const m of f.code.matchAll(/\.\s*update\s*\(\s*JSON\.stringify\s*\(/g)) {
+        fail(f.rel, lineOf(f.code, m.index), "HMAC over JSON.stringify(...): sign the exact bytes n8n sent, not a re-serialised object");
+      }
     }
-    // Order inside the route: first JSON.parse must come after the first verification step.
-    const helperNames = helpers.flatMap((h) =>
-      [...route.code.matchAll(/import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/g)]
-        .filter((m) => localImports({ ...route, code: m[0] }).some((x) => x.full === h.full))
-        .flatMap((m) => m[1].split(",").map((s) => s.trim().split(/\s+as\s+/).pop())),
-    );
-    const verifyPatterns = [/\btimingSafeEqual\s*\(/, ...helperNames.filter(Boolean).map((n) => new RegExp(`\\b${n}\\s*\\(`))];
+    // Order inside the route: the first parse (here or in an imported helper) must come after
+    // the first verification step.
+    const verifyPatterns = [VERIFY_CALL, ...verifyNames.map((n) => new RegExp(String.raw`\b${n}\s*\(`))];
     const verifyIdx = Math.min(...verifyPatterns.map((p) => p.exec(route.code)?.index ?? Infinity));
-    const parse = /\bJSON\.parse\s*\(/.exec(route.code);
+    const parsePatterns = [/\bJSON\.parse\s*\(/, ...parseNames.map((n) => new RegExp(String.raw`\b${n}\s*\(`))];
+    const parse = parsePatterns
+      .map((p) => p.exec(route.code))
+      .filter(Boolean)
+      .sort((a, b) => a.index - b.index)[0];
     if (parse && parse.index < verifyIdx) {
-      fail(route.rel, lineOf(route.code, parse.index), "JSON.parse before the signature is verified");
+      fail(route.rel, lineOf(route.code, parse.index), `${parse[0].trim()} before the signature is verified`);
     }
     for (const h of helpers) {
       const p = /\bJSON\.parse\s*\(/.exec(h.code);
@@ -350,7 +486,7 @@ check("C4", "callback route reads the raw body; parses only after the signature 
 });
 
 check("C5", "signature: length check + timingSafeEqual, never === / !==", (fail, note) => {
-  if (!callbackUnits.length) note("n/a: no callback route found");
+  if (!callbackUnits.length) note("no callback route found");
   for (const { route, all } of callbackUnits) {
     const text = all.map((f) => f.code).join("\n");
     if (!/\btimingSafeEqual\s*\(/.test(text)) fail(route.rel, null, "no crypto.timingSafeEqual (in the route or the helpers it imports)");
@@ -359,24 +495,28 @@ check("C5", "signature: length check + timingSafeEqual, never === / !==", (fail,
     }
     for (const f of all) {
       const code = codeOnly(f.code);
-      const cmp = /(?<![.\w])\w*(?:signature|digest|hmac)\w*\s*[!=]==(?!\s*(?:null|undefined)\b)|[!=]==\s*\w*(?:signature|digest|hmac)\w*\b(?!\s*\.\s*(?:length|byteLength))/gi;
+      // Comparing a signature with a string literal, null/undefined or typeof is a guard, not a
+      // comparison of two signatures - only the latter must go through timingSafeEqual.
+      const cmp =
+        /(?<!typeof\s)(?<!\w)\w*(?:signature|digest|hmac)\w*\s*[!=]==(?!\s*(?:null\b|undefined\b|["'`]))|(?<!["'`]\s)[!=]==\s*\w*(?:signature|digest|hmac)\w*\b(?!\s*\.\s*(?:length|byteLength))/gi;
       for (const m of code.matchAll(cmp)) fail(f.rel, lineOf(code, m.index), `'${m[0].trim()}': compare signatures with timingSafeEqual`);
     }
   }
 });
 
 check("C6", "every fetch to n8n has signal: AbortSignal.timeout(...)", (fail, note) => {
-  if (!outboundFiles.length) note("n/a: no calls to n8n found");
-  for (const f of outboundFiles) {
-    for (const m of f.code.matchAll(/\bfetch\s*\(/g)) {
-      const argsText = callArgs(f.code, m.index + m[0].length - 1);
-      if (!/\bsignal\b/.test(argsText)) fail(f.rel, lineOf(f.code, m.index), "fetch without signal: add AbortSignal.timeout(10_000)");
-    }
+  if (!n8nCalls.length) note("no call to n8n found");
+  for (const call of n8nCalls) {
+    if (/\bsignal\b/.test(call.args)) continue;
+    // fetch(url, init) / fetch(url, { ...init }): follow the object one level.
+    const viaVariable = argIdentifiers(call.args).some((id) => /\bsignal\b/.test(initializerOf(call.file.code, id) ?? ""));
+    if (!viaVariable) fail(call.rel, call.line, "fetch without signal: add AbortSignal.timeout(10_000)");
   }
 });
 
-check("C7", "no bodies, payloads or headers in console.* in n8n code", (fail) => {
+check("C7", "no bodies, payloads or headers in console.* in n8n code", (fail, note) => {
   const n8nFiles = new Set([...outboundFiles, ...callbackUnits.flatMap((u) => u.all), ...files.filter(inN8nLib)]);
+  if (!n8nFiles.size) note("no n8n code found (no call to n8n, no callback route, no lib/n8n/)");
   const leaky = /\b(raw|rawBody|body|payload|envelope|formData|headers|text)\b(?!\s*\.\s*(length|byteLength)\b)|JSON\.stringify\s*\(|[,(]\s*(data|lead|quote|input|values|result|request|req)\s*[,)]/;
   for (const f of n8nFiles) {
     for (const m of f.code.matchAll(/\bconsole\s*\.\s*(log|info|warn|error|debug)\s*\(/g)) {
@@ -414,12 +554,23 @@ check("C9", ".env.example has the contract keys with placeholder secrets; .env.l
   if (ignoresAllEnv && envExample && !rules.some((r) => /^!\/?\.env\.example$/.test(r))) fail(".gitignore", null, ".env* also ignores .env.example: add !.env.example");
 });
 
-check("C10", "every call to n8n sends an idempotency-key header", (fail, note) => {
-  if (!outboundFiles.length) note("n/a: no calls to n8n found");
+check("C10", "every call to n8n sends idempotency-key + x-n8n-token; no secrets in the URL", (fail, note) => {
+  if (!n8nCalls.length) note("no call to n8n found");
   for (const f of outboundFiles) {
+    const line = n8nCalls.find((c) => c.file === f).line;
     if (!/["']idempotency-key["']/i.test(f.code)) {
-      const m = /\bfetch\s*\(/.exec(f.code);
-      fail(f.rel, lineOf(f.code, m.index), "no idempotency-key header (UUID created once per operation, reused on retries)");
+      fail(f.rel, line, "no idempotency-key header (UUID created once per operation, reused on retries)");
+    }
+    if (!/["']x-n8n-token["']/i.test(f.code)) {
+      fail(f.rel, line, "no x-n8n-token header (n8n Header Auth; a missing or wrong token is a 403)");
+    }
+  }
+  for (const call of n8nCalls) {
+    if (SECRET_IN_URL.test(call.url)) fail(call.rel, call.line, "token/secret in the query string: it lands in logs and proxies - send it as a header");
+  }
+  for (const f of outboundFiles) {
+    for (const m of f.code.matchAll(/searchParams\s*\.\s*(?:set|append)\s*\(\s*["'](token|secret|key|apikey|api_key|access_token|auth)["']/gi)) {
+      fail(f.rel, lineOf(f.code, m.index), `${m[1]} added to the query string: n8n auth goes in the x-n8n-token header`);
     }
   }
 });
@@ -429,15 +580,17 @@ check("C10", "every call to n8n sends an idempotency-key header", (fail, note) =
 // ---------------------------------------------------------------------------------------------
 
 const failed = results.filter((r) => r.status === "FAIL");
+const passed = results.filter((r) => r.status === "PASS");
+const skipped = results.filter((r) => r.status === "N/A");
 if (args.json) {
-  console.log(JSON.stringify({ root: toPosix(root), failed: failed.length, passed: results.length - failed.length, results }, null, 2));
+  console.log(JSON.stringify({ root: toPosix(root), failed: failed.length, passed: passed.length, na: skipped.length, results }, null, 2));
 } else {
   console.log(`check-contract (integrating-n8n-webhooks) - ${toPosix(root)}`);
   console.log(`scanned ${files.length} source files; n8n callers: ${outboundFiles.map((f) => f.rel).join(", ") || "none"}; callback routes: ${callbackRoutes.map((f) => f.rel).join(", ") || "none"}\n`);
   for (const r of results) {
-    console.log(`${r.id.padEnd(3)} ${r.status}  ${r.title}${r.note ? `  (${r.note})` : ""}`);
+    console.log(`${r.id.padEnd(3)} ${r.status.padEnd(4)} ${r.title}${r.note ? `  (${r.note})` : ""}`);
     for (const f of r.findings) console.log(`      ${f.where}  ${f.reason}`);
   }
-  console.log(`\n${failed.length} failed, ${results.length - failed.length} passed (${results.length} checks)`);
+  console.log(`\n${failed.length} failed, ${passed.length} passed, ${skipped.length} n/a (${results.length} checks)`);
 }
 process.exitCode = failed.length ? 1 : 0;

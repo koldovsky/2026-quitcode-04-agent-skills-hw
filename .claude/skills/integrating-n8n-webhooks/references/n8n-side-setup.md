@@ -54,6 +54,9 @@
 - Method `POST`, URL: `{{ $('Webhook').item.json.body.callbackUrl }}`.
 - Send Headers: `x-n8n-timestamp` = `{{ $json.ts }}`, `x-n8n-signature` = `sha256={{ <вихід Crypto> }}`,
   `idempotency-key` = `{{ $execution.id }}:<event>.completed`, `x-correlation-id` = з вхідних заголовків.
+  Ключ мусить збігатися з підписаним тілом (`data.jobId` = `{{ $execution.id }}`, `event` =
+  `<event>.completed`): застосунок відхиляє колбек з іншим ключем кодом 400 — саме так він відрізняє
+  повтор n8n від чужого відтворення перехопленого колбека.
 - Body Content Type: **Raw**, Content Type `application/json`, Body = `{{ $json.body }}`.
   Чому Raw, а не «JSON → Using Fields Below»: документація n8n не гарантує, що серіалізація полів
   дасть рівно ті байти, які ми підписали.

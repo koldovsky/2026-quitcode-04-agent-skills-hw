@@ -29,7 +29,7 @@
 - **Мок, однаковий для обох:** `node --env-file=.env.local tools/mock-n8n.mjs --mode respond-202 --delay 5000`
   (заплановано)
 - **Базова лінія `check-contract.mjs` на копії до прогону:** однакова в A і B — 5 FAIL (C1, C3, C6,
-  C9, C10), 5 PASS (C2, C4 і C5 — n/a, колбек-роуту ще немає, C7, C8), код виходу 1:
+  C9, C10), 3 PASS (C2, C7, C8) і 2 N/A (C4, C5 — колбек-роуту ще немає), код виходу 1:
 
   ```
   $ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --root <копія>
@@ -39,8 +39,8 @@
   C2  PASS  no NEXT_PUBLIC_ n8n variables; no N8N_* in Client Components
   C3  FAIL  n8n is called only from lib/n8n/*, which starts with import 'server-only'
         app/actions.ts:59  fetch to n8n outside lib/n8n/ (all calls go through lib/n8n/client.ts)
-  C4  PASS  callback route reads the raw body; parses only after the signature check  (n/a: no callback route found …)
-  C5  PASS  signature: length check + timingSafeEqual, never === / !==  (n/a: no callback route found)
+  C4  N/A  callback route reads the raw body; parses only after the signature check  (no callback route found …)
+  C5  N/A  signature: length check + timingSafeEqual, never === / !==  (no callback route found)
   C6  FAIL  every fetch to n8n has signal: AbortSignal.timeout(...)
         app/actions.ts:59  fetch without signal: add AbortSignal.timeout(10_000)
   C7  PASS  no bodies, payloads or headers in console.* in n8n code
@@ -50,9 +50,10 @@
         .env.example  key N8N_WEBHOOK_TOKEN is missing
         .env.example  key N8N_CALLBACK_SECRET is missing
         .env.example  key APP_BASE_URL is missing
-  C10 FAIL  every call to n8n sends an idempotency-key header
+  C10 FAIL  every call to n8n sends idempotency-key + x-n8n-token; no secrets in the URL
         app/actions.ts:59  no idempotency-key header (UUID created once per operation, reused on retries)
-  5 failed, 5 passed (10 checks)
+        app/actions.ts:59  no x-n8n-token header (n8n Header Auth; a missing or wrong token is a 403)
+  5 failed, 3 passed, 2 n/a (10 checks)
   ```
 
 ## A — без скіла

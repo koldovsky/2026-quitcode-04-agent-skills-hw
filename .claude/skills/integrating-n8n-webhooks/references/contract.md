@@ -57,7 +57,7 @@ Next.js вбудовує в клієнтський бандл лише `NEXT_PUB
 | `content-type` | `application/json` |
 | `x-n8n-timestamp` | Unix-час у секундах, коли n8n підписав запит |
 | `x-n8n-signature` | `sha256=<hex HMAC-SHA256(N8N_CALLBACK_SECRET, "${timestamp}.${rawBody}")>` |
-| `idempotency-key` | `<jobId>:<event>` (у n8n: `{{ $execution.id }}:quote-request.completed`) |
+| `idempotency-key` | `<data.jobId>:<event>` — ті самі значення, що в підписаному тілі (у n8n: `{{ $execution.id }}:quote-request.completed`) |
 | `x-correlation-id` | скопійований із запиту, що запустив воркфлоу |
 
 ```json
@@ -78,6 +78,9 @@ Next.js вбудовує в клієнтський бандл лише `NEXT_PUB
 - `data.status` — `completed` або `failed` (тоді замість `result` — `error: { "code": "…" }`).
 - `data.requestIdempotencyKey` — ключ запиту, що запустив задачу: за ним застосунок знаходить свій
   запис (для кошторисів ключ = id запиту).
+- Заголовок `idempotency-key` підписом не захищений (HMAC рахуємо лише від `` `${ts}.${rawBody}` ``),
+  тому роут приймає лише ключ, що дорівнює `` `${data.jobId}:${event}` `` із підписаного тіла. Інакше
+  один перехоплений колбек можна відтворювати з новими ключами, доки не мине вікно 300 с.
 
 **Коди відповідей колбек-роуту** (перевіряє `scripts/send-signed-callback.mjs`)
 
@@ -87,10 +90,11 @@ Next.js вбудовує в клієнтський бандл лише `NEXT_PUB
 | `content-type` не `application/json` | 415 |
 | тіло > 64 КБ | 413 |
 | немає `N8N_CALLBACK_SECRET` на сервері | 500 (відхиляємо все, у журнал — причина без значень) |
-| час поза вікном ±300 с, нечисловий час, немає/невірний підпис | 401, порожнє тіло |
+| час поза вікном ±300 с, нечисловий час, немає або неправильний підпис | 401, порожнє тіло |
 | немає `idempotency-key` | 400 |
 | ключ уже оброблено | 200 `{"duplicate": true}` |
 | не JSON / не та форма / подія в тілі не збігається зі шляхом | 400 |
+| `idempotency-key` ≠ `<data.jobId>:<event>` з підписаного тіла | 400 (ключ звільняємо) |
 | запис за `requestIdempotencyKey` не знайдено | 404 |
 | прийнято й збережено | 202 `{"ok": true}` |
 

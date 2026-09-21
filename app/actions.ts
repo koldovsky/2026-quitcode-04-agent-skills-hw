@@ -31,8 +31,13 @@ export async function submitLead(
   const ipAddress = requestHeaders.get("x-forwarded-for")?.split(",")[0].trim() ?? "127.0.0.1";
   const userAgent = requestHeaders.get("user-agent") ?? "";
 
+  // One idempotency key per submission, stored with the lead: every attempt - our retries, a
+  // re-drive from the dashboard - sends the same key, so n8n runs the workflow once.
+  const idempotencyKey = randomUUID();
+
   const lead = await db.insertLead({
     ...parsed.data,
+    n8nIdempotencyKey: idempotencyKey,
     workspaceId: PUBLIC_FORM_WORKSPACE_ID,
     jobTitle: "",
     city: "",
@@ -56,8 +61,6 @@ export async function submitLead(
 
   // The visitor only waits for the insert. The n8n call (event "lead-created",
   // response mode Immediately) and the audit log run after the response has been sent.
-  // One idempotency key per submission; the client reuses it on every retry.
-  const idempotencyKey = randomUUID();
   after(async () => {
     await Promise.all([
       triggerWorkflow(
@@ -76,7 +79,7 @@ export async function submitLead(
           consentMarketing: lead.consentMarketing,
           createdAt: lead.createdAt,
         },
-        { idempotencyKey },
+        { idempotencyKey: lead.n8nIdempotencyKey ?? idempotencyKey },
       ),
       logAudit("lead.created", lead.id),
     ]);

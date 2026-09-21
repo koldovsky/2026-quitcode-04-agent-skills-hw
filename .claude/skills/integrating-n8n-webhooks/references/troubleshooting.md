@@ -14,6 +14,7 @@
 | Колбек → **415** | n8n шле не `application/json` | HTTP Request → Raw, Content Type `application/json` |
 | Колбек → **413** | У колбеку файл або великий масив | Лише посилання на файл |
 | Колбек → **404** «unknown job» | `requestIdempotencyKey` не той (n8n узяв не той заголовок) або запис видалено | `{{ $('Webhook').item.json.headers['idempotency-key'] }}` |
+| Колбек → **400** «idempotency-key does not match the signed body» | Заголовок `idempotency-key` в HTTP Request зібрано не з тих полів (інший `$execution.id` чи інша подія), ніж тіло | `{{ $execution.id }}:<event>.completed`, і в тілі `data.jobId` = `{{ $execution.id }}` |
 | Запис оновився **двічі** / два листи | Немає ідемпотентності: повтори без `idempotency-key`, у n8n немає Remove Duplicates, роут не «застовплює» ключ | Ключ на кожен виклик, Remove Duplicates у n8n, claim у роуті |
 | Статус завис на `queued` | Виклик n8n не відбувся: немає `N8N_WEBHOOK_BASE_URL`/`N8N_WEBHOOK_TOKEN`/`APP_BASE_URL` або 4xx | Журнал сервера: рядок `n8n → <event>` з кодом і причиною |
 | Статус завис на `processing` | Колбек не прийшов: воркфлоу впав, не той `callbackUrl`, опублікована стара версія | Executions у n8n; Publish; `callbackUrl` = `${APP_BASE_URL}/api/n8n/<event>` |
