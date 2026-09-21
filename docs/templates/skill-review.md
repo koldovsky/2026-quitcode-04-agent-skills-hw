@@ -18,7 +18,7 @@
 
 ## 1. Подивитись, не встановлюючи
 
-- Як дивились: <`npx skills add "<repo>#<ref>" --list` / GitHub на тезі / `git clone --depth 1 --branch <ref> … ../review-…`>
+- Як дивились: <`npx skills@1.7.0 add "<repo>#<ref>" --list` / GitHub на тезі / `git clone --depth 1 --branch <ref> … ../review-…`>
 - Склад скіла:
 
   | Файл / тека | Розмір | Що це |
@@ -50,7 +50,7 @@ awk '/^---$/{n++; next} n==1' "$S/SKILL.md"                 # frontmatter
 find "$S" -name "*hooks*.json" -o -name "*mcp*.json" -o -name "plugin.json" -o -name "settings*.json"
 grep -rn '!`' "$S"                                          # команди під час рендеру
 grep -rnE "npx |curl |wget |Invoke-WebRequest|WebFetch" "$S"
-grep -rhoE "https?://[^ )\"'>\`]+" "$S" | sort -u           # усі посилання
+grep -rhoE "https?://[^]()<> \"'\`]+" "$S" | sort -u        # усі посилання
 grep -rniE "ignore (all |the )?previous|system prompt|<!--" "$S"
 node -e 'const fs=require("fs"),p=require("path");const w=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?w(p.join(d,e.name)):[p.join(d,e.name)]);let n=0;for(const f of w(process.argv[1])){if(/[​-‏⁠﻿]/.test(fs.readFileSync(f,"utf8"))){console.log(f);n++}}console.log(n+" file(s) with zero-width characters")' "$S"
 ```
