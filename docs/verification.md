@@ -1,14 +1,15 @@
 # Перевірка (Task A–C)
 
 > Еталонне виконання для гілки `ws04/sample`, 21.09.2026. Windows 11 + Git Bash, Node 24.18.0,
-> Claude Code 2.1.276 (модель за замовчуванням у свіжій сесії — `claude-sonnet-5`), Next.js 16.3.5.
+> Claude Code 2.1.276 для перевірок скілів і 2.1.278 для прогонів агента (CLI оновився під час
+> збірки; модель за замовчуванням у свіжій сесії — `claude-sonnet-5`, effort `xhigh`), Next.js 16.3.5.
 > Усі числа — з продакшн-збірки (`next build` + `next start` на 127.0.0.1).
 
 > **Про структуру завдань.** Task C — це лише скіл; фічу «запит на кошторис» будує агент у
 > прогонах Task D, і в гілку переїжджає результат прогону **B**. Фіча на `ws04/sample` — саме
 > такий результат «зі скілом»: автор будував її з `integrating-n8n-webhooks`, і скіл під час
-> роботи виправив сам себе (коміт `f3ba25d`). Всередині протоколу A/B цей прогін не проводився —
-> див. `docs/ab-validation.md`. Докази по фічі (мок, час форми, журнал сервера) лишились у цьому
+> роботи виправив сам себе (коміт `f3ba25d`). Але це не запис прогону B: самі A/B-прогони (по три
+> на плече) — у `docs/ab-validation.md`. Докази по фічі (мок, час форми, журнал сервера) лишились у цьому
 > файлі; у студентському звіті їхнє місце — `docs/ab-validation.md`, розділ про перенесення
 > прогону B.
 
@@ -47,15 +48,32 @@
 > На сторінці ліда в дашборді (/dashboard/leads/[id]) додай форму «Додати нотатку»: одне текстове
 > поле до 500 символів; нотатка дописується до внутрішніх нотаток ліда.
 
-**Результат: ОЧІКУЄ ПРОГОНУ.** Під час збірки еталону CLI на цій машині не був авторизований:
-`claude auth status` → `"loggedIn": false`, а `claude -p` завершувався за 0,1 с з
-`Failed to authenticate: OAuth session expired and could not be refreshed` (`/context` працює, бо не
-звертається до API). Повторна перевірка перед фіналізацією (21.09.2026) нічого не змінила:
-`"loggedIn": false`, і всі 10 спроб калібрування `claude -p` зупинились на тій самій помилці.
-Команда для прогону — в кінці розділу C; записати: чи був виклик інструмента `Skill` з
-`building-client-form` (або читання його `SKILL.md`), які файли змінено, чи дія перевіряє сесію й
-належність ліда (`server-auth-actions`), чи поле має `aria-invalid`/`aria-describedby`,
-`npm run lint`/`build`.
+**Результат: скіл спрацював — але код не пройшов Verify.** Прогін 21.09.2026 у свіжому клоні
+`ws04/sample` (`e303748`), з якого прибрано `materials/`, `docs/`, `README.md`, `.coderabbit.yaml`
+і `.github/`; сесія `235379fd-b236-4266-964e-d1100e3a13c9`, 46 ходів, 11,9 хв, $2,73.
+
+- **Спрацювання:** найперший виклик інструмента в сесії — `Skill(building-client-form)` (далі 43
+  виклики Read/Grep/Edit/Write/Bash). У списку скілів сесії видно всі три скіли проєкту.
+- **Що зробив:** `components/lead-note-form.tsx` (`maxLength=500`, `aria-invalid`,
+  `aria-describedby="note-error note-hint"`, підсумок у `role="alert"`, введений текст лишається
+  після помилки), `lib/lead-note-form.ts` (чиста валідація; `\r\n` зводиться до одного символу, щоб
+  сервер рахував так само, як браузер), дія `addLeadNote` у `app/actions.ts`, `db.appendLeadNote`
+  у `lib/db.ts`, форма на сторінці ліда — свідомо поза блоком `{lead.internalNotes && …}`.
+- **Правила Vercel, на які посилається скіл, дотримані:** дія починається з `findOwnLead` (сесія +
+  належність ліда до workspace, `server-auth-actions`), повертає лише `{ status, … }`, тексту
+  нотатки в журналі немає — лише `lead note invalid: note` і `lead note added to lead_0001`.
+- `npm run lint` і `npm run build` — без помилок; `check-contract.mjs` на клоні — `0 failed, 10 passed`.
+- **Verify провалився на пункті «форма працює без JavaScript».** Сам агент написав, що в роботі
+  нічого не перевіряв (запуск сервера вимагав підтвердження, якого в сесії не було). Перевірка
+  автора на продакшн-збірці клону: відправка форми без JS **виконує дію** (у журналі
+  `lead note added to lead_0001`, нотатка видно на наступному GET), але **HTTP-відповідь не
+  завершується** — 45 с без заголовків, однаково через `fetch` і через `curl`. Контроль на тому
+  самому сервері й тій самій сторінці: попередня дія «Вийти» — 303 за 19 мс, форма `/quotes/new` —
+  200 за 18 мс. Отже, це дефект згенерованого коду, а не стенду.
+- **Що з цього забираємо в скіл:** спрацювання ≠ правильний код. У розділ Verify скіла
+  `building-client-form` треба додати окремим рядком «відправте форму з вимкненим JavaScript і
+  переконайтесь, що **відповідь приходить**», бо нинішнє формулювання «форма працює й без JS»
+  агент вважає виконаним, щойно у формі немає обов'язкового JS.
 
 **Де патерн уже застосовано й перевірено** — форма `/quotes/new` (`components/quote-form.tsx`,
 `app/quotes/actions.ts`, `lib/quote-form.ts`):
@@ -76,8 +94,7 @@
 Завдання C — сам скіл: `SKILL.md` (140 рядків) з контрактом, чеклістом і правилами зупинки,
 `references/` з деталями й `scripts/` (`check-contract.mjs`, `send-signed-callback.mjs`,
 `mock-n8n.mjs`). Фічі в цьому завданні немає: її будує агент у прогонах Task D. Основний доказ
-спрацювання скіла — **прогін B** у `docs/ab-validation.md` (ще не виконано: CLI на машині збірки
-не авторизований).
+спрацювання скіла — **прогони B** у `docs/ab-validation.md` (скіл викликано 3 з 3).
 
 **Додаткова перевірка спрацювання** — звичайний запит у свіжій сесії (скіл не названо;
 `materials/n8n-webhooks-brief.md` на час прогону прибрано з клону, щоб контракт міг прийти лише зі
@@ -86,17 +103,34 @@
 > Коли менеджер змінює статус ліда на «Угода» (won), треба запустити в n8n воркфлоу deal-won — він
 > створює рахунок у бухгалтерії. Відповідь від n8n нам не потрібна.
 
-**Результат: ОЧІКУЄ ПРОГОНУ** — та сама причина, що в Task B. Записати: виклик `Skill` /
-читання `references/`, чи виклик іде через `lib/n8n/client.ts` в `after()` з режимом Immediately (без
-`callbackUrl`), рядок у `docs/n8n-integrations.md`, вивід `check-contract.mjs`.
+**Результат: скіл спрацював.** Прогін 21.09.2026 у такому самому клоні (`e303748`, без `materials/`,
+`docs/`, `README.md`, `.coderabbit.yaml`, `.github/`); сесія `31f8df47-86c2-41ce-81a0-eb3bc8e53043`,
+41 хід, 6,6 хв, $1,54.
 
-**Як запустити обидва прогони** (по одному, не паралельно — паралельні сесії можуть конфліктувати
+- **Спрацювання:** найперший виклик інструмента — `Skill(integrating-n8n-webhooks)`; далі прочитано
+  `references/contract.md`, `references/nextjs-patterns.md`, `references/n8n-side-setup.md` — **і два
+  правила з чужого скіла**: `vercel-react-best-practices/rules/server-after-nonblocking.md` та
+  `server-auth-actions.md`. Це композиція скілів у дії: наш скіл на ці правила посилається, і агент
+  пішов за посиланням.
+- **Що зробив:** у `updateLeadStatus` (`app/actions.ts`) виклик іде через `triggerWorkflow` з
+  `lib/n8n/client.ts`, всередині `after()`, режим Immediately — без `callbackUrl`, бо відповідь від
+  n8n не потрібна. Ключ ідемпотентності `dealWonIdempotencyKey` зберігається на ліді (`lib/types.ts`,
+  `lib/db.ts`) і створюється лише тоді, коли лід **уперше** перейшов у «won»: повторний клік або
+  повернення статусу назад і знову не створить другого рахунку. У тілі — лише поля для рахунку, без
+  телефону, тексту звернення, IP, user agent і внутрішніх нотаток.
+- `check-contract.mjs` на клоні — `0 failed, 10 passed, 0 n/a`, код виходу 0; `npm run lint` і
+  `npm run build` — без помилок.
+- **Чого цей прогін не показав:** рядка в `docs/n8n-integrations.md` — теку `docs/` для прогону
+  прибрано з клону (щоб контракт міг прийти лише зі скіла), тож реєстр інтеграцій агенту не було
+  куди дописати. Це обмеження протоколу перевірки, а не поведінка агента.
+
+**Як повторити обидва прогони** (по одному, не паралельно — паралельні сесії можуть конфліктувати
 під час оновлення OAuth-токена):
 
 ```bash
 claude auth status                        # має бути "loggedIn": true
 git clone --branch ws04/sample <repo> ../trigger-n8n && cd ../trigger-n8n && npm ci
-rm materials/n8n-webhooks-brief.md        # лише для прогону Task C
+rm -rf materials docs README.md .coderabbit.yaml .github   # щоб контракт міг прийти лише зі скіла
 claude -p --output-format stream-json --verbose --permission-mode acceptEdits \
   --allowedTools "Skill,Read,Grep,Glob,Edit,Write,Bash(npm run lint:*),Bash(npm run build:*),Bash(node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs:*)" \
   < prompt.txt > run.jsonl                # prompt.txt — запит вище, UTF-8
@@ -137,9 +171,9 @@ callers: none» у проєкті, який очевидно викликає n8
 **На `ws04/sample`** — `0 failed, 10 passed, 0 n/a (10 checks)`, exit 0 (n8n callers:
 `lib/n8n/client.ts`; callback routes: `app/api/n8n/[event]/route.ts`).
 
-**Самоперевірка скрипта** — набір із 15 міні-проєктів (автор тримає його поза репозиторієм разом з
+**Самоперевірка скрипта** — набір із 16 міні-проєктів (автор тримає його поза репозиторієм разом з
 іншими тестами, прогін `run-fixtures.mjs`): еталонний проєкт за контрактом, обидві гілки репозиторію
-й 13 випадків, зібраних з типових помилок агента. Останній прогін — **15 з 15**. Що він ловить:
+й 13 випадків, зібраних з типових помилок агента. Останній прогін — **16 з 16**. Що він ловить:
 
 - навмисно поганий код (`req.json()`, `signature !== expected`, `NEXT_PUBLIC_N8N_WEBHOOK_URL`,
   тестовий URL, лог тіла, `runtime = "edge"`, справжній токен у `.env.example`) — **10 з 10 FAIL**;
@@ -150,8 +184,12 @@ callers: none» у проєкті, який очевидно викликає n8
   C3, C6 і C10 FAIL, хоча ні URL, ні `process.env` немає поряд із `fetch`;
 - токен у query string і відсутній `x-n8n-token` — C10 FAIL;
 - **і навпаки**, коректний код, на якому перевірки не мають спрацьовувати: `typeof signature !==
-  "string" || signature === ""` (не C5) і `const init: RequestInit = { …, signal }; fetch(url, init)`
-  (не C6).
+  "string" || signature === ""` (не C5), `const init: RequestInit = { …, signal }; fetch(url, init)`
+  і `fetch(url, { ...baseInit, body })` (обидва — не C6).
+
+> Другий із цих двох випадків (`{ ...baseInit }`) був **хибним FAIL** до 21.09.2026: C6 умів іти
+> за іменем, яке саме є аргументом, але не за іменем, розпакованим усередині об'єкта. Виправлено
+> разом з новою фікстурою `init-spread-signal`, яка на старому скрипті падає, а на новому — ні.
 
 **Фіча «запит на кошторис» (результат «зі скілом») проти мока: 202 + підписаний колбек.**
 У студентському варіанті ці рядки йдуть у `docs/ab-validation.md` — як докази прогону B і
@@ -162,7 +200,7 @@ N8N_WEBHOOK_TOKEN=… N8N_CALLBACK_SECRET=… node .claude/skills/integrating-n8
   --port <port> --mode respond-202 --delay 3000 --callback-url http://127.0.0.1:<app>/api/n8n/quote-request
 ```
 
-Відправка форми `/quotes/new` (без JS) → **HTTP 200 за 183 мс** (попередні прогони — 139–154 мс),
+Відправка форми `/quotes/new` (без JS) → **HTTP 200 за 181 мс** (попередні прогони — 139–183 мс),
 хоча «воркфлоу» триває 3 с; сторінка статусу пройшла «У черзі» → «Готуємо кошторис» → «Готово» з
 посиланням на PDF одразу після колбека. Журнал мока (sha256 скорочено):
 
@@ -186,10 +224,12 @@ n8n <- quote-request rejected: key does not match the signed job corr=624d4f78-�
 ```
 
 **`send-signed-callback.mjs`** проти `/api/n8n/quote-request` з `--request-key` = id щойно створеного
-запиту — **15 з 15 PASS**, exit 0:
+запиту — **17 з 17 PASS**, exit 0:
 
 ```
 PASS  wrong-content-type     expected 415  got 415   only application/json is accepted
+PASS  json-lookalike-type    expected 415  got 415   application/jsonx only starts with application/json - parse the media type
+PASS  json-with-charset      expected 401  got 401   application/json; charset=utf-8 passes the media-type gate (401, not 415) and dies on the signature
 PASS  oversized-body         expected 413  got 413   callbacks carry links, not files (limit 64 KB)
 PASS  missing-signature      expected 401  got 401   no x-n8n-signature header
 PASS  bad-signature          expected 401  got 401   random hex instead of the HMAC
@@ -205,8 +245,13 @@ PASS  valid                  expected 202  got 202   fresh, correctly signed cal
 PASS  replay-same-key        expected 200  got 200   same idempotency-key again (n8n Retry On Fail): acknowledged, not applied twice
 PASS  replay-new-key         expected 400  got 400   captured callback replayed under a fresh key: the key must equal <jobId>:<event> from the signed body
 
-0 failed, 15 passed (15 cases)
+0 failed, 17 passed (17 cases)
 ```
+
+Пара `json-lookalike-type` / `json-with-charset` з'явилась після того, як рев'ю знайшло дірку в
+воротах типу: роут приймав `content-type`, який лише **починається** з `application/json`, тож
+`application/jsonx` проходив. Тепер роут (і шаблон у `references/nextjs-patterns.md`) розбирає
+медіатип без параметрів: `application/json; charset=utf-8` — так, `application/jsonx` — 415.
 
 Випадок `replay-new-key` — це саме той сценарій, заради якого ключ звіряється з тілом: ті самі байти,
 той самий час і той самий підпис, що й у `valid`, лише з іншим `idempotency-key`. До цієї перевірки
