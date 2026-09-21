@@ -103,7 +103,7 @@ Finishes; **усе, що може тривати ≥ 100 с або тривал�
      --mode respond-202 --delay 5000 --callback-url http://127.0.0.1:3000/api/n8n/<event>
    ```
    Надішли форму. У журналі мока: `POST /webhook/<event> -> 202`, `auth=ok`, `idempotency=new`,
-   імена заголовків `idempotency-key,x-correlation-id,x-n8n-token`; далі `callback POST … -> 202`.
+   серед імен заголовків — `idempotency-key`, `x-correlation-id`, `x-n8n-token`; далі `callback POST … -> 202`.
    Відповідь форми — < 1 с, хоча воркфлоу «триває» 5 с. Сторінка статусу показує результат.
 3. Матриця підписаних колбеків — усі PASS (`--request-key` — ключ справжньої задачі, для
    кошторисів це id запиту):
