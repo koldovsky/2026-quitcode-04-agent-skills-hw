@@ -1,9 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import ExcelJS from "exceljs";
+import dynamic from "next/dynamic";
 import type { SourceCount } from "@/lib/types";
-import { SourcesChart } from "./sources-chart";
+
+// recharts is only needed after "Показати графік": load it on demand (bundle-dynamic-imports).
+// ssr: false is allowed here because this is a Client Component.
+const SourcesChart = dynamic(() => import("./sources-chart").then((m) => m.SourcesChart), {
+  ssr: false,
+  loading: () => <div className="h-64 w-full animate-pulse rounded bg-slate-100" />,
+});
 
 type ExportRow = {
   id: string;
@@ -26,6 +32,8 @@ export function LeadsToolbar({ sources }: { sources: SourceCount[] }) {
       const response = await fetch("/api/leads");
       const { leads } = (await response.json()) as { leads: ExportRow[] };
 
+      // exceljs (~900 KB) is only needed for the export itself (bundle-conditional).
+      const { default: ExcelJS } = await import("exceljs");
       const workbook = new ExcelJS.Workbook();
       const sheet = workbook.addWorksheet("Leads");
       sheet.columns = [
