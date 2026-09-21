@@ -99,7 +99,16 @@ export function QuoteForm() {
         <label htmlFor="budget" className="block text-sm font-medium">
           Бюджет
         </label>
-        <select id="budget" name="budget" defaultValue={values.budget ?? ""} className={inputClass} {...a11y("budget")}>
+        {/* React 19 resets the form after the action, and a mounted <select> keeps its first
+            defaultValue: the key remounts it with the value the server returned. */}
+        <select
+          key={values.budget ?? ""}
+          id="budget"
+          name="budget"
+          defaultValue={values.budget ?? ""}
+          className={inputClass}
+          {...a11y("budget")}
+        >
           {QUOTE_BUDGET_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
