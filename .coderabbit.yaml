@@ -1,0 +1,451 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit config — review of QuitCode Workshop 4 homework PRs.
+# Workshop: "Agent Skills: упаковка експертизи команди".
+# Deliverables are agent skills (.claude/skills/**), evidence documents (docs/**)
+# and the app changes the skills helped to make (app/**, lib/**, components/**).
+
+language: "uk-UA"
+tone_instructions: >
+  Ментор воркшопу QuitCode. Відповідай українською, доброзичливо але вимогливо.
+  Оцінюєш скіли агента, докази їх перевірки й код, який вони допомогли написати.
+  Статуси: ✅ зроблено, ⚠️ частково, ❌ пропущено.
+
+early_access: false
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_placeholder: "@coderabbitai summary"
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: false
+
+  auto_review:
+    enabled: true
+    drafts: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+    base_branches:
+      - ".*"
+    ignore_title_keywords:
+      - "WIP"
+      - "[skip review]"
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
+
+  # ── File filters — every graded path listed explicitly ────────
+  # The vendored Vercel skill is third-party text: its SKILL.md is reviewed
+  # (evidence of a real, pinned install), its 70+ rule files are not.
+  path_filters:
+    - ".claude/**"
+    - "!.claude/skills/vercel-react-best-practices/rules/**"
+    - "!.claude/skills/vercel-react-best-practices/AGENTS.md"
+    - "!.claude/skills/vercel-react-best-practices/README.md"
+    - ".agents/**"
+    - ".cursor/**"
+    - "skills-lock.json"
+    - "AGENTS.md"
+    - "CLAUDE.md"
+    - "docs/**"
+    - "app/**"
+    - "lib/**"
+    - "components/**"
+    - "proxy.ts"
+    - "next.config.ts"
+    - "package.json"
+    - ".env*"
+    - ".gitignore"
+    - "tools/**"
+    - "materials/**"
+    - ".github/**"
+    - ".coderabbit.yaml"
+    - "!**/node_modules/**"
+    - "!**/.next/**"
+    - "!**/package-lock.json"
+
+  # ── Path-specific review instructions ─────────────────────────
+  path_instructions:
+    - path: ".claude/skills/vercel-react-best-practices/**"
+      instructions: |
+        Task A — сторонній скіл, встановлений через `npx skills add` з
+        закріпленим тегом і `--copy`. Зміст файлів Vercel НЕ рев'юй (це чужий
+        текст; rules/ і AGENTS.md навмисно виключені з рев'ю). Перевір лише:
+        SKILL.md — справжній файл з frontmatter `name: vercel-react-best-practices`;
+        шлях не є текстовим файлом зі шляхом (так виглядає закомічений symlink —
+        ❌: у клоні на Windows скіла не видно). Будь-які правки учасника у файлах
+        Vercel — ⚠️: чужий скіл оновлюють новим тегом, а не редагують.
+
+    - path: "skills-lock.json"
+      instructions: |
+        Task A — lock-файл skills CLI. Перевір запис `vercel-react-best-practices`:
+        `source: vercel-labs/agent-skills`, `ref` — незмінний тег (напр.
+        `agent-skills-063bee9…`) або повний SHA коміту, а не гілка й не порожнє
+        поле. Без `ref` — ❌ (версію не закріплено).
+
+    - path: ".agents/**"
+      instructions: |
+        Друга копія скіла в `.agents/skills/` — ⚠️: з'являється, якщо встановити
+        без `--copy` або з `-a cursor`. Cursor і так читає `.claude/skills/`, а дві
+        копії розходяться після оновлення. Назви це прямо.
+
+    - path: ".claude/skills/building-client-form/**"
+      instructions: |
+        Task B — власний скіл лише з інструкцій. Frontmatter: `name:
+        building-client-form` (дорівнює назві теки, інакше ❌); `description`
+        до 1024 символів — що робить скіл І коли застосовувати, з українськими
+        фразами-тригерами; без «коли» — ⚠️. Тіло — конкретний патерн форми:
+        Server Action перевіряє сесію/права й валідує дані ВСЕРЕДИНІ дії;
+        useActionState; доступні помилки полів (label, aria-invalid,
+        aria-describedby, role="alert"); введене не зникає після помилки; дія
+        повертає лише `{ status, … }`, а не рядок з бази; жодних персональних
+        даних у журналах; повільні побічні ефекти — в after(). Правила Vercel —
+        посиланням за id (server-auth-actions, server-after-nonblocking,
+        server-serialization…), а не копією тексту (копія — ⚠️). Розділ Verify з
+        перевірюваними пунктами. Загальні фрази на кшталт «пиши якісні форми» —
+        ⚠️.
+
+    - path: ".claude/skills/integrating-n8n-webhooks/**"
+      instructions: |
+        Task C — власний скіл з довідкою й скриптами, упакований з
+        materials/n8n-webhooks-brief.md. SKILL.md: `name` = назва теки,
+        `description` з «що» і «коли» та тригерами; стислий контракт, чекліст,
+        правила зупинки (без винятків «якщо задача потребує» — інакше ❌),
+        розділ перевірки; деталі — у references/*.md з прямими посиланнями з
+        SKILL.md. Дослівна копія записки в SKILL.md — ⚠️. Звір контракт із
+        запискою: змінні N8N_WEBHOOK_BASE_URL, N8N_WEBHOOK_TOKEN,
+        N8N_CALLBACK_SECRET, APP_BASE_URL — лише серверні; заголовки
+        x-n8n-token, idempotency-key, x-correlation-id; підпис колбека
+        `sha256=<hex HMAC-SHA256(secret, "${timestamp}.${rawBody}")>`, перевірка
+        на сирому тілі з перевіркою довжини й timingSafeEqual, вікно 300 с,
+        ідемпотентність; довгі воркфлоу — лише 202 + колбек; жодних
+        /webhook-test/ URL. Правила Vercel server-auth-actions і
+        server-after-nonblocking — посиланням, не копією. Статичне рев'ю — do
+        NOT attempt to execute anything.
+
+    - path: ".claude/skills/integrating-n8n-webhooks/scripts/**"
+      instructions: |
+        Скрипти скіла. check-contract.mjs: лише вбудовані модулі Node (без
+        npm-залежностей); ≥ 5 перевірок, кожна з id і рядком PASS/FAIL; для
+        FAIL — файл і рядок; ненульовий код виходу при будь-якому FAIL;
+        підтримка `--root <тека>`; `--help`. Перевірки мають бути справжніми:
+        перевірка, яка PASS за будь-якого коду, — ⚠️. Жоден скрипт не друкує
+        значень секретів чи тіл запитів. mock-n8n.mjs — копія
+        tools/mock-n8n.mjs, це нормально. Статичне рев'ю — do NOT run the
+        scripts.
+
+    - path: ".claude/**"
+      instructions: |
+        Інші зміни в .claude/ (налаштування, інші скіли). Налаштування з
+        allowed-tools чи хуками, що дозволяють мережу або читання .env* без
+        підтвердження людини, — ⚠️. Скіл у `.claude/skills/<тека>/` без SKILL.md
+        або з `name`, що не дорівнює назві теки, — ❌.
+
+    - path: "docs/skill-review*.md"
+      instructions: |
+        Task A (і бонус E1) — рев'ю стороннього скіла за чеклістом
+        docs/templates/skill-review.md, зроблене ДО встановлення. Перевір, що
+        заповнено власними спостереженнями, а не залишено шаблоном: як
+        дивились без встановлення; скрипти, allowed-tools, команди під час
+        рендеру, хуки/MCP/API-ключі, мережеві інструкції, посилання, приховані
+        інструкції; аудити (і чому CLI їх показав чи ні); ліцензія й
+        походження; 2–3 поради, звірені з документацією нашої версії; команда
+        встановлення з тегом, `--copy`, що потрапило в git; вердикт. Для E1
+        (docs/skill-review-n8n.md) — пакет czlonkowski/n8n-skills або
+        n8n-io/skills, SHA переглянутого коміту, ознаки, що його НЕ
+        встановлювали, і хоча б одне твердження пакета, звірене з
+        materials/n8n-webhooks-brief.md.
+
+    - path: "docs/verification.md"
+      instructions: |
+        Докази Task A–C. Task A: ≥ 3 виправлення — id правила Vercel, коміт,
+        числа було/стало і як міряли (продакшн-збірка); виправлення без чисел
+        чи без id — ⚠️. Task B і C: запит у свіжій сесії, який НЕ називав скіл;
+        чи спрацював скіл і як це видно (виклик Skill / читання SKILL.md);
+        результат. Task C: вивід check-contract.mjs на коді main (з FAIL) і на
+        фінальному коді (0 FAIL); журнал мока для сценарію «форма → колбек →
+        /quotes/<id>» — URL /webhook/, auth=ok, idempotency=new, колбек з
+        відповіддю 2xx; час відповіді форми; журнал сервера без тіл і
+        персональних даних. Переказ шаблону без власних спостережень — ⚠️.
+        Розділ «Cursor» — бонус E3.
+
+    - path: "docs/ab-validation.md"
+      instructions: |
+        Task D — A/B-перевірка скіла integrating-n8n-webhooks. Увага до
+        позначень: A — БЕЗ скіла, B — ЗІ скілом. Перевір: той самий запит з
+        materials/ab-task.md без змін; дві нові сесії з однаковою моделлю й
+        рівнем міркування; у прогоні A скіла не було в копії проєкту (лише
+        перейменування або особиста копія в ~/.claude/skills — ❌); materials/
+        прихована в обох прогонах; однакова відповідь на уточнення. Для кожного
+        прогону — видимі скіли, чи викликав агент скіл (для B), вивід
+        check-contract.mjs, журнал мока, час відповіді форми, чи є тіла або
+        персональні дані в журналі сервера, змінені файли; таблиця
+        порівняння; висновок, що спирається на ці дані. Чесне «різниці немає»
+        з поясненням, звідки агент узяв контракт (напр. з --help мока), —
+        прийнятне. Висновок без чисел і журналів — ⚠️.
+
+    - path: "docs/ab/**"
+      instructions: |
+        Діфи-докази прогонів A/B. Не рев'юй їх як код; переконайся лише, що
+        вони відповідають опису в docs/ab-validation.md.
+
+    - path: "docs/trigger-evals.md"
+      instructions: |
+        Бонус E2 — тест спрацювання власного скіла: ≥ 10 запитів, розділених на
+        «має спрацювати» і «не має»; кожен — у новій сесії; результат по
+        кожному; що змінено в description і повторний результат.
+
+    - path: "docs/n8n-integrations.md"
+      instructions: |
+        Реєстр інтеграцій з n8n (вимога записки): рядок на кожну подію —
+        event, напрям, шлях n8n (/webhook/…, не /webhook-test/), режим
+        відповіді, власник.
+
+    - path: "app/**"
+      instructions: |
+        Код застосунку: виправлення Task A і фіча «запит на кошторис» (Task C).
+        Статичне рев'ю — do NOT run the build or the app. Перевір, що кожне
+        виправлення правильно реалізує назване правило Vercel саме для Next.js
+        16: `next/dynamic` з `ssr: false` — лише в Client Components;
+        `after()` — з `next/server`; `React.cache()` дедуплікує за
+        аргументами, тож кешована функція має отримувати примітиви, а не нові
+        об'єкти; у Client Component передаються лише потрібні поля; Server
+        Action перевіряє сесію й належність запису до workspace користувача
+        всередині дії. Барел-імпорти lucide-react НЕ є проблемою (Next.js
+        оптимізує їх сам). Для коду n8n звір із контрактом
+        materials/n8n-webhooks-brief.md: виклики n8n лише з серверного модуля
+        з `import "server-only"`; заголовки x-n8n-token, idempotency-key,
+        x-correlation-id; `signal: AbortSignal.timeout(...)`; повтори лише для
+        мережевих помилок, 5xx і 524 з тим самим ключем; довгий воркфлоу —
+        202 + колбек, Server Action не чекає n8n; колбек-роут читає сире тіло
+        (`request.text()`), перевіряє час (±300 с) і підпис (перевірка довжини
+        + timingSafeEqual, не ===) ДО JSON.parse, «застовплює»
+        idempotency-key, зберігає стан до відповіді 202; жодного
+        `runtime = "edge"`, `NEXT_PUBLIC_N8N_*`, тестових URL; у журналах
+        немає тіл, email, телефонів, токенів і підписів.
+
+    - path: "lib/**"
+      instructions: |
+        Код застосунку: виправлення Task A і фіча «запит на кошторис» (Task C).
+        Статичне рев'ю — do NOT run the build or the app. Перевір, що кожне
+        виправлення правильно реалізує назване правило Vercel саме для Next.js
+        16: `next/dynamic` з `ssr: false` — лише в Client Components;
+        `after()` — з `next/server`; `React.cache()` дедуплікує за
+        аргументами, тож кешована функція має отримувати примітиви, а не нові
+        об'єкти; у Client Component передаються лише потрібні поля; Server
+        Action перевіряє сесію й належність запису до workspace користувача
+        всередині дії. Барел-імпорти lucide-react НЕ є проблемою (Next.js
+        оптимізує їх сам). Для коду n8n звір із контрактом
+        materials/n8n-webhooks-brief.md: виклики n8n лише з серверного модуля
+        з `import "server-only"`; заголовки x-n8n-token, idempotency-key,
+        x-correlation-id; `signal: AbortSignal.timeout(...)`; повтори лише для
+        мережевих помилок, 5xx і 524 з тим самим ключем; довгий воркфлоу —
+        202 + колбек, Server Action не чекає n8n; колбек-роут читає сире тіло
+        (`request.text()`), перевіряє час (±300 с) і підпис (перевірка довжини
+        + timingSafeEqual, не ===) ДО JSON.parse, «застовплює»
+        idempotency-key, зберігає стан до відповіді 202; жодного
+        `runtime = "edge"`, `NEXT_PUBLIC_N8N_*`, тестових URL; у журналах
+        немає тіл, email, телефонів, токенів і підписів.
+
+    - path: "components/**"
+      instructions: |
+        Код застосунку: виправлення Task A і фіча «запит на кошторис» (Task C).
+        Статичне рев'ю — do NOT run the build or the app. Перевір, що кожне
+        виправлення правильно реалізує назване правило Vercel саме для Next.js
+        16: `next/dynamic` з `ssr: false` — лише в Client Components;
+        `after()` — з `next/server`; `React.cache()` дедуплікує за
+        аргументами, тож кешована функція має отримувати примітиви, а не нові
+        об'єкти; у Client Component передаються лише потрібні поля; Server
+        Action перевіряє сесію й належність запису до workspace користувача
+        всередині дії. Барел-імпорти lucide-react НЕ є проблемою (Next.js
+        оптимізує їх сам). Для коду n8n звір із контрактом
+        materials/n8n-webhooks-brief.md: виклики n8n лише з серверного модуля
+        з `import "server-only"`; заголовки x-n8n-token, idempotency-key,
+        x-correlation-id; `signal: AbortSignal.timeout(...)`; повтори лише для
+        мережевих помилок, 5xx і 524 з тим самим ключем; довгий воркфлоу —
+        202 + колбек, Server Action не чекає n8n; колбек-роут читає сире тіло
+        (`request.text()`), перевіряє час (±300 с) і підпис (перевірка довжини
+        + timingSafeEqual, не ===) ДО JSON.parse, «застовплює»
+        idempotency-key, зберігає стан до відповіді 202; жодного
+        `runtime = "edge"`, `NEXT_PUBLIC_N8N_*`, тестових URL; у журналах
+        немає тіл, email, телефонів, токенів і підписів.
+
+    - path: "proxy.ts"
+      instructions: |
+        proxy.ts лише перенаправляє без cookie сесії — це не автентифікація.
+        Якщо учасник покладається на нього замість перевірки сесії в Server
+        Actions — ⚠️ (правило server-auth-actions).
+
+    - path: ".env*"
+      instructions: |
+        У git має бути лише .env.example. Будь-який інший .env* файл у PR
+        (.env.local тощо) — ❌ витік секретів. У .env.example — лише значення
+        `change-me-…`; ключі контракту N8N_WEBHOOK_BASE_URL (закінчується на
+        /webhook), N8N_WEBHOOK_TOKEN, N8N_CALLBACK_SECRET, APP_BASE_URL; жодного
+        /webhook-test/ і жодного NEXT_PUBLIC_N8N_*.
+
+    - path: "AGENTS.md"
+      instructions: |
+        AGENTS.md у WS4 не є завданням; зміни дозволені. Блок
+        `<!-- BEGIN:nextjs-agent-rules -->` можна лишити. Перевір, що розділ
+        безпеки не отримав винятків на кшталт «якщо задача цього потребує» —
+        правило безпеки з таким винятком — ❌.
+
+    - path: "CLAUDE.md"
+      instructions: |
+        CLAUDE.md має імпортувати AGENTS.md окремим рядком `@AGENTS.md`.
+        Markdown-посилання замість імпорту — ❌.
+
+    - path: "tools/**"
+      instructions: |
+        Мок n8n — інструмент перевірки A/B. Будь-яка зміна — ❌: це підганяння
+        результату. Копію мока кладуть у скіл
+        (.claude/skills/integrating-n8n-webhooks/scripts/), а не змінюють тут.
+
+    - path: "materials/**"
+      instructions: |
+        Матеріали завдання. Будь-яка зміна, додавання чи видалення — ❌.
+
+  # ── Pre-merge checks (grading) ────────────────────────────────
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
+    title:
+      mode: "warning"
+      requirements: >
+        PR title should follow: "WS4: <participant full name>".
+
+    description:
+      mode: "warning"
+      requirements: >
+        The PR description MUST contain a filled-in "Ім'я та Прізвище" field
+        under the "Учасник" heading with the participant's real full name
+        (two words). An empty field, a leftover placeholder, or only a GitHub
+        login is NOT acceptable — say so explicitly and ask the author to add
+        it. Also check the task checklist is filled in rather than left as
+        unchecked template boxes.
+
+    custom_checks:
+      - mode: "warning"
+        name: "Task A — Vercel skill: review, pin, fixes"
+        instructions: >
+          Static review of the diff only — do NOT attempt to execute anything.
+          Check that (1) docs/skill-review.md reviews the vercel-react-best-practices
+          skill with the checklist from docs/templates/skill-review.md, filled with
+          the participant's own findings: preview without installing; scripts,
+          allowed-tools, render-time commands, hooks, network instructions, links
+          and hidden instructions; audits; licence and provenance; advice checked
+          against the Next.js 16 docs; the pinned install command; a verdict.
+          (2) .claude/skills/vercel-react-best-practices/SKILL.md is added as a
+          real file with `name: vercel-react-best-practices` (not a symlink text
+          file), and skills-lock.json pins source vercel-labs/agent-skills to an
+          immutable ref — a release tag or a full commit SHA, not a branch. The
+          vendored rules/ files and AGENTS.md are excluded from review on purpose;
+          do not report them as missing. (3) docs/verification.md lists at least
+          three fixes, each with a Vercel rule id, the commit, before/after
+          numbers and how they were measured, and the matching code changes
+          under app/, components/ or lib/ implement those rules correctly for
+          Next.js 16. PASS if all three hold; FAIL if the review is missing or
+          left as a template, the install is unpinned or a link, or there are
+          fewer than three measured fixes with rule ids.
+
+      - mode: "warning"
+        name: "Task B — building-client-form skill"
+        instructions: >
+          Static review of the diff only. Check .claude/skills/building-client-form/SKILL.md
+          exists with `name: building-client-form` (equal to the folder) and a
+          description under 1024 characters that states what the skill does AND
+          when to use it, with Ukrainian trigger phrases. The body must be a
+          concrete form pattern: a Server Action that checks the session and
+          permissions and validates inside the action, useActionState, accessible
+          field errors (label, aria-invalid, aria-describedby, role="alert"),
+          values kept after an error, a small `{ status, … }` return value, no
+          personal data in logs, slow side effects in after(). It must reference
+          Vercel rules by id instead of copying them and end with a Verify
+          section. Check docs/verification.md records a plain request made in a
+          fresh session without naming the skill, whether the skill triggered
+          and how that was observed, and the result. PASS if both hold; FAIL
+          otherwise.
+
+      - mode: "warning"
+        name: "Task C — integrating-n8n-webhooks skill"
+        instructions: >
+          Static review of the diff only — do NOT run the scripts. Check
+          .claude/skills/integrating-n8n-webhooks/ has: SKILL.md with `name`
+          equal to the folder and a what-plus-when description; a concise
+          contract, a checklist, stop rules without task-dependent exceptions,
+          and a verification section; details in references/*.md linked directly
+          from SKILL.md rather than a verbatim copy of
+          materials/n8n-webhooks-brief.md; scripts/check-contract.mjs using only
+          Node built-ins, with at least five checks, each printing an id and
+          PASS/FAIL, a non-zero exit code on any failure, and a --root option.
+          The contract in the skill must match the brief (server-only N8N_* env
+          vars; x-n8n-token, idempotency-key and x-correlation-id headers; the
+          callback signature sha256=HMAC-SHA256(secret, "<timestamp>.<raw body>")
+          verified on the raw body with a length check and timingSafeEqual, a
+          300 s window and idempotency; async 202 + callback for long workflows;
+          no /webhook-test/ URLs). Check the «запит на кошторис» feature exists
+          (a /quotes/new page, a Server Action, a callback Route Handler, a
+          /quotes/[id] status page) and follows that contract. Check
+          docs/verification.md records the request that triggered the skill,
+          check-contract.mjs output on main (with failures) and on the final code
+          (0 FAIL), and a mock log of the form → callback → status scenario.
+          PASS if the skill, the checker, the feature and the evidence are all
+          present and consistent; FAIL otherwise.
+
+      - mode: "warning"
+        name: "Task D — A/B validation"
+        instructions: >
+          Static review of the diff only. Polarity: run A is WITHOUT the
+          integrating-n8n-webhooks skill, run B is WITH it. Check
+          docs/ab-validation.md documents both runs of the unchanged prompt from
+          materials/ab-task.md, each in a fresh session with the same model and
+          effort; in run A the skill was absent from the project copy (renaming
+          it or leaving a personal copy in ~/.claude/skills does not count);
+          materials/ was hidden in both runs; the same reply to any clarifying
+          question. For each run it must record the skills visible at the start,
+          whether run B invoked the skill, the check-contract.mjs output (ids and
+          PASS/FAIL), the mock log of the form → callback → /quotes/[id] scenario
+          (URL, auth=, idempotency=, callback status), the form response time,
+          whether the server log contains request bodies or personal data, and
+          the changed files, followed by a comparison table and a conclusion
+          grounded in those observations. Diffs under docs/ab/ are optional
+          evidence. An honest "no difference" conclusion that explains where the
+          agent learned the contract (for example from the mock's --help) is
+          acceptable. PASS if both runs are documented with these observations;
+          FAIL otherwise.
+
+      - mode: "warning"
+        name: "Task E — bonus (one of three)"
+        instructions: >
+          Optional bonus — absence is NOT a failure. If present, check one of:
+          (E1) docs/skill-review-n8n.md reviews czlonkowski/n8n-skills or
+          n8n-io/skills WITHOUT installing it, following
+          docs/templates/skill-review.md, with the reviewed commit SHA, findings
+          on hooks, MCP servers and API keys, and at least one claim of the pack
+          checked against materials/n8n-webhooks-brief.md; (E2)
+          docs/trigger-evals.md has at least ten prompts for an own skill, split
+          into should-trigger and should-not-trigger, each run in a fresh
+          session, with results and any description change; (E3) a "Cursor"
+          section in docs/verification.md records which skills Cursor saw and
+          whether they triggered on the Task B and C requests. PASS if one option
+          is complete.
+
+      - mode: "warning"
+        name: "Protected paths and secrets"
+        instructions: >
+          Static review of the diff only. FAIL if the PR modifies, adds or
+          deletes any file under tools/ or materials/, changes .coderabbit.yaml
+          or anything under .github/, commits any .env* file other than
+          .env.example, or puts a value other than a change-me-… placeholder
+          into .env.example. PASS otherwise. New skills, docs, app fixes and the
+          quote feature elsewhere are expected and fine.
+
+chat:
+  auto_reply: true
