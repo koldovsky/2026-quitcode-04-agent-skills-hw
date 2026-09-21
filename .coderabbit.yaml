@@ -173,9 +173,9 @@ reviews:
         як це видно (виклик Skill / читання SKILL.md); результат. Task C: скіл
         тут лише пакують — вимагати тут запит, на який спрацював скіл, або
         журнал мока НЕ треба (це Task D, docs/ab-validation.md). Для Task C
-        перевір вивід check-contract.mjs на коді main (з FAIL), перевірку
-        скрипта на навмисно поганому коді і вивід на фінальному коді (0 FAIL).
-        Переказ шаблону без власних спостережень — ⚠️. Розділ «Cursor» — бонус E3.
+        перевір вивід check-contract.mjs на коді main (з FAIL) і вивід на
+        фінальному коді (0 FAIL). Переказ шаблону без власних спостережень — ⚠️.
+        Розділ «Cursor» — бонус E3.
 
     - path: "docs/ab-validation.md"
       instructions: |
@@ -414,8 +414,7 @@ reviews:
           кошторис» feature is NOT part of it — do not ask for the feature, for a
           request that triggered the skill or for a mock log here (that is Task D,
           docs/ab-validation.md). Check docs/verification.md records the
-          check-contract.mjs output on main (with failures), evidence that the
-          checker was tried against deliberately bad code, and the output on the
+          check-contract.mjs output on main (with failures) and the output on the
           final code (0 FAIL). PASS if the skill, the checker and this evidence
           are present and consistent; FAIL otherwise.
 
