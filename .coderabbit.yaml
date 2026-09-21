@@ -183,15 +183,18 @@ reviews:
         Task D — A/B-перевірка скіла integrating-n8n-webhooks. Увага до
         позначень: A — БЕЗ скіла, B — ЗІ скілом. Перевір: той самий запит з
         materials/ab-task.md без змін; дві нові сесії з однаковою моделлю й
-        рівнем міркування; у прогоні A скіла не було в копії проєкту (лише
-        перейменування або особиста копія в ~/.claude/skills — ❌); materials/,
-        docs/, README.md, .coderabbit.yaml і .github/ видалено з обох копій
-        (вони описують контракт n8n); однакова відповідь на уточнення. Для кожного
-        прогону — видимі скіли, чи викликав агент скіл (для B), вивід
-        check-contract.mjs, журнал мока, час відповіді форми, чи є тіла або
-        персональні дані в журналі сервера, змінені файли й діф у docs/ab/;
-        таблиця порівняння; висновок, що спирається на ці дані. Чесне «різниці немає»
-        з поясненням, звідки агент узяв контракт (напр. з --help мока), —
+        рівнем міркування; у копії A не було жодного скіла, у копії B — лише
+        integrating-n8n-webhooks (перейменування скіла або особиста копія в
+        ~/.claude/skills — ❌); tools/, materials/, docs/, README.md,
+        .coderabbit.yaml і .github/ видалено з обох копій (вони описують контракт
+        n8n; мок запускали з робочого репозиторію); однакова відповідь на
+        уточнення. Для кожного прогону — видимі скіли, чи викликав агент скіл (для
+        B), вивід check-contract.mjs на коді прогону (`--changed-since base` або
+        з позначеними FAIL старого коду з базової лінії), журнал мока, час
+        відповіді форми, чи є тіла або персональні дані в журналі сервера,
+        змінені файли й діф у docs/ab/; таблиця порівняння; висновок, що
+        спирається на ці дані. Чесне «різниці немає» з поясненням, звідки агент
+        узяв контракт (загальні знання, документація Next.js, наявний код), —
         прийнятне. Висновок без чисел і журналів — ⚠️.
         Окремий розділ про перенесення: фіча «запит на кошторис» у гілці — це
         результат прогону B, і має бути сказано, як його перенесли (діф, злиття
@@ -214,9 +217,10 @@ reviews:
 
     - path: "docs/n8n-integrations.md"
       instructions: |
-        Реєстр інтеграцій з n8n (вимога записки): рядок на кожну подію —
-        event, напрям, шлях n8n (/webhook/…, не /webhook-test/), режим
-        відповіді, власник.
+        Реєстр інтеграцій з n8n (у домашці — рекомендований крок, не
+        оцінюється; відсутність файлу — не помилка). Якщо файл є: рядок на
+        кожну подію — event, напрям, шлях n8n (/webhook/…, не /webhook-test/),
+        режим відповіді, власник.
 
     - path: "app/**"
       instructions: |
@@ -426,20 +430,24 @@ reviews:
           integrating-n8n-webhooks skill, run B is WITH it. Check
           docs/ab-validation.md documents both runs of the unchanged prompt from
           materials/ab-task.md, each in a fresh session with the same model and
-          effort; in run A the skill was absent from the project copy (renaming
-          it or leaving a personal copy in ~/.claude/skills does not count);
-          materials/, docs/, README.md, .coderabbit.yaml and .github/ were
-          removed from both copies (they describe the n8n contract); the same
-          reply to any clarifying question. For each run it must record the skills visible at the start,
-          whether run B invoked the skill, the check-contract.mjs output (ids and
-          PASS/FAIL), the mock log of the form → callback → /quotes/[id] scenario
+          effort; the run-A copy had no project skills at all and the run-B copy
+          only integrating-n8n-webhooks (renaming the skill or leaving a personal
+          copy in ~/.claude/skills does not count); tools/, materials/, docs/,
+          README.md, .coderabbit.yaml and .github/ were removed from both copies
+          (they describe the n8n contract; the mock was run from the working
+          repository); the same reply to any clarifying question. For each run it
+          must record the skills visible at the start, whether run B invoked the
+          skill, the check-contract.mjs output for the run's own code (ids and
+          PASS/FAIL, via --changed-since base or with the baseline's pre-existing
+          FAILs marked as such), the mock log of the form → callback → /quotes/[id] scenario
           (URL, auth=, idempotency=, callback status), the form response time,
           whether the server log contains request bodies or personal data, and
           the changed files, followed by a comparison table and a conclusion
           grounded in those observations. Both diffs are required:
           docs/ab/a-without-skill.diff and docs/ab/b-with-skill.diff. An honest "no difference" conclusion that explains where the
-          agent learned the contract (for example from the mock's --help) is
-          acceptable. The feature is built in these runs, not in the branch:
+          agent learned the contract (for example general knowledge, the Next.js
+          docs or existing code) is acceptable. docs/n8n-integrations.md is a
+          recommended step, not graded: do not fail this check without it. The feature is built in these runs, not in the branch:
           check that the «запит на кошторис» feature (a /quotes/new page, a
           Server Action, a callback Route Handler and a /quotes/[id] status page)
           is present under app/, components/ and lib/ and follows the contract of
