@@ -1,21 +1,22 @@
+import { Suspense } from "react";
+import { DashboardStats, StatsCardsSkeleton } from "@/components/dashboard-stats";
 import { LeadSearch } from "@/components/lead-search";
 import { LeadsTable } from "@/components/leads-table";
 import { LeadsToolbar } from "@/components/leads-toolbar";
-import { StatsCards } from "@/components/stats-cards";
 import {
   getCurrentUser,
+  getLeadList,
   getLeadStats,
-  getLeads,
   getSourceBreakdown,
   getWorkspace,
 } from "@/lib/data";
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const workspace = await getWorkspace({ slug: user.workspaceSlug });
-  const leads = await getLeads(workspace.id);
-  const stats = await getLeadStats(workspace.id);
-  const sources = await getSourceBreakdown(workspace.id);
+  const workspace = await getWorkspace(user.workspaceSlug);
+  // Stats take ~1.2 s: start them now, but do not block the page on them.
+  const stats = getLeadStats(workspace.id);
+  const [leads, sources] = await Promise.all([getLeadList(workspace.id), getSourceBreakdown(workspace.id)]);
 
   return (
     <div className="space-y-6">
@@ -26,9 +27,11 @@ export default async function DashboardPage() {
         </p>
       </div>
 
-      <StatsCards stats={stats} />
+      <Suspense fallback={<StatsCardsSkeleton />}>
+        <DashboardStats stats={stats} />
+      </Suspense>
       <LeadsToolbar sources={sources} />
-      <LeadSearch />
+      <LeadSearch rows={leads} />
       <LeadsTable leads={leads} />
     </div>
   );

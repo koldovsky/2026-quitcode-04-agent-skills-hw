@@ -9,20 +9,33 @@ import { STATUS_LABELS } from "./status-badge";
 export function LeadActions({ leadId, status }: { leadId: string; status: LeadStatus }) {
   const router = useRouter();
   const [current, setCurrent] = useState<LeadStatus>(status);
+  const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function changeStatus(next: LeadStatus) {
+    const previous = current;
     setCurrent(next);
+    setError(null);
     startTransition(async () => {
-      await updateLeadStatus(leadId, next);
+      const result = await updateLeadStatus(leadId, next);
+      if (result.status !== "ok") {
+        setCurrent(previous);
+        setError("Не вдалося змінити статус. Оновіть сторінку й спробуйте ще раз.");
+        return;
+      }
       router.refresh();
     });
   }
 
   function remove() {
     if (!window.confirm("Видалити лід назавжди?")) return;
+    setError(null);
     startTransition(async () => {
-      await deleteLead(leadId);
+      const result = await deleteLead(leadId);
+      if (result.status !== "ok") {
+        setError("Не вдалося видалити лід.");
+        return;
+      }
       router.push("/dashboard");
     });
   }
@@ -52,6 +65,11 @@ export function LeadActions({ leadId, status }: { leadId: string; status: LeadSt
       >
         Видалити лід
       </button>
+      {error && (
+        <p role="alert" className="w-full text-sm text-red-700">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

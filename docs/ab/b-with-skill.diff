@@ -1,0 +1,990 @@
+diff --git a/.env.example b/.env.example
+index 26590dc..4e0b85d 100644
+--- a/.env.example
++++ b/.env.example
+@@ -4,3 +4,13 @@
+ # n8n webhook that receives every new lead from the public form.
+ # Locally it points at the offline n8n mock: node tools/mock-n8n.mjs
+ N8N_WEBHOOK_URL=http://127.0.0.1:5678/webhook-test/lead-created
++
++# n8n integration (contract: .claude/skills/integrating-n8n-webhooks). Server-only: never NEXT_PUBLIC_.
++# Base of the production webhook URLs, ends with /webhook. Locally: node .claude/skills/integrating-n8n-webhooks/scripts/mock-n8n.mjs
++N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook
++# Value of the Header Auth credential in n8n (header x-n8n-token). Generate a long random string for real use.
++N8N_WEBHOOK_TOKEN=change-me-webhook-token
++# Hmac Secret of the Crypto credential in n8n; signs the callbacks n8n sends to /api/n8n/<event>.
++N8N_CALLBACK_SECRET=change-me-callback-secret
++# Address of this app as n8n sees it (goes into callbackUrl).
++APP_BASE_URL=http://127.0.0.1:3000
+diff --git a/app/api/n8n/[event]/route.ts b/app/api/n8n/[event]/route.ts
+new file mode 100644
+index 0000000..9ef7b13
+--- /dev/null
++++ b/app/api/n8n/[event]/route.ts
+@@ -0,0 +1,85 @@
++import { after } from "next/server";
++import { db } from "@/lib/db";
++import { parseCallbackEnvelope, readBodyLimited, type CallbackHandler } from "@/lib/n8n/envelope";
++import { verifyN8nSignature } from "@/lib/n8n/signature";
++import { QUOTE_EVENT, handleQuoteCallback } from "@/lib/quotes";
++
++// Callbacks from n8n (HTTP Request node), skill integrating-n8n-webhooks.
++// Order: event -> content type -> raw bytes -> timestamp + HMAC -> idempotency claim
++// -> parse -> key matches the signed body -> durable write -> 202 -> after().
++
++const MAX_BODY_BYTES = 64 * 1024;
++const HANDLERS: Record<string, CallbackHandler> = { [QUOTE_EVENT]: handleQuoteCallback };
++
++export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]">) {
++  const { event } = await ctx.params;
++  // Object.hasOwn: "toString", "constructor"... must not resolve to a handler via the prototype.
++  const handler = Object.hasOwn(HANDLERS, event) ? HANDLERS[event] : undefined;
++  if (!handler) return Response.json({ error: "unknown event" }, { status: 404 });
++
++  // Media type only, parameters dropped: "application/json; charset=utf-8" is JSON,
++  // "application/jsonx" is not (startsWith would have accepted it).
++  const mediaType = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
++  if (mediaType !== "application/json") {
++    return Response.json({ error: "unsupported media type" }, { status: 415 });
++  }
++
++  const rawBody = await readBodyLimited(request, MAX_BODY_BYTES); // bytes first, never request.json()
++  if (!rawBody) return Response.json({ error: "payload too large" }, { status: 413 });
++
++  const correlationId = (request.headers.get("x-correlation-id") ?? "-").slice(0, 64);
++  const verified = verifyN8nSignature({
++    rawBody,
++    timestamp: request.headers.get("x-n8n-timestamp"),
++    signature: request.headers.get("x-n8n-signature"),
++    secret: process.env.N8N_CALLBACK_SECRET,
++  });
++  if (!verified.ok) {
++    console.warn(`n8n <- ${event} rejected: ${verified.reason} corr=${correlationId} ${rawBody.byteLength} B`);
++    return new Response(null, { status: verified.reason === "no-secret" ? 500 : 401 });
++  }
++
++  const key = request.headers.get("idempotency-key");
++  if (!key || key.length > 200) return Response.json({ error: "idempotency-key required" }, { status: 400 });
++  if (!(await db.claimCallbackKey(key))) {
++    console.info(`n8n <- ${event} duplicate corr=${correlationId}`);
++    return Response.json({ duplicate: true }, { status: 200 });
++  }
++
++  try {
++    const envelope = parseCallbackEnvelope(rawBody, `${event}.completed`); // parse only after verification
++    if (!envelope) {
++      await db.releaseCallbackKey(key);
++      return Response.json({ error: "invalid payload" }, { status: 400 });
++    }
++    // The header is outside the HMAC: without this, a captured callback could be replayed
++    // inside the 300 s window under a fresh key and applied again.
++    if (key !== `${envelope.data.jobId}:${event}.completed`) {
++      await db.releaseCallbackKey(key);
++      console.warn(`n8n <- ${event} rejected: key does not match the signed job corr=${correlationId}`);
++      return Response.json({ error: "idempotency-key does not match the signed body" }, { status: 400 });
++    }
++    const outcome = await handler(envelope.data); // small durable write BEFORE the 2xx
++    if (outcome.status === "unknown-job") {
++      await db.releaseCallbackKey(key);
++      return Response.json({ error: "unknown job" }, { status: 404 });
++    }
++    if (outcome.status === "other-job") {
++      await db.releaseCallbackKey(key);
++      console.warn(`n8n <- ${event} rejected: callback for another job corr=${correlationId}`);
++      return Response.json({ error: "callback is for another job" }, { status: 409 });
++    }
++    if (outcome.status === "already-final") {
++      console.info(`n8n <- ${event} duplicate (already final) corr=${correlationId}`);
++      return Response.json({ duplicate: true }, { status: 200 });
++    }
++    if (outcome.afterResponse) after(outcome.afterResponse); // slow side effects after the 2xx
++    const jobStatus = envelope.data.status;
++    console.info(`n8n <- ${event} ${jobStatus} accepted corr=${correlationId}`);
++    return Response.json({ ok: true }, { status: 202 });
++  } catch (error) {
++    await db.releaseCallbackKey(key); // let n8n's Retry On Fail try again
++    console.error(`n8n <- ${event} failed corr=${correlationId}: ${error instanceof Error ? error.name : "error"}`);
++    return Response.json({ error: "internal error" }, { status: 500 });
++  }
++}
+diff --git a/app/quotes/[id]/page.tsx b/app/quotes/[id]/page.tsx
+new file mode 100644
+index 0000000..310fdf3
+--- /dev/null
++++ b/app/quotes/[id]/page.tsx
+@@ -0,0 +1,64 @@
++import type { Metadata } from "next";
++import Link from "next/link";
++import { notFound } from "next/navigation";
++import { QuoteStatusRefresh } from "@/components/quote-status-refresh";
++import { getQuoteView } from "@/lib/quotes";
++import type { QuoteStatus } from "@/lib/types";
++
++// The address is the only key to this page: keep it out of search results.
++export const metadata: Metadata = {
++  title: "Статус кошторису · LeadDesk",
++  robots: { index: false, follow: false },
++};
++
++const STATUS_TEXT: Record<QuoteStatus, { title: string; hint: string }> = {
++  queued: { title: "У черзі", hint: "Запит прийнято, зараз передаємо його в роботу." },
++  processing: {
++    title: "Готуємо кошторис",
++    hint: "Зазвичай це займає від 40 секунд до півтори хвилини. Сторінка оновлюється сама.",
++  },
++  ready: { title: "Кошторис готовий", hint: "" },
++  failed: { title: "Не вдалося підготувати кошторис", hint: "Спробуйте ще раз або напишіть нам." },
++};
++
++export default async function QuotePage({ params }: PageProps<"/quotes/[id]">) {
++  const { id } = await params;
++  const quote = await getQuoteView(id);
++  if (!quote) notFound();
++
++  const text = STATUS_TEXT[quote.status];
++  const waiting = quote.status === "queued" || quote.status === "processing";
++
++  return (
++    <main className="mx-auto w-full max-w-2xl flex-1 space-y-6 px-6 py-12">
++      <h1 className="text-2xl font-semibold tracking-tight">Кошторис для {quote.company}</h1>
++
++      <section aria-live="polite" className="space-y-3 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
++        <p className="text-lg font-medium">{text.title}</p>
++        {text.hint && <p className="text-sm text-slate-600">{text.hint}</p>}
++
++        {quote.status === "ready" &&
++          (quote.documentUrl ? (
++            <a
++              href={quote.documentUrl}
++              target="_blank"
++              rel="noopener noreferrer"
++              className="inline-block rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
++            >
++              Відкрити PDF
++            </a>
++          ) : (
++            <p className="text-sm text-slate-600">Посилання на файл недоступне — напишіть нам, і ми надішлемо його.</p>
++          ))}
++
++        {quote.status === "failed" && (
++          <Link href="/quotes/new" className="inline-block text-sm text-indigo-600 hover:underline">
++            Надіслати новий запит
++          </Link>
++        )}
++      </section>
++
++      {waiting && <QuoteStatusRefresh />}
++    </main>
++  );
++}
+diff --git a/app/quotes/actions.ts b/app/quotes/actions.ts
+new file mode 100644
+index 0000000..9d65832
+--- /dev/null
++++ b/app/quotes/actions.ts
+@@ -0,0 +1,25 @@
++"use server";
++
++import { after } from "next/server";
++import { parseQuoteForm, type QuoteFormField, type QuoteFormValues } from "@/lib/quote-form";
++import { createQuoteRequest, startQuoteWorkflow } from "@/lib/quotes";
++
++export type RequestQuoteState =
++  | { status: "idle" }
++  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues }
++  | { status: "ok"; id: string };
++
++export async function requestQuote(
++  _prevState: RequestQuoteState,
++  formData: FormData,
++): Promise<RequestQuoteState> {
++  // Public form, so there is no session to check; the input is validated here, not in the client.
++  const parsed = parseQuoteForm(formData);
++  if (!parsed.ok) {
++    return { status: "invalid", errors: parsed.errors, values: parsed.values };
++  }
++
++  const quote = await createQuoteRequest(parsed.data);
++  after(() => startQuoteWorkflow(quote.id)); // the user never waits for n8n
++  return { status: "ok", id: quote.id }; // status and id only, never the stored row
++}
+diff --git a/app/quotes/layout.tsx b/app/quotes/layout.tsx
+new file mode 100644
+index 0000000..e58e704
+--- /dev/null
++++ b/app/quotes/layout.tsx
+@@ -0,0 +1,19 @@
++import Link from "next/link";
++
++export default function QuotesLayout({ children }: LayoutProps<"/quotes">) {
++  return (
++    <div className="flex flex-1 flex-col">
++      <header className="border-b border-slate-200 bg-white">
++        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
++          <Link href="/" className="text-lg font-semibold tracking-tight">
++            Studio Nova
++          </Link>
++          <Link href="/login" className="text-sm text-slate-500 hover:text-slate-900">
++            Вхід для команди
++          </Link>
++        </div>
++      </header>
++      {children}
++    </div>
++  );
++}
+diff --git a/app/quotes/new/page.tsx b/app/quotes/new/page.tsx
+new file mode 100644
+index 0000000..5920c50
+--- /dev/null
++++ b/app/quotes/new/page.tsx
+@@ -0,0 +1,24 @@
++import type { Metadata } from "next";
++import { QuoteForm } from "@/components/quote-form";
++
++export const metadata: Metadata = {
++  title: "Запит на кошторис · LeadDesk",
++};
++
++export default function NewQuotePage() {
++  return (
++    <main className="mx-auto grid w-full max-w-5xl flex-1 gap-10 px-6 py-12 md:grid-cols-[1fr_1.2fr]">
++      <section className="space-y-4">
++        <h1 className="text-3xl font-semibold tracking-tight">Запит на кошторис</h1>
++        <p className="text-slate-600">
++          Опишіть задачу й орієнтовний бюджет — ми підготуємо PDF-кошторис. Це займає до півтори
++          хвилини, статус запиту видно на окремій сторінці.
++        </p>
++      </section>
++
++      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
++        <QuoteForm />
++      </section>
++    </main>
++  );
++}
+diff --git a/components/quote-form.tsx b/components/quote-form.tsx
+new file mode 100644
+index 0000000..b080334
+--- /dev/null
++++ b/components/quote-form.tsx
+@@ -0,0 +1,99 @@
++"use client";
++
++import Link from "next/link";
++import { useRouter } from "next/navigation";
++import { useActionState, useEffect } from "react";
++import { requestQuote, type RequestQuoteState } from "@/app/quotes/actions";
++import { QUOTE_BUDGET_MAX, QUOTE_BUDGET_MIN } from "@/lib/quote-form";
++
++const initialState: RequestQuoteState = { status: "idle" };
++
++const inputClass =
++  "mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
++
++export function QuoteForm() {
++  const router = useRouter();
++  const [state, formAction, pending] = useActionState(requestQuote, initialState);
++  const errors = state.status === "invalid" ? state.errors : {};
++  const values = state.status === "invalid" ? state.values : undefined;
++
++  useEffect(() => {
++    if (state.status === "ok") router.push(`/quotes/${state.id}`);
++  }, [state, router]);
++
++  if (state.status === "ok") {
++    return (
++      <div className="space-y-2 py-8 text-center">
++        <p className="text-lg font-medium">Запит прийнято.</p>
++        <Link href={`/quotes/${state.id}`} className="text-sm text-indigo-600 hover:underline">
++          Переглянути статус кошторису
++        </Link>
++      </div>
++    );
++  }
++
++  return (
++    <form action={formAction} className="space-y-4" noValidate>
++      <label className="block text-sm font-medium">
++        Компанія
++        <input
++          name="company"
++          autoComplete="organization"
++          defaultValue={values?.company}
++          aria-invalid={Boolean(errors.company)}
++          className={inputClass}
++        />
++        {errors.company && <span className="mt-1 block text-xs text-red-600">{errors.company}</span>}
++      </label>
++
++      <label className="block text-sm font-medium">
++        Email
++        <input
++          name="email"
++          type="email"
++          autoComplete="email"
++          defaultValue={values?.email}
++          aria-invalid={Boolean(errors.email)}
++          className={inputClass}
++        />
++        {errors.email && <span className="mt-1 block text-xs text-red-600">{errors.email}</span>}
++      </label>
++
++      <label className="block text-sm font-medium">
++        Опис задачі
++        <textarea
++          name="description"
++          rows={5}
++          defaultValue={values?.description}
++          aria-invalid={Boolean(errors.description)}
++          className={inputClass}
++        />
++        {errors.description && <span className="mt-1 block text-xs text-red-600">{errors.description}</span>}
++      </label>
++
++      <label className="block text-sm font-medium">
++        Бюджет, USD
++        <input
++          name="budget"
++          type="number"
++          inputMode="numeric"
++          min={QUOTE_BUDGET_MIN}
++          max={QUOTE_BUDGET_MAX}
++          step={1}
++          defaultValue={values?.budget}
++          aria-invalid={Boolean(errors.budget)}
++          className={inputClass}
++        />
++        {errors.budget && <span className="mt-1 block text-xs text-red-600">{errors.budget}</span>}
++      </label>
++
++      <button
++        type="submit"
++        disabled={pending}
++        className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
++      >
++        {pending ? "Надсилаємо…" : "Запросити кошторис"}
++      </button>
++    </form>
++  );
++}
+diff --git a/components/quote-status-refresh.tsx b/components/quote-status-refresh.tsx
+new file mode 100644
+index 0000000..66cbf41
+--- /dev/null
++++ b/components/quote-status-refresh.tsx
+@@ -0,0 +1,17 @@
++"use client";
++
++import { useRouter } from "next/navigation";
++import { useEffect } from "react";
++
++// Rendered by the status page only while the quote is queued or processing: once the page
++// shows a final status this component is gone and the polling stops with it.
++export function QuoteStatusRefresh({ intervalMs = 3000 }: { intervalMs?: number }) {
++  const router = useRouter();
++
++  useEffect(() => {
++    const timer = setInterval(() => router.refresh(), intervalMs);
++    return () => clearInterval(timer);
++  }, [router, intervalMs]);
++
++  return null;
++}
+diff --git a/docs/n8n-integrations.md b/docs/n8n-integrations.md
+new file mode 100644
+index 0000000..9ff05c4
+--- /dev/null
++++ b/docs/n8n-integrations.md
+@@ -0,0 +1,63 @@
++# Інтеграції з n8n
++
++Контракт — `.claude/skills/integrating-n8n-webhooks/`. Кожна інтеграція — один рядок.
++
++| event | напрям | шлях n8n | режим | власник |
++|---|---|---|---|---|
++| `quote-request` | Next.js → n8n → колбек | `/webhook/quote-request` | Respond to Webhook 202 + колбек | TBD (вкажіть) |
++
++Версія конверта — `1`.
++
++## quote-request
++
++PDF-кошторис готується 40–90 с, тож застосунок не чекає відповіді: n8n повертає `202 {"job_id"}` одразу,
++а результат приходить підписаним колбеком.
++
++**Застосунок → n8n** (`POST ${N8N_WEBHOOK_BASE_URL}/quote-request`, `lib/quotes.ts` → `lib/n8n/client.ts`):
++
++```json
++{
++  "version": 1,
++  "event": "quote-request",
++  "data": { "quoteId": "<uuid>", "company": "…", "email": "…", "description": "…", "budget": 1500 },
++  "callbackUrl": "${APP_BASE_URL}/api/n8n/quote-request"
++}
++```
++
++`budget` — ціле число в доларах США. Заголовки: `x-n8n-token`, `idempotency-key` (= `quoteId`),
++`x-correlation-id`.
++
++**n8n → застосунок** (`POST ${callbackUrl}`, `app/api/n8n/[event]/route.ts`): тіло
++`{ "version": 1, "event": "quote-request.completed", "data": { "jobId", "status": "completed" | "failed",
++"correlationId", "requestIdempotencyKey": "<quoteId>", "result": { "documentUrl": "https://…" } } }`;
++для `failed` замість `result` — `error: { "code": "…" }`. Заголовки й підпис — у
++`references/contract.md` скіла.
++
++**Статус для користувача:** `/quotes/<quoteId>` (`queued` → `processing` → `ready` | `failed`).
++
++### Що налаштувати в n8n (робить людина з доступом до n8n; JSON воркфлоу ми не чіпаємо)
++
++1. **Webhook**: POST, Path `quote-request`, Authentication = Header Auth (credential: Name `x-n8n-token`,
++   Value = `N8N_WEBHOOK_TOKEN`), Respond = `Using 'Respond to Webhook' Node`.
++2. **Remove Duplicates** одразу після Webhook: Remove Items Processed in Previous Executions, значення
++   `{{ $json.headers['idempotency-key'] }}`. Без нього повтор виклику (наші повтори, до 2) запустить
++   генерацію PDF повторно.
++3. **Respond to Webhook** одразу після цього: JSON, код `202`, тіло `{"job_id": "{{ $execution.id }}"}`.
++   Усе довге (генерація PDF) — після цього вузла.
++4. Після генерації PDF — **Edit Fields**: `ts` = `{{ Math.floor($now.toSeconds()) }}`, `body` =
++   `{{ JSON.stringify({ version: 1, event: 'quote-request.completed', data: { jobId: $execution.id, status: 'completed', correlationId: $('Webhook').item.json.headers['x-correlation-id'], requestIdempotencyKey: $('Webhook').item.json.headers['idempotency-key'], result: { documentUrl: <https-посилання на PDF> }, completedAt: $now.toISO() } }) }}`.
++   Файл у колбек не кладемо — лише посилання `https://…`.
++5. **Crypto** (v2): Action `Hmac`, Type `SHA256`, Encoding `HEX`, Value `{{ $json.ts + '.' + $json.body }}`,
++   credential Crypto з Hmac Secret = `N8N_CALLBACK_SECRET`.
++6. **HTTP Request**: POST на `{{ $('Webhook').item.json.body.callbackUrl }}`; заголовки
++   `x-n8n-timestamp` = `{{ $json.ts }}`, `x-n8n-signature` = `sha256=<вихід Crypto>`,
++   `idempotency-key` = `{{ $execution.id }}:quote-request.completed`, `x-correlation-id` з вхідних
++   заголовків; Body Content Type = **Raw**, `application/json`, Body = `{{ $json.body }}` (ті самі
++   байти, що підписали); Timeout `10000`; Retry On Fail: 3 спроби, пауза 1000 мс.
++7. Гілка помилки (Error Trigger / on error): той самий колбек з `status: "failed"` і
++   `error: { "code": "<код>" }`, без тексту помилки.
++8. **Publish** після кожної зміни (n8n 2.x виконує опубліковану версію). n8n у Docker, застосунок на
++   хості → `APP_BASE_URL` з `host.docker.internal`, не `localhost`.
++
++Змінні застосунку: `N8N_WEBHOOK_BASE_URL` (закінчується на `/webhook`), `N8N_WEBHOOK_TOKEN`,
++`N8N_CALLBACK_SECRET`, `APP_BASE_URL` — у `.env.local` / налаштуваннях хостингу (значення — лише в них).
+diff --git a/lib/db.ts b/lib/db.ts
+index 648645c..7ef9839 100644
+--- a/lib/db.ts
++++ b/lib/db.ts
+@@ -1,3 +1,4 @@
++import { randomUUID } from "node:crypto";
+ import type {
+   AuditEntry,
+   Lead,
+@@ -5,6 +6,8 @@ import type {
+   LeadStats,
+   LeadStatus,
+   NewLead,
++  NewQuoteRequest,
++  QuoteRequest,
+   SourceCount,
+   User,
+   Workspace,
+@@ -20,6 +23,9 @@ type Store = {
+   leads: Lead[];
+   audit: AuditEntry[];
+   nextLeadNumber: number;
++  quotes: Map<string, QuoteRequest>;
++  // idempotency keys of n8n callbacks that are being or have been handled
++  callbackKeys: Set<string>;
+ };
+ 
+ const LATENCY_MS = {
+@@ -35,6 +41,11 @@ const LATENCY_MS = {
+   insertAuditEntry: 250,
+   listUsers: 50,
+   createSession: 50,
++  insertQuote: 120,
++  getQuote: 80,
++  updateQuote: 80,
++  claimCallbackKey: 30,
++  releaseCallbackKey: 30,
+ } as const;
+ 
+ type QueryName = keyof typeof LATENCY_MS;
+@@ -261,12 +272,23 @@ function createStore(): Store {
+     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
+   ];
+   const leads = seedLeads(200, workspaces, users);
+-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
++  return {
++    workspaces,
++    users,
++    leads,
++    audit: [],
++    nextLeadNumber: leads.length + 1,
++    quotes: new Map(),
++    callbackKeys: new Set(),
++  };
+ }
+ 
+ // One store per server process (also survives module reloads in `next dev`).
+ const globalForStore = globalThis as unknown as { leadDeskStore?: Store };
+ const store = (globalForStore.leadDeskStore ??= createStore());
++// A store created before quotes existed (dev server that survived the edit) lacks these.
++store.quotes ??= new Map();
++store.callbackKeys ??= new Set();
+ 
+ const SESSION_PREFIX = "demo-";
+ 
+@@ -383,4 +405,85 @@ export const db = {
+       store.audit.push(entry);
+     });
+   },
++
++  insertQuote(input: NewQuoteRequest) {
++    return query("insertQuote", (): QuoteRequest => {
++      const now = new Date().toISOString();
++      const quote: QuoteRequest = {
++        ...input,
++        id: randomUUID(),
++        correlationId: randomUUID(),
++        status: "queued",
++        jobId: null,
++        documentUrl: null,
++        errorCode: null,
++        createdAt: now,
++        updatedAt: now,
++      };
++      store.quotes.set(quote.id, quote);
++      return { ...quote };
++    });
++  },
++
++  getQuote(id: string) {
++    return query("getQuote", () => {
++      const quote = store.quotes.get(id);
++      return quote ? { ...quote } : null;
++    });
++  },
++
++  // n8n accepted the request (202). Only queued -> processing: a fast callback may have
++  // finished the quote already, and that result must stay.
++  markQuoteProcessing(id: string, jobId: string | null) {
++    return query("updateQuote", () => {
++      const quote = store.quotes.get(id);
++      if (!quote || quote.status !== "queued") return false;
++      quote.status = "processing";
++      quote.jobId = jobId;
++      quote.updatedAt = new Date().toISOString();
++      return true;
++    });
++  },
++
++  // A ready quote is final: neither a late failure nor another job's callback rewrites it.
++  completeQuote(id: string, result: { jobId: string; documentUrl: string }) {
++    return query("updateQuote", () => {
++      const quote = store.quotes.get(id);
++      if (!quote || quote.status === "ready") return false;
++      quote.status = "ready";
++      quote.jobId = result.jobId;
++      quote.documentUrl = result.documentUrl;
++      quote.errorCode = null;
++      quote.updatedAt = new Date().toISOString();
++      return true;
++    });
++  },
++
++  failQuote(id: string, errorCode: string, jobId?: string) {
++    return query("updateQuote", () => {
++      const quote = store.quotes.get(id);
++      if (!quote || quote.status === "ready") return false;
++      quote.status = "failed";
++      quote.errorCode = errorCode;
++      if (jobId) quote.jobId = jobId;
++      quote.updatedAt = new Date().toISOString();
++      return true;
++    });
++  },
++
++  // Insert-if-absent in one step (the Postgres equivalent is INSERT ... ON CONFLICT DO NOTHING).
++  // In-memory only works on one long-lived process; serverless needs a real table or KV.
++  claimCallbackKey(key: string) {
++    return query("claimCallbackKey", () => {
++      if (store.callbackKeys.has(key)) return false;
++      store.callbackKeys.add(key);
++      return true;
++    });
++  },
++
++  releaseCallbackKey(key: string) {
++    return query("releaseCallbackKey", () => {
++      store.callbackKeys.delete(key);
++    });
++  },
+ };
+diff --git a/lib/lead-form.ts b/lib/lead-form.ts
+index e74633b..c5f8946 100644
+--- a/lib/lead-form.ts
++++ b/lib/lead-form.ts
+@@ -33,7 +33,7 @@ export type ParseResult =
+   | { ok: true; data: LeadFormData }
+   | { ok: false; errors: Partial<Record<LeadFormField, string>> };
+ 
+-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
++export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+ const PHONE_RE = /^\+?[0-9 ()-]{7,20}$/;
+ 
+ function text(formData: FormData, name: LeadFormField, max = 200) {
+diff --git a/lib/n8n/client.ts b/lib/n8n/client.ts
+new file mode 100644
+index 0000000..dd58751
+--- /dev/null
++++ b/lib/n8n/client.ts
+@@ -0,0 +1,80 @@
++import "server-only";
++import { createHash, randomUUID } from "node:crypto";
++
++const TIMEOUT_MS = 10_000;
++const RETRY_DELAYS_MS = [1_000, 3_000]; // at most 2 retries
++
++export type TriggerOptions = {
++  idempotencyKey: string; // UUID created once per business operation, stored with the record
++  correlationId?: string;
++  callbackUrl?: string; // async workflows only
++};
++
++export type TriggerResult =
++  | { ok: true; status: number; jobId: string | null }
++  | { ok: false; status: number | null; reason: "not-configured" | "rejected" | "unavailable" };
++
++export function n8nCallbackUrl(event: string): string | null {
++  const base = process.env.APP_BASE_URL;
++  return base ? `${base.replace(/\/+$/, "")}/api/n8n/${event}` : null;
++}
++
++const retryable = (status: number) => status >= 500; // 5xx incl. 524; never 4xx
++
++export async function triggerWorkflow(
++  event: string,
++  data: Record<string, unknown>,
++  options: TriggerOptions,
++): Promise<TriggerResult> {
++  const baseUrl = process.env.N8N_WEBHOOK_BASE_URL;
++  const token = process.env.N8N_WEBHOOK_TOKEN;
++  const correlationId = options.correlationId ?? randomUUID();
++  if (!baseUrl || !token) {
++    console.warn(`n8n -> ${event} skipped: N8N_WEBHOOK_BASE_URL or N8N_WEBHOOK_TOKEN is not set corr=${correlationId}`);
++    return { ok: false, status: null, reason: "not-configured" };
++  }
++
++  const url = `${baseUrl.replace(/\/+$/, "")}/${event}`;
++  const envelope = JSON.stringify({ version: 1, event, data, ...(options.callbackUrl ? { callbackUrl: options.callbackUrl } : {}) });
++  const size = `${Buffer.byteLength(envelope)} B sha256=${createHash("sha256").update(envelope).digest("hex").slice(0, 16)}`;
++  const tries = RETRY_DELAYS_MS.length + 1;
++  let lastStatus: number | null = null;
++
++  for (let attempt = 1; attempt <= tries; attempt++) {
++    const started = Date.now();
++    let outcome: string;
++    try {
++      const response = await fetch(url, {
++        method: "POST",
++        headers: {
++          "content-type": "application/json",
++          "x-n8n-token": token,
++          "idempotency-key": options.idempotencyKey,
++          "x-correlation-id": correlationId,
++        },
++        body: envelope,
++        signal: AbortSignal.timeout(TIMEOUT_MS),
++      });
++      const answer = await response.text(); // only job_id is read, and only from a 202
++      lastStatus = response.status;
++      outcome = String(response.status);
++      console.info(`n8n -> ${event} ${outcome} in ${Date.now() - started} ms (try ${attempt}/${tries}) corr=${correlationId} ${size}`);
++      if (response.ok) return { ok: true, status: response.status, jobId: response.status === 202 ? readJobId(answer) : null };
++      if (!retryable(response.status)) return { ok: false, status: response.status, reason: "rejected" };
++    } catch (error) {
++      outcome = error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network error";
++      console.warn(`n8n -> ${event} ${outcome} after ${Date.now() - started} ms (try ${attempt}/${tries}) corr=${correlationId}`);
++    }
++    if (attempt < tries) await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt - 1]));
++  }
++  return { ok: false, status: lastStatus, reason: "unavailable" };
++}
++
++function readJobId(answer: string): string | null {
++  try {
++    const value = JSON.parse(answer) as { job_id?: unknown };
++    return typeof value.job_id === "string" ? value.job_id : null;
++  } catch {
++    return null;
++  }
++}
+diff --git a/lib/n8n/envelope.ts b/lib/n8n/envelope.ts
+new file mode 100644
+index 0000000..e124d46
+--- /dev/null
++++ b/lib/n8n/envelope.ts
+@@ -0,0 +1,89 @@
++import "server-only";
++
++export type CallbackData = {
++  jobId: string;
++  status: "completed" | "failed";
++  requestIdempotencyKey: string;
++  documentUrl?: string; // https: only, present when completed
++  errorCode?: string; // present when failed
++};
++
++export type CallbackEnvelope = { version: 1; event: string; data: CallbackData };
++
++export type CallbackOutcome =
++  | { status: "applied"; afterResponse?: () => Promise<void> }
++  | { status: "already-final" }
++  | { status: "other-job" }
++  | { status: "unknown-job" };
++
++export type CallbackHandler = (data: CallbackData) => Promise<CallbackOutcome>;
++
++const MAX_ID_LENGTH = 200;
++const MAX_URL_LENGTH = 2048;
++const ERROR_CODE_RE = /^[\w.-]{1,64}$/;
++
++// Reads the body in chunks and stops as soon as the limit is passed, so an oversized request
++// is never buffered whole. null = too large.
++export async function readBodyLimited(request: Request, maxBytes: number): Promise<Uint8Array | null> {
++  const declared = Number(request.headers.get("content-length"));
++  if (Number.isFinite(declared) && declared > maxBytes) return null;
++  if (!request.body) return new Uint8Array(0);
++
++  const reader = request.body.getReader();
++  const chunks: Uint8Array[] = [];
++  let total = 0;
++  for (;;) {
++    const { done, value } = await reader.read();
++    if (done) break;
++    total += value.byteLength;
++    if (total > maxBytes) {
++      await reader.cancel();
++      return null;
++    }
++    chunks.push(value);
++  }
++  return Buffer.concat(chunks);
++}
++
++const isRecord = (value: unknown): value is Record<string, unknown> =>
++  typeof value === "object" && value !== null && !Array.isArray(value);
++
++const isId = (value: unknown): value is string =>
++  typeof value === "string" && value.length > 0 && value.length <= MAX_ID_LENGTH;
++
++// Call only after the signature is verified. The data is signed but still untrusted:
++// shape, lengths and the link scheme are checked here.
++export function parseCallbackEnvelope(rawBody: Uint8Array, expectedEvent: string): CallbackEnvelope | null {
++  let value: unknown;
++  try {
++    value = JSON.parse(Buffer.from(rawBody).toString("utf8"));
++  } catch {
++    return null;
++  }
++  if (!isRecord(value) || value.version !== 1 || value.event !== expectedEvent || !isRecord(value.data)) return null;
++
++  const { jobId, status, requestIdempotencyKey, result, error } = value.data;
++  if (!isId(jobId) || !isId(requestIdempotencyKey)) return null;
++
++  if (status === "completed") {
++    const documentUrl = isRecord(result) ? result.documentUrl : undefined;
++    if (typeof documentUrl !== "string" || !isHttpsUrl(documentUrl)) return null;
++    return { version: 1, event: expectedEvent, data: { jobId, status, requestIdempotencyKey, documentUrl } };
++  }
++  if (status === "failed") {
++    const code = isRecord(error) ? error.code : undefined;
++    const errorCode = typeof code === "string" && ERROR_CODE_RE.test(code) ? code : undefined;
++    return { version: 1, event: expectedEvent, data: { jobId, status, requestIdempotencyKey, errorCode } };
++  }
++  return null;
++}
++
++// A link from a callback is shown to people: only https: is allowed (not javascript:, data:, http:).
++export function isHttpsUrl(value: string): boolean {
++  if (value.length > MAX_URL_LENGTH) return false;
++  try {
++    return new URL(value).protocol === "https:";
++  } catch {
++    return false;
++  }
++}
+diff --git a/lib/n8n/signature.ts b/lib/n8n/signature.ts
+new file mode 100644
+index 0000000..41c751b
+--- /dev/null
++++ b/lib/n8n/signature.ts
+@@ -0,0 +1,27 @@
++import "server-only";
++import { createHmac, timingSafeEqual } from "node:crypto";
++
++export const CALLBACK_WINDOW_SECONDS = 300;
++
++export type VerifyResult =
++  | { ok: true }
++  | { ok: false; reason: "no-secret" | "bad-timestamp" | "stale-timestamp" | "bad-signature" };
++
++export function verifyN8nSignature(input: {
++  rawBody: Uint8Array;
++  timestamp: string | null;
++  signature: string | null;
++  secret: string | undefined;
++}): VerifyResult {
++  if (!input.secret) return { ok: false, reason: "no-secret" };
++  const ts = input.timestamp ?? "";
++  if (!/^\d{1,12}$/.test(ts)) return { ok: false, reason: "bad-timestamp" };
++  if (Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) > CALLBACK_WINDOW_SECONDS) {
++    return { ok: false, reason: "stale-timestamp" };
++  }
++  const expected = createHmac("sha256", input.secret).update(`${ts}.`).update(input.rawBody).digest();
++  const hex = /^sha256=([0-9a-f]{64})$/i.exec(input.signature ?? "")?.[1];
++  const given = hex ? Buffer.from(hex, "hex") : Buffer.alloc(0);
++  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return { ok: false, reason: "bad-signature" };
++  return { ok: true };
++}
+diff --git a/lib/quote-form.ts b/lib/quote-form.ts
+new file mode 100644
+index 0000000..8be3db7
+--- /dev/null
++++ b/lib/quote-form.ts
+@@ -0,0 +1,44 @@
++import { EMAIL_RE } from "./lead-form";
++import type { NewQuoteRequest } from "./types";
++
++export const QUOTE_BUDGET_MIN = 100;
++export const QUOTE_BUDGET_MAX = 1_000_000;
++
++export type QuoteFormField = "company" | "email" | "description" | "budget";
++
++// What the user typed, as strings, so the form can be shown again after a validation error.
++export type QuoteFormValues = Record<QuoteFormField, string>;
++
++export type QuoteParseResult =
++  | { ok: true; data: NewQuoteRequest }
++  | { ok: false; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues };
++
++function text(formData: FormData, name: QuoteFormField, max: number) {
++  const value = formData.get(name);
++  return typeof value === "string" ? value.trim().slice(0, max) : "";
++}
++
++export function parseQuoteForm(formData: FormData): QuoteParseResult {
++  const values: QuoteFormValues = {
++    company: text(formData, "company", 120),
++    email: text(formData, "email", 200).toLowerCase(),
++    description: text(formData, "description", 2000),
++    budget: text(formData, "budget", 10),
++  };
++
++  const errors: Partial<Record<QuoteFormField, string>> = {};
++  if (!values.company) errors.company = "Вкажіть компанію";
++  if (!EMAIL_RE.test(values.email)) errors.email = "Перевірте email";
++  if (values.description.length < 10) errors.description = "Опишіть задачу хоча б одним реченням";
++
++  const budget = Number(values.budget);
++  if (!/^\d+$/.test(values.budget) || budget < QUOTE_BUDGET_MIN || budget > QUOTE_BUDGET_MAX) {
++    errors.budget = `Вкажіть бюджет у доларах від ${QUOTE_BUDGET_MIN} до ${QUOTE_BUDGET_MAX}`;
++  }
++
++  if (Object.keys(errors).length > 0) return { ok: false, errors, values };
++  return {
++    ok: true,
++    data: { company: values.company, email: values.email, description: values.description, budget },
++  };
++}
+diff --git a/lib/quotes.ts b/lib/quotes.ts
+new file mode 100644
+index 0000000..5d4273f
+--- /dev/null
++++ b/lib/quotes.ts
+@@ -0,0 +1,63 @@
++import "server-only";
++import { db } from "./db";
++import { isHttpsUrl, type CallbackData, type CallbackOutcome } from "./n8n/envelope";
++import { n8nCallbackUrl, triggerWorkflow } from "./n8n/client";
++import type { NewQuoteRequest, QuoteRequest, QuoteStatus } from "./types";
++
++export const QUOTE_EVENT = "quote-request";
++
++const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
++
++// What the public status page may show: status, the company the user typed and the link.
++// Not the email or the description.
++export type QuoteView = {
++  company: string;
++  status: QuoteStatus;
++  documentUrl: string | null;
++};
++
++export function createQuoteRequest(input: NewQuoteRequest): Promise<QuoteRequest> {
++  return db.insertQuote(input); // status "queued"
++}
++
++export async function getQuoteView(id: string): Promise<QuoteView | null> {
++  if (!UUID_RE.test(id)) return null;
++  const quote = await db.getQuote(id);
++  if (!quote) return null;
++  const documentUrl = quote.status === "ready" && quote.documentUrl && isHttpsUrl(quote.documentUrl) ? quote.documentUrl : null;
++  return { company: quote.company, status: quote.status, documentUrl };
++}
++
++// Runs in after(): the user has already been answered. n8n replies 202 at once, the PDF is
++// prepared for 40-90 s and comes back through the signed callback.
++export async function startQuoteWorkflow(id: string) {
++  const quote = await db.getQuote(id);
++  if (!quote || quote.status !== "queued") return;
++
++  const callbackUrl = n8nCallbackUrl(QUOTE_EVENT);
++  const result = callbackUrl
++    ? await triggerWorkflow(
++        QUOTE_EVENT,
++        { quoteId: quote.id, company: quote.company, email: quote.email, description: quote.description, budget: quote.budget },
++        { idempotencyKey: quote.id, correlationId: quote.correlationId, callbackUrl },
++      )
++    : ({ ok: false, status: null, reason: "not-configured" } as const);
++
++  if (result.ok) await db.markQuoteProcessing(quote.id, result.jobId);
++  else await db.failQuote(quote.id, `n8n-${result.reason}`);
++}
++
++export async function handleQuoteCallback(data: CallbackData): Promise<CallbackOutcome> {
++  const quote = await db.getQuote(data.requestIdempotencyKey);
++  if (!quote) return { status: "unknown-job" };
++  // Bound to the job from the 202; null only if a fast callback beat markQuoteProcessing.
++  if (quote.jobId && quote.jobId !== data.jobId) return { status: "other-job" };
++  if (quote.status === "ready") return { status: "already-final" }; // a result is final
++
++  const applied =
++    data.status === "completed" && data.documentUrl
++      ? await db.completeQuote(quote.id, { jobId: data.jobId, documentUrl: data.documentUrl })
++      : await db.failQuote(quote.id, data.errorCode ?? "workflow-failed", data.jobId);
++  if (!applied) return { status: "already-final" };
++  return { status: "applied" };
++}
+diff --git a/lib/types.ts b/lib/types.ts
+index 7803a22..66e77b3 100644
+--- a/lib/types.ts
++++ b/lib/types.ts
+@@ -98,3 +98,26 @@ export type AuditEntry = {
+   leadId: string;
+   at: string;
+ };
++
++export const QUOTE_STATUSES = ["queued", "processing", "ready", "failed"] as const;
++
++export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
++
++export type QuoteRequest = {
++  // UUID: unguessable (the public status page is addressed by it) and the idempotency key
++  // of the n8n call, created once per request.
++  id: string;
++  correlationId: string;
++  company: string;
++  email: string;
++  description: string;
++  budget: number; // whole USD
++  status: QuoteStatus;
++  jobId: string | null; // job_id from n8n's 202; the callback must come from this job
++  documentUrl: string | null;
++  errorCode: string | null;
++  createdAt: string;
++  updatedAt: string;
++};
++
++export type NewQuoteRequest = Pick<QuoteRequest, "company" | "email" | "description" | "budget">;

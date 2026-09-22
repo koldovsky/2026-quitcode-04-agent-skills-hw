@@ -46,10 +46,18 @@ export type Lead = {
   ipAddress: string;
   userAgent: string;
   rawPayload: Record<string, unknown>;
+  // idempotency-key of the lead-created call to n8n: created once with the lead and stored with
+  // it, so a re-drive reuses it. null for the seeded rows, which never went through the form.
+  n8nIdempotencyKey: string | null;
   internalNotes: string;
   createdAt: string;
   updatedAt: string;
 };
+
+// What the dashboard list sends to the browser: only the fields the table and the search
+// use (the search also matches on e-mail). Full rows carry phone, IP, user agent, raw
+// form payload and internal notes.
+export type LeadListItem = Pick<Lead, "id" | "fullName" | "company" | "email" | "status" | "createdAt">;
 
 export type NewLead = Omit<
   Lead,
@@ -92,6 +100,27 @@ export type SourceCount = {
   source: LeadSource;
   count: number;
 };
+
+export const QUOTE_STATUSES = ["queued", "processing", "ready", "failed"] as const;
+
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
+export type Quote = {
+  id: string; // random UUID; also the idempotency-key of the quote-request call to n8n
+  correlationId: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  jobId: string | null;
+  documentUrl: string | null;
+  failureCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Pick<Quote, "company" | "email" | "description" | "budget">;
 
 export type AuditEntry = {
   action: string;
