@@ -15,7 +15,7 @@
 | Skill | Звідки (Project / Personal / вбудований) | Примітка |
 |---|---|---|
 | `vercel-react-best-practices` | Project | ~120 токенів опису; видно одразу після встановлення |
-| `building-client-form` | | |
+| `building-client-form` | Project | ~300 токенів опису; видно у свіжій сесії після коміту `c603b92` (`claude -p "/context"` і сесія «Review Task B») |
 | `integrating-n8n-webhooks` | | |
 
 - Особисті скіли, які теж видно (`~/.claude/skills/`…), і чи можуть вони вплинути на перевірки: `find-skills` (User) —
@@ -108,12 +108,46 @@ Cookie демо-користувача Olena (`leaddesk_session=demo-u_olena`); 
 
 ## Task B — `building-client-form`
 
-- Запит у свіжій сесії (скіл не названо):
-  > <запит>
-- Чи спрацював скіл і як це видно: <виклик `Skill` з `building-client-form` / читання `SKILL.md` / ні>
-- Якщо не з першого разу — що змінили в `description`, і результат другої спроби: <…>
-- Що зроблено (файли): <…>
-- Пункти Verify зі скіла — результат кожного: <…>
+- Скіл: `.claude/skills/building-client-form/SKILL.md` (коміт `c603b92`) — лише `SKILL.md`, 120 рядків; `name` = назва теки;
+  `description` — 866 символів (перевірено `node -e`), з «що», «Use when…», фразами-тригерами і «Не для…». Правила
+  Vercel — лише за id (`server-auth-actions`, `server-serialization`, `server-after-nonblocking`); перевірка «жоден рядок
+  ≥ 30 символів зі скіла не збігається з `rules/*.md`» — 0 збігів.
+- Запит у свіжій сесії (нова інтерактивна сесія Claude Code «Review Task B», 24.09.2026; скіл не названо):
+  > На сторінці ліда в дашборді (/dashboard/leads/[id]) додай форму «Додати нотатку»: одне текстове поле до 500 символів;
+  > нотатка дописується до внутрішніх нотаток ліда.
+- Чи спрацював скіл і як це видно: **так, з першої спроби.** Перед запитом сесія на «які skills тобі доступні?» назвала
+  `building-client-form` серед скілів проєкту. У транскрипті сесії — виклик інструмента `Skill`, результат якого
+  починається з `Base directory for this skill: …/.claude/skills/building-client-form`; сесія сама написала «пишу три
+  файли форми за скілом `building-client-form`» і пройшла його розділ Verify.
+- Якщо не з першого разу: — (спрацював з першого разу, `description` не змінювали).
+- Що зроблено (файли; коміт `67a76c2`):
+  - `lib/note-form.ts` — `parseNoteForm`: `trim`, порожнє → помилка, > 500 символів → помилка (ліміт на сервері,
+    `maxLength` у полі — лише підказка); повертає `values` для повторного показу;
+  - `app/actions.ts` — `addLeadNote(prevState, formData)`: `getCurrentUser()` → `getWorkspace` + `getLead` і перевірка
+    `lead.workspaceId === workspace.id` → валідація → `db.appendLeadNote` → `revalidatePath`; аудит `lead.note_added` —
+    в `after()`; повертає лише `{ status, errors?, values?, message? }`;
+  - `components/note-form.tsx` — `useActionState`, `<form action>`, `label htmlFor`, `aria-invalid`, `aria-describedby`,
+    `role="alert"` / `role="status"`, `defaultValue` з `values` + `key` для повторного монтування;
+  - `lib/db.ts` — `appendLeadNote`; `app/dashboard/leads/[id]/page.tsx` — форма під нотатками, `whitespace-pre-line`.
+  - Окремо (`0a04307`): у `next.config.ts` — `logging: { serverFunctions: false }`. Під час Verify сесія помітила, що
+    `npm run dev` у Next.js 16 за замовчуванням друкує аргументи кожної Server Function (тобто текст нотатки, а для форми
+    заявки — email і телефон). Код скіла нічого не логує; сесія за правилом зупинки не змінювала конфіг сама, а спитала —
+    рішення людини: вимкнути (`01-app/03-api-reference/05-config/01-next-config-js/logging.md`).
+- Пункти Verify зі скіла — результат кожного:
+  - `npm run lint`, `npm run build` — без помилок (і після `0a04307`).
+  - Порожня відправка — над формою `role="alert"` «Перевірте поля: текст нотатки.», в полі `aria-invalid="true"`,
+    `aria-describedby="text-error"` → «Напишіть текст нотатки» (перевірено в браузері й через DOM).
+  - Після помилки введене лишилось — 520 символів в обхід `maxLength`: сервер відхилив («520 із 500 символів»), текст
+    лишився в полі.
+  - Без JavaScript — сесія перевірила звичайним POST форми з HTML сервера (як браузер без JS): і збереження, і помилки
+    працюють.
+  - Дія без сесії — редірект на `/login`, нотатку не збережено.
+  - Журнал сервера — після `0a04307` відправили нотатку з маркером `PII-MARKER-7731`: у журналі `npm run dev` маркера
+    немає, лише `db:<запит>` і `POST /dashboard/leads/lead_0023 200`.
+  - Повільне після відповіді — `db:insertAuditEntry` з'являється в журналі **після** рядка `POST … 200`: аудит (250 мс)
+    виконується в `after()`, відповідь його не чекає.
+- Поза задачею: та ж сесія, як і рев'ю в Task A, відзначила, що `updateLeadStatus` і `deleteLead` не перевіряють сесію
+  (`server-auth-actions`) — записано як окрему задачу.
 
 ## Task C — `integrating-n8n-webhooks`
 
