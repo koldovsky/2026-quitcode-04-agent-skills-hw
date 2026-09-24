@@ -2,9 +2,12 @@
 
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
+import { parseNoteForm, type NoteFormField } from "@/lib/note-form";
 import type { LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
@@ -61,6 +64,50 @@ export async function submitLead(
   }
 
   await logAudit("lead.created", lead.id);
+
+  return { status: "ok" };
+}
+
+export type NoteFormState =
+  | { status: "idle" }
+  | { status: "invalid"; errors: Partial<Record<NoteFormField, string>>; values: { text: string } }
+  | { status: "ok" }
+  | { status: "error"; message: string };
+
+export async function addLeadNote(
+  _prevState: NoteFormState,
+  formData: FormData,
+): Promise<NoteFormState> {
+  const user = await getCurrentUser();
+  const leadId = formData.get("leadId");
+  if (typeof leadId !== "string" || !leadId) {
+    return { status: "error", message: "Лід не знайдено" };
+  }
+
+  const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), getLead(leadId)]);
+  if (!lead || lead.workspaceId !== workspace.id) {
+    return { status: "error", message: "Лід не знайдено" };
+  }
+
+  const parsed = parseNoteForm(formData);
+  if (!parsed.ok) {
+    return { status: "invalid", errors: parsed.errors, values: parsed.values };
+  }
+
+  const saved = await db.appendLeadNote(lead.id, parsed.data.text);
+  if (!saved) {
+    return { status: "error", message: "Не вдалося зберегти нотатку. Спробуйте ще раз." };
+  }
+
+  revalidatePath(`/dashboard/leads/${lead.id}`);
+
+  after(async () => {
+    try {
+      await logAudit("lead.note_added", lead.id);
+    } catch {
+      console.error(`Failed to write audit lead.note_added for lead ${lead.id}`);
+    }
+  });
 
   return { status: "ok" };
 }
