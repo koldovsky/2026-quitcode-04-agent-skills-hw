@@ -189,9 +189,11 @@ Cookie демо-користувача Olena (`leaddesk_session=demo-u_olena`); 
   `--changed-since <ref>`, `--help`; код виходу 1 при FAIL, 2 при помилці аргументів; значень секретів і вмісту
   файлів не друкує), `scripts/mock-n8n.mjs` (копія `tools/mock-n8n.mjs`, `diff` — ідентична),
   `scripts/send-signed-callback.mjs` (матриця з 11 колбеків з очікуваними кодами).
-- SHA коміту зі скілом (BASE для Task D): **`33f412e`** (`skills: add integrating-n8n-webhooks (contract, references,
-  scripts)`). У ньому — виправлення Task A, форма нотаток з Task B, три скіли; `/quotes` немає, виклик n8n у
-  `app/actions.ts` не змінений. Свіжа сесія (`claude -p "/context"`) бачить `integrating-n8n-webhooks` як Project.
+- SHA коміту зі скілом (BASE для Task D): **`e7e36bd`** (skill v0.2.0). Перша версія — `33f412e`; після
+  незалежного рев'ю (окремий агент перевіряв Task C за README, walkthrough і `.coderabbit.yaml`) скіл виправили
+  **до** Task D — див. «Виправлення після рев'ю» нижче. У BASE — виправлення Task A, форма нотаток з Task B, три
+  скіли; `/quotes` немає, виклик n8n у `app/actions.ts` не змінений. Свіжа сесія (`claude -p "/context"`) бачить
+  `integrating-n8n-webhooks` як Project.
 - Що скіл змінив у собі після прогонів (коміти й чому): _(заповнюється після Task D)_
 
 **`check-contract.mjs` на коді `main`** (`git archive main | tar -x -C ../leaddesk-main`; id + PASS/FAIL, код виходу):
@@ -221,9 +223,9 @@ C8   FAIL  .env.example follows the contract variables
        - .env.example:6  legacy N8N_WEBHOOK_URL: use N8N_WEBHOOK_BASE_URL + /<event>
 C9   FAIL  Server Actions start n8n workflows inside after()
        - app/actions.ts:54  Server Action waits for n8n: move the call into after() and return { status, id }
-C10  PASS  callback reads the raw body; no req.json()/JSON.parse before the signature check (n/a: no callback route app/api/n8n/**/route.*)
-C11  PASS  callback signature: length check + timingSafeEqual, never === / !== (n/a: no callback route app/api/n8n/**/route.*)
-C12  PASS  callback checks a 300 s timestamp window and an idempotency-key (n/a: no callback route app/api/n8n/**/route.*)
+C10  PASS  callback reads the raw body; no req.json()/JSON.parse before the signature check (n/a: no n8n callback route)
+C11  PASS  callback signature: length check + timingSafeEqual, never === / !== (n/a: no n8n callback route)
+C12  PASS  callback checks a 300 s timestamp window and an idempotency-key (n/a: no n8n callback route)
 C13  PASS  no runtime = "edge"
 C14  PASS  no request bodies, form data or personal data in logs of n8n-related code
 
@@ -339,6 +341,68 @@ exit=0
 auth=ok idempotency=new`, заголовки `idempotency-key`, `x-correlation-id`, `x-n8n-token`, тіло 98 Б (на `main` — 1429 Б
 цілого ліда), форма відповіла за 455 мс; ні email, ні текст заявки в журналах застосунку й мока не з'явились. Копію
 видалено; у робочій гілці фічі й змін виклику n8n немає.
+
+**Виправлення після рев'ю (`e7e36bd`, до Task D).** Рев'ю знайшло, що перевірка шукала код n8n лише за «нашими» іменами
+(`N8N_WEBHOOK_*`, роут у `app/api/n8n/`): код з власною змінною (`N8N_QUOTE_URL`) і колбеком в іншій теці майже весь
+проходив — а саме такий код імовірно напише прогін A. Що змінили:
+
+1. код, що викликає n8n, — за змістом: будь-яка змінна `N8N_*` (крім `N8N_CALLBACK_SECRET`) або `fetch`, у виклику
+   якого є n8n / webhook;
+2. колбек-роути — за шляхом **або** за змістом (`x-n8n-signature`, `x-n8n-timestamp`, `N8N_CALLBACK_SECRET`) будь-де в `app/`;
+3. C11: FAIL на `===`/`!==` із заголовком підпису чи обчисленим HMAC; `timingSafeEqual` має реально викликатися
+   на шляху роуту (напряму чи через хелпер), а не просто бути визначеним;
+4. імпорти `@/lib/n8n` (barrel) і з перейменуванням (`as start`) рахуються як виклики n8n у C9;
+5. шаблон Server Action: `triggerWorkflow` в `after()` загорнуто в `try/catch` → запис не зависає в `queued`;
+6. правило зупинки: відсутність значень у `.env.local` — не привід зупинятись (код читає `process.env`, людині —
+   список змінних); зупинка — лише якщо пропонують вписати чи вигадати значення в коді.
+
+Ще одна знахідка під час перевірки: коментар `// … timingSafeEqual (у verifySignature)` у шаблоні рахувався як
+виклик — пошук тепер ігнорує коментарі.
+
+Фікстура рев'ю (власна змінна `N8N_QUOTE_URL`, синхронний `fetch` без таймауту й заголовків у Server Action,
+колбек `app/api/quotes/callback/route.ts` з `req.json()`, `!==` і `console.log(body)`): стара версія скрипта —
+`14 checks: 14 PASS, 0 FAIL`; нова:
+
+```
+n8n contract check — root: <scratch>/fn/fn1
+scope: whole project; 2 code file(s), 0 .env example(s)
+
+C1   PASS  no /webhook-test/ URL in code or .env*.example
+C2   PASS  no NEXT_PUBLIC_ prefix on N8N_* variables
+C3   FAIL  n8n webhook calls only from lib/n8n/client.ts
+       - app/quotes/new/actions.ts:3  calls n8n outside lib/n8n/client.ts
+C4   FAIL  lib/n8n/client.ts exists and starts with import "server-only"
+       - app/quotes/new/actions.ts:3  n8n is called but lib/n8n/client.ts does not exist
+C5   FAIL  every fetch to n8n has a timeout (AbortSignal.timeout)
+       - app/quotes/new/actions.ts:3  fetch to n8n without signal: AbortSignal.timeout(...)
+C6   FAIL  outgoing n8n request sets x-n8n-token, idempotency-key, x-correlation-id
+       - app/quotes/new/actions.ts:3  missing header(s): x-n8n-token, idempotency-key, x-correlation-id
+C7   FAIL  request body is the envelope { version: 1, event, data }
+       - app/quotes/new/actions.ts:3  body is not the { version: 1, event, data } envelope
+C8   FAIL  .env.example follows the contract variables
+       - .env.example:1  .env.example is missing
+C9   FAIL  Server Actions start n8n workflows inside after()
+       - app/quotes/new/actions.ts:3  Server Action waits for n8n: move the call into after() and return { status, id }
+C10  FAIL  callback reads the raw body; no req.json()/JSON.parse before the signature check
+       - app/api/quotes/callback/route.ts:3  req.json() re-serializes the body: read req.text() and verify first
+       - app/api/quotes/callback/route.ts:1  raw body is not read with req.text()
+C11  FAIL  callback signature: length check + timingSafeEqual, never === / !==
+       - app/api/quotes/callback/route.ts:6  signature is never checked with crypto.timingSafeEqual (directly or via a helper)
+       - app/api/quotes/callback/route.ts:7  signature compared with ===/!== (timing leak): use timingSafeEqual
+C12  FAIL  callback checks a 300 s timestamp window and an idempotency-key
+       - app/api/quotes/callback/route.ts:1  no 300 s window check on x-n8n-timestamp
+       - app/api/quotes/callback/route.ts:1  idempotency-key is not checked
+C13  PASS  no runtime = "edge"
+C14  FAIL  no request bodies, form data or personal data in logs of n8n-related code
+       - app/api/quotes/callback/route.ts:4  log line may contain a body, form data, personal data or a secret
+
+14 checks: 3 PASS, 11 FAIL
+exit=1
+```
+
+Після виправлень: `main` — ті самі 8 FAIL; обидві погані фікстури — ті самі FAIL; шаблони в копії гілки —
+14 PASS / 0 FAIL, `next build` ✓; фікстура «хелпер з `timingSafeEqual` є, але заголовок порівнюється через `!==`» —
+C11 FAIL, а той самий роут, що викликає хелпер, — 14 PASS; barrel-імпорт `@/lib/n8n` з `await` поза `after()` — C9 FAIL.
 
 **`check-contract.mjs` на фінальному коді** (після перенесення прогону B — 0 FAIL): _(Task D)_
 
