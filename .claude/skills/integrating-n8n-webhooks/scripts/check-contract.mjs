@@ -26,7 +26,8 @@ Never reads .env or .env.local. Skips node_modules, .next, .git and .claude.
 Checks:
   C1  no /webhook-test/ URL in code or .env*.example
   C2  no NEXT_PUBLIC_ prefix on N8N_* variables
-  C3  n8n webhook calls only from lib/n8n/client.ts
+  C3  n8n webhook calls only from lib/n8n/client.ts (a call = reading any N8N_* variable except
+      N8N_CALLBACK_SECRET, or a fetch whose call mentions n8n / a webhook)
   C4  lib/n8n/client.ts exists and starts with import "server-only" (when n8n is called)
   C5  every fetch to n8n has a timeout (AbortSignal.timeout)
   C6  outgoing n8n request sets x-n8n-token, idempotency-key and x-correlation-id
@@ -35,7 +36,8 @@ Checks:
       APP_BASE_URL; secrets are change-me-...; no legacy N8N_WEBHOOK_URL
   C9  Server Actions that start a workflow do it in after(), not while the user waits
   C10 callback route reads the raw body (req.text()); no req.json()/JSON.parse before the
-      signature check
+      signature check. Callback routes are found by path (app/api/n8n/**) or by content
+      (x-n8n-signature / x-n8n-timestamp / N8N_CALLBACK_SECRET) anywhere under app/
   C11 callback signature compared with a length check + timingSafeEqual, never === / !==
   C12 callback checks a 300 s timestamp window and an idempotency-key
   C13 no runtime = "edge"
@@ -108,6 +110,8 @@ function lines(abs) {
   return cache.get(abs);
 }
 const text = (abs) => lines(abs).join("\n");
+// Same text with // and /* */ comment lines blanked (line numbers stay the same).
+const codeText = (abs) => lines(abs).map((l) => codeOnly(l)).join("\n");
 
 // ---------------------------------------------------------------- changed lines (optional)
 let changed = null; // Map<relPath, Set<lineNo> | "all">
@@ -173,9 +177,13 @@ function findLines(abs, re) {
   return hits;
 }
 
-const isComment = (l) => /^\s*(\/\/|\*|\/\*|#)/.test(l);
+function isComment(l) {
+  return /^\s*(\/\/|\*|\/\*|#)/.test(l);
+}
 // The line without a trailing // comment (good enough for these checks; ignores "//" inside URLs).
-const codeOnly = (l) => (isComment(l) ? "" : l.replace(/(^|[^:"'`])\/\/.*$/, "$1"));
+function codeOnly(l) {
+  return isComment(l) ? "" : l.replace(/(^|[^:"'`])\/\/.*$/, "$1");
+}
 
 // Character ranges covered by calls such as after( ... ), found by matching parentheses
 // (strings, template literals and comments are skipped).
@@ -204,19 +212,51 @@ function callSpans(src, re) {
 }
 const afterSpans = (src) => callSpans(src, /\bafter\s*\(/g);
 
-const N8N_ENV_RE = /process\.env\.N8N_WEBHOOK\w*|process\.env\[\s*["'`]N8N_WEBHOOK\w*/;
-const CLIENT_RE = /^lib\/n8n\/client\.(ts|tsx|js|mjs)$/;
-const CALLBACK_ROUTE_RE = /^(src\/)?app\/api\/n8n\/.*route\.(ts|js)$/;
+// Outgoing side: any N8N_* variable except the callback secret (N8N_WEBHOOK_URL, N8N_QUOTE_URL, ...).
+const N8N_ENV_RE = /process\.env(?:\.|\[\s*["'`])N8N_(?!CALLBACK_SECRET)\w+/;
+const CLIENT_RE = /^(src\/)?lib\/n8n\/client\.(ts|tsx|js|mjs)$/;
+const CALLBACK_PATH_RE = /^(src\/)?app\/api\/n8n\/.*route\.(ts|js)$/;
+// Callback side, found by content wherever the route lives (app/api/quotes/callback/route.ts, ...).
+const CALLBACK_CONTENT_RE = /x-n8n-signature|x-n8n-timestamp|N8N_CALLBACK_SECRET/i;
+const N8N_WORD_RE = /n8n|webhook/i;
 
-// files that talk to n8n: read N8N_WEBHOOK_* or fetch a /webhook/ URL
-const n8nCallers = codeFiles.filter((f) => {
-  const t = text(f);
-  return N8N_ENV_RE.test(t) || /fetch\([^)]*\/webhook(-test)?\//.test(t) || CLIENT_RE.test(rel(f));
-});
+// fetch( call sites that go to n8n: the call (next 20 lines) mentions n8n / a webhook,
+// or the file reads an outgoing N8N_* variable.
+function fetchSitesIn(f) {
+  const ls = lines(f);
+  const readsEnv = N8N_ENV_RE.test(text(f));
+  const sites = [];
+  ls.forEach((l, i) => {
+    if (!/\bfetch\(/.test(codeOnly(l))) return;
+    const block = ls.slice(i, i + 20).join("\n");
+    if (readsEnv || N8N_WORD_RE.test(block)) sites.push({ f, line: i + 1, block });
+  });
+  return sites;
+}
+
+const isRoute = (f) => /(^|\/)route\.(ts|js)$/.test(rel(f));
+const callbackRoutes = codeFiles.filter((f) => isRoute(f) && (CALLBACK_PATH_RE.test(rel(f)) || CALLBACK_CONTENT_RE.test(text(f))));
+// files that call n8n: read an outgoing N8N_* variable or fetch an n8n / webhook URL
+const n8nCallers = codeFiles.filter(
+  (f) => CLIENT_RE.test(rel(f)) || N8N_ENV_RE.test(text(f)) || (!callbackRoutes.includes(f) && fetchSitesIn(f).length > 0),
+);
 const clientFile = codeFiles.find((f) => CLIENT_RE.test(rel(f)));
-const callbackRoutes = codeFiles.filter((f) => CALLBACK_ROUTE_RE.test(rel(f)));
-const n8nLibFiles = codeFiles.filter((f) => rel(f).startsWith("lib/n8n/"));
-const importsN8n = (f) => /from\s+["'](@\/|\.\.?\/)+(lib\/)?n8n\//.test(text(f));
+const n8nLibFiles = codeFiles.filter((f) => /^(src\/)?lib\/n8n(\/|\.)/.test(rel(f)));
+// imports of the project's n8n module: "@/lib/n8n", "@/lib/n8n/client", "../n8n-client", ...
+const N8N_IMPORT_RE = /import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*["'][^"']*\bn8n(?:[/"'-][^"']*)?["']/g;
+const importsN8n = (f) => /from\s*["'][^"']*\bn8n(?:[/"'-][^"']*)?["']/.test(text(f));
+function importedN8nNames(f) {
+  const names = [];
+  for (const m of text(f).matchAll(N8N_IMPORT_RE)) {
+    for (const part of m[1].split(",")) {
+      const name = part.trim().split(/\s+as\s+/).pop();
+      if (name && !/^type\s/.test(part.trim())) names.push(name);
+    }
+  }
+  return names;
+}
+// files with crypto code a callback may use for verification (helpers outside the route)
+const cryptoFiles = codeFiles.filter((f) => /timingSafeEqual|createHmac/.test(codeText(f)));
 const n8nRelated = [...new Set([...n8nCallers, ...callbackRoutes, ...n8nLibFiles, ...codeFiles.filter(importsN8n)])];
 
 // ---------------------------------------------------------------- checks
@@ -235,8 +275,8 @@ check("C2", "no NEXT_PUBLIC_ prefix on N8N_* variables", (report) => {
 check("C3", "n8n webhook calls only from lib/n8n/client.ts", (report) => {
   for (const f of n8nCallers) {
     if (CLIENT_RE.test(rel(f))) continue;
-    const hits = new Set([...findLines(f, N8N_ENV_RE), ...findLines(f, /fetch\(.*\/webhook(-test)?\//)]);
-    for (const n of hits) report(rel(f), n, "calls n8n outside lib/n8n/client.ts");
+    const hits = new Set([...findLines(f, N8N_ENV_RE), ...fetchSitesIn(f).map((s) => s.line)]);
+    for (const n of [...hits].sort((a, b) => a - b)) report(rel(f), n, "calls n8n outside lib/n8n/client.ts");
   }
 });
 
@@ -244,7 +284,7 @@ check("C4", 'lib/n8n/client.ts exists and starts with import "server-only"', (re
   if (n8nCallers.length === 0) return "(n/a: project does not call n8n)";
   if (!clientFile) {
     for (const f of n8nCallers) {
-      const n = [...findLines(f, N8N_ENV_RE), ...findLines(f, /fetch\(/)][0] ?? 1;
+      const n = [...findLines(f, N8N_ENV_RE), ...fetchSitesIn(f).map((s) => s.line)].sort((a, b) => a - b)[0] ?? 1;
       report(rel(f), n, "n8n is called but lib/n8n/client.ts does not exist");
     }
     return "";
@@ -255,17 +295,7 @@ check("C4", 'lib/n8n/client.ts exists and starts with import "server-only"', (re
   }
 });
 
-// fetch call sites that go to n8n: in callers, fetch( whose next lines build an n8n URL
-function n8nFetchSites() {
-  const sites = [];
-  for (const f of n8nCallers) {
-    const ls = lines(f);
-    ls.forEach((l, i) => {
-      if (/\bfetch\(/.test(l) && !isComment(l)) sites.push({ f, line: i + 1, block: ls.slice(i, i + 20).join("\n") });
-    });
-  }
-  return sites;
-}
+const n8nFetchSites = () => n8nCallers.flatMap(fetchSitesIn);
 
 check("C5", "every fetch to n8n has a timeout (AbortSignal.timeout)", (report) => {
   const sites = n8nFetchSites();
@@ -325,64 +355,112 @@ check("C8", ".env.example follows the contract variables", (report) => {
 
 check("C9", "Server Actions start n8n workflows inside after()", (report) => {
   const actions = n8nRelated.filter((f) => /^\s*["']use server["']/m.test(text(f)));
-  const starters = actions.filter((f) => /triggerWorkflow\(|\bfetch\(/.test(text(f)) && (N8N_ENV_RE.test(text(f)) || importsN8n(f)));
-  if (starters.length === 0) return "(n/a: no Server Action calls n8n)";
-  for (const f of starters) {
+  let seen = 0;
+  for (const f of actions) {
     const t = text(f);
+    const names = importedN8nNames(f);
+    const callRe = new RegExp(`\\b(?:fetch${names.map((n) => `|${n.replace(/[$]/g, "\\$")}`).join("")})\\s*\\(`);
+    const calls = [
+      ...fetchSitesIn(f).map((s) => s.line),
+      ...(names.length ? findLines(f, new RegExp(`\\b(?:${names.join("|")})\\s*\\(`)).filter((n) => !/^\s*import\b/.test(lines(f)[n - 1])) : []),
+    ];
+    if (calls.length === 0) continue;
+    seen++;
     const spans = afterSpans(t);
     const lineStarts = [0];
     for (let i = 0; i < t.length; i++) if (t[i] === "\n") lineStarts.push(i + 1);
-    const calls = N8N_ENV_RE.test(t) ? [...findLines(f, /\bfetch\(/), ...findLines(f, /triggerWorkflow\(/)] : findLines(f, /triggerWorkflow\(/);
-    for (const n of calls) {
-      const at = lineStarts[n - 1] + lines(f)[n - 1].search(/fetch\(|triggerWorkflow\(/);
+    for (const n of [...new Set(calls)].sort((a, b) => a - b)) {
+      const at = lineStarts[n - 1] + Math.max(0, lines(f)[n - 1].search(callRe));
       if (!spans.some(([a, b]) => at > a && at < b)) {
         report(rel(f), n, "Server Action waits for n8n: move the call into after() and return { status, id }");
       }
     }
   }
+  if (seen === 0) return "(n/a: no Server Action calls n8n)";
 });
 
 
-const VERIFY_RE = /timingSafeEqual|verify\w*Signature\s*\(/;
+// Names of functions (in any file) whose body calls timingSafeEqual(...)
+function safeCompareHelpers() {
+  const names = new Set();
+  for (const f of cryptoFiles) {
+    const t = codeText(f);
+    const re = /(?:function\s+(\w+)\s*\(|(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>)/g;
+    let m;
+    while ((m = re.exec(t))) {
+      const bodyStart = t.indexOf("{", m.index);
+      if (bodyStart === -1) continue;
+      let depth = 0;
+      let i = bodyStart;
+      for (; i < t.length; i++) {
+        if (t[i] === "{") depth++;
+        else if (t[i] === "}" && --depth === 0) break;
+      }
+      if (/timingSafeEqual\s*\(/.test(t.slice(bodyStart, i))) names.add(m[1] || m[2]);
+    }
+  }
+  return names;
+}
+const HELPERS = safeCompareHelpers();
+// First line of the route where the signature is verified: a timingSafeEqual( call or a helper that makes one.
+function verifyLine(f) {
+  const re = new RegExp(`timingSafeEqual\\s*\\(${[...HELPERS].map((n) => `|\\b${n}\\s*\\(`).join("")}`);
+  const hit = lines(f).findIndex((l, i) => re.test(codeOnly(l)) && !/^\s*import\b/.test(l) && !/^\s*(export\s+)?(async\s+)?function\b/.test(l));
+  return hit === -1 ? Infinity : hit + 1;
+}
 
 check("C10", "callback reads the raw body; no req.json()/JSON.parse before the signature check", (report) => {
-  if (callbackRoutes.length === 0) return "(n/a: no callback route app/api/n8n/**/route.*)";
+  if (callbackRoutes.length === 0) return "(n/a: no n8n callback route)";
   for (const f of callbackRoutes) {
-    const verifyLine = findLines(f, VERIFY_RE)[0] ?? Infinity;
+    const vLine = verifyLine(f);
     for (const n of findLines(f, /\b(req|request)\.json\(/)) {
       if (!isComment(codeOnly(lines(f)[n - 1]))) {
         if (/\b(req|request)\.json\(/.test(codeOnly(lines(f)[n - 1]))) report(rel(f), n, "req.json() re-serializes the body: read req.text() and verify first");
       }
     }
     for (const n of findLines(f, /JSON\.parse\(/)) {
-      if (n < verifyLine && /JSON\.parse\(/.test(codeOnly(lines(f)[n - 1]))) report(rel(f), n, "JSON.parse before the signature check");
+      if (n < vLine && /JSON\.parse\(/.test(codeOnly(lines(f)[n - 1]))) report(rel(f), n, "JSON.parse before the signature check");
     }
     if (!/\.text\(\s*\)/.test(text(f))) report(rel(f), 1, "raw body is not read with req.text()");
   }
 });
 
 check("C11", "callback signature: length check + timingSafeEqual, never === / !==", (report) => {
-  if (callbackRoutes.length === 0) return "(n/a: no callback route app/api/n8n/**/route.*)";
-  const pool = [...callbackRoutes, ...n8nLibFiles];
-  if (!pool.some((f) => /timingSafeEqual\(/.test(text(f)))) {
-    for (const f of callbackRoutes) report(rel(f), 1, "no crypto.timingSafeEqual for the signature (route or lib/n8n/*)");
+  if (callbackRoutes.length === 0) return "(n/a: no n8n callback route)";
+  const pool = [...new Set([...callbackRoutes, ...n8nLibFiles, ...cryptoFiles])];
+  for (const f of callbackRoutes) {
+    if (verifyLine(f) === Infinity) {
+      report(rel(f), findLines(f, /x-n8n-signature/i)[0] ?? 1, "signature is never checked with crypto.timingSafeEqual (directly or via a helper)");
+    }
   }
   for (const f of pool) {
+    const t = text(f);
+    // variables that hold the signature header or a computed HMAC
+    const sigVars = new Set();
+    for (const m of t.matchAll(/(?:const|let|var)\s+(\w+)\s*=[^;\n]*(?:x-n8n-signature|createHmac|\.digest\()/gi)) sigVars.add(m[1]);
+    const sigVarRe = sigVars.size ? new RegExp(`\\b(?:${[...sigVars].join("|")})\\b`) : null;
     lines(f).forEach((l, i) => {
-      if (isComment(l)) return;
-      if (/[!=]==?/.test(l) && /signature|\bsig\b|expected(Sig|Hmac|Digest)?\b|hmac|digest/i.test(l) && !/\.length\b/.test(l) && !/headers\.get\(/.test(l)) {
-        report(rel(f), i + 1, "signature compared with ===/!== (timing leak): use timingSafeEqual");
-      }
+      const code = codeOnly(l);
+      if (!/[!=]==?/.test(code) || /\.length\b/.test(code)) return;
+      const compared = code.split(/[!=]==?/);
+      if (compared.length < 2) return;
+      const touchesSig =
+        /x-n8n-signature|\.digest\(/i.test(code) ||
+        /\b(signature|sig|expectedSig\w*|hmac|digest)\b/i.test(code) ||
+        (sigVarRe && sigVarRe.test(code));
+      if (touchesSig) report(rel(f), i + 1, "signature compared with ===/!== (timing leak): use timingSafeEqual");
     });
-    if (/timingSafeEqual\(/.test(text(f)) && !/\.length\s*[!=]==?|[!=]==?\s*\w+\.length/.test(text(f))) {
-      report(rel(f), findLines(f, /timingSafeEqual\(/)[0], "timingSafeEqual without a length check (throws on different lengths)");
+    const ct = codeText(f);
+    const calls = ct.split("\n").map((l, i) => (/timingSafeEqual\s*\(/.test(l) && !/^\s*import\b/.test(l) ? i + 1 : 0)).filter(Boolean);
+    if (calls.length && !/\.length\s*[!=]==?|[!=]==?\s*[\w.]+\.length/.test(ct)) {
+      report(rel(f), calls[0], "timingSafeEqual without a length check (throws on different lengths)");
     }
   }
 });
 
 check("C12", "callback checks a 300 s timestamp window and an idempotency-key", (report) => {
-  if (callbackRoutes.length === 0) return "(n/a: no callback route app/api/n8n/**/route.*)";
-  const pool = [...callbackRoutes, ...n8nLibFiles].map(text).join("\n");
+  if (callbackRoutes.length === 0) return "(n/a: no n8n callback route)";
+  const pool = [...new Set([...callbackRoutes, ...n8nLibFiles, ...cryptoFiles])].map(text).join("\n");
   for (const f of callbackRoutes) {
     if (!/x-n8n-timestamp/i.test(text(f)) || !/\b300\b/.test(pool)) report(rel(f), 1, "no 300 s window check on x-n8n-timestamp");
     if (!/idempotency-key/i.test(text(f))) report(rel(f), 1, "idempotency-key is not checked");

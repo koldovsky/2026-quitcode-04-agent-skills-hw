@@ -12,7 +12,7 @@ description: >-
   редагування воркфлоу в редакторі n8n і не для коду вузла Code.
 metadata:
   owner: "Studio Nova dev"
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Integrating n8n webhooks
@@ -49,7 +49,8 @@ metadata:
    `server-only`, конверт, три заголовки, таймаут, повтори. Решта коду викликає лише `triggerWorkflow`.
 3. **Server Action.** Сесія, права й валідація — всередині дії (правило `server-auth-actions`). Збережи
    запис зі `status: "queued"`, `idempotencyKey` і `correlationId`, поверни `{ status, id }`, а
-   `triggerWorkflow` виклич в `after()` (правило `server-after-nonblocking`); невдача → `status: "failed"`.
+   `triggerWorkflow` виклич в `after()` (правило `server-after-nonblocking`) у `try/catch`; невдача чи
+   виняток → `status: "failed"`, щоб запис не завис у `queued`.
    Шаблон — [code-templates.md](references/code-templates.md) §4. Форму роби за скілом форм проєкту, якщо він є.
 4. **Колбек.** `app/api/n8n/[event]/route.ts` + `lib/n8n/signature.ts` за [code-templates.md](references/code-templates.md)
    §2–3. Порядок перевірок і коди відповідей — строго за таблицею в [callback.md](references/callback.md).
@@ -84,8 +85,9 @@ metadata:
   або відповідь;
 - просять синхронно чекати воркфлоу, який може тривати ≥ 100 с або невідомо скільки, чи «просто
   підняти таймаут» замість 202 + колбек;
-- бракує значення секрету чи URL — значення не вигадуй і не генеруй у код, попроси людину додати його
-  в `.env.local`;
+- тобі пропонують вписати значення секрету, токена чи URL n8n прямо в код, або вигадати його, щоб «запрацювало».
+  (Сама відсутність змінних у `.env.local` — не привід зупинятись: код читає їх із `process.env`,
+  `.env.example` отримує `change-me-…`, а в підсумку ти перелічуєш людині, які змінні додати.)
 - колбек-ендпоінт мав би працювати без перевірки підпису, вікна часу чи ідемпотентності — навіть
   тимчасово;
 - контракт (заголовки, формат підпису, `version` конверта, шляхи) доводиться змінити — це рішення

@@ -209,12 +209,18 @@ export async function requestSomething(prevState: State, formData: FormData): Pr
 
   after(async () => {
     // server-after-nonblocking: користувач не чекає на n8n
-    const result = await triggerWorkflow(
-      "quote-request",
-      { requestId: record.id, company: parsed.data.company, budget: parsed.data.budget }, // мінімум
-      { idempotencyKey, correlationId, withCallback: true },
-    );
-    if (!result.ok) await db.markRequestFailed(record.id);
+    try {
+      const result = await triggerWorkflow(
+        "quote-request",
+        { requestId: record.id, company: parsed.data.company, budget: parsed.data.budget }, // мінімум
+        { idempotencyKey, correlationId, withCallback: true },
+      );
+      if (!result.ok) await db.markRequestFailed(record.id);
+    } catch {
+      // напр. не задані змінні N8N_* — запис не має зависнути в "queued"
+      console.error(`n8n quote-request not started for request ${record.id}`);
+      await db.markRequestFailed(record.id);
+    }
   });
 
   return { status: "ok", id: record.id }; // лише { status, id }
