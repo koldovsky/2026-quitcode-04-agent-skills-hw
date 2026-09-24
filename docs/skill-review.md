@@ -89,8 +89,11 @@
 
 - Команда встановлення (запускаємо самі, у звичайному терміналі, scope **Project**):
   `DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 --skill vercel-react-best-practices -a claude-code --copy`
-- Де лягли файли; справжні файли чи посилання: _(після встановлення)_
-- Що потрапило в git: _(після встановлення)_
+- Де лягли файли; справжні файли чи посилання: `.claude/skills/vercel-react-best-practices/` — 75 справжніх файлів
+  (`find .claude -type l` — порожньо), `.agents/` не створено. `diff -rq` з клоном тега: відрізняється лише відсутній
+  `metadata.json` — тобто встановлено рівно той вміст, який ми рев'ювали.
+- Що потрапило в git: тека скіла й `skills-lock.json` (`source: vercel-labs/agent-skills`,
+  `ref: agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278`, `computedHash: 3219a194…2357`).
 - Як оновлювати: та сама команда з новим тегом → `git diff .claude/skills/vercel-react-best-practices skills-lock.json` →
   рев'ю змін за цим чеклістом (розділи 1–3) → коміт.
 
