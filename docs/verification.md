@@ -65,8 +65,46 @@ Cookie демо-користувача Olena (`leaddesk_session=demo-u_olena`); 
     замінюється результатом прогону B.
 - Якщо виміряне виправлення не змінило чисел — чому: змінило (2.24 → 1.43 с).
 - `npm run lint`, `npm run build` після виправлень: обидва без помилок після кожного коміту.
-- Рев'ю зі скілом: спроба запустити його у свіжій headless-сесії (`claude -p`) не вдалася — CLI не залогінений
-  («Not logged in»); рев'ю зробили в поточній сесії Claude Code, читаючи `SKILL.md` і `rules/<id>.md` встановленого скіла.
+- Рев'ю зі скілом у свіжій сесії: headless `claude -p` для рев'ю не підійшов (CLI не залогінений — «Not logged in»),
+  тож виправлення `b440292` і `08cdf0c` робили за правилами `rules/<id>.md`, прочитаними в робочій сесії. Після цього
+  рев'ю повторили як вимагає інструкція — **нова інтерактивна сесія** Claude Code у десктоп-застосунку (сесія «Review task A»,
+  24.09.2026, код на коміті `8ba3f4e`, тобто вже з двома виправленнями) — див. розділ нижче.
+
+### Рев'ю зі скілом у новій сесії
+
+- Скіли, які бачила нова сесія (запит «які skills тобі доступні? не відкривай файлів»): з проєкту — лише
+  `vercel-react-best-practices` (`.claude/skills/`); особистих (`~/.claude/skills/`) — немає; решта — плагін `anthropic-skills`
+  (docs, docx/pptx/xlsx/pdf, skill-creator, schedule…) і вбудовані Claude Code (code-review, simplify, run…) — жоден не про
+  продуктивність React.
+- Запит (скіл названо, як у кроці 5.1 інструкції):
+  > Зроби рев'ю app/, components/, lib/ за скілом vercel-react-best-practices. Для кожної проблеми — рядок таблиці:
+  > файл:рядок | id правила | що не так | виправлення для Next.js 16. Файли не змінюй.
+- Чи спрацював скіл: так — перший крок сесії — виклик `Skill` з `vercel-react-best-practices` (завантажено `SKILL.md`
+  з `.claude/skills/vercel-react-best-practices`), далі читання правил і коду; файлів не змінювала.
+- Результат — 15 знахідок (стисло; повна таблиця — у транскрипті сесії):
+
+| файл:рядок | id правила | що не так | виправлення для Next.js 16 |
+|---|---|---|---|
+| `app/actions.ts:68`, `:74` | `server-auth-actions` | `updateLeadStatus`, `deleteLead` не перевіряють сесію й належність ліда робочому простору | на початку дії — `getCurrentUser()` + перевірка `lead.workspaceId`, валідація статусу |
+| `app/actions.ts:53-63` | `server-after-nonblocking` | відповідь форми чекає вебхук n8n і `logAudit` | `after()` з `next/server` |
+| `app/dashboard/leads/[id]/page.tsx:12-16` | `async-parallel` | `getLead(id)` стартує лише після `getCurrentUser()` | `Promise.all([getCurrentUser().then(…getWorkspace), getLead(id)])` |
+| `app/dashboard/layout.tsx:6-7`, `components/dashboard-header.tsx:5-6` | `async-suspense-boundaries` | каркас дашборда чекає даних | `<Suspense>` / `loading.tsx` |
+| `components/leads-toolbar.tsx:4` | `bundle-conditional` | `exceljs` статично в клієнтському бандлі | `await import("exceljs")` в `handleExport` |
+| `components/leads-toolbar.tsx:6` | `bundle-dynamic-imports` | `recharts` у бандлі, хоча графік схований | `next/dynamic` з `ssr: false` — можна, бо файл клієнтський |
+| `components/lead-search.tsx:5` | `bundle-barrel-imports` | `import { debounce } from "lodash"` тягне весь пакет | `lodash/debounce` або прибрати debounce |
+| `app/dashboard/page.tsx:34` | `server-serialization` | у `LeadsTable` — повні `Lead[]` з `rawPayload`, IP, нотатками | передавати 5 потрібних полів |
+| `components/lead-search.tsx:20-24` | `client-swr-dedup` | повторний `fetch("/api/leads")` після гідрації | передати рядки пропом або SWR |
+| `components/lead-search.tsx:18`, `:43-45` | `rerender-derived-state-no-effect` / `rerender-use-deferred-value` | `filtered` у state через ефект + debounce | фільтр під час рендеру з `useDeferredValue` |
+| `components/leads-table.tsx:17-20` | `js-tosorted-immutable` | сортування на кожен рендер, `localeCompare` для ISO-дат | `useMemo` + `toSorted`, дати — порівнянням рядків |
+| `components/leads-table.tsx:24` | `rerender-functional-setstate` | `setDescending(!descending)` | `setDescending(d => !d)` |
+| `components/leads-toolbar.tsx:72` | `rerender-functional-setstate` | `setShowChart(!showChart)` | `setShowChart(v => !v)` |
+| `components/leads-table.tsx:58` | `bundle-preload` | перехід через `router.push` в `onClick`, без префетчу | `<Link>` на імені ліда |
+| `components/lead-actions.tsx:17-18` | (поруч із `rerender-transitions`) | `router.refresh()` після дії, що вже робить `revalidatePath` | прибрати `router.refresh()` |
+
+- Що з цього зроблено: у свіжій сесії рев'ю вже бачило виправлення з `b440292` і `08cdf0c` і відзначило їх як правильні
+  («`lib/data.ts` уже кешує користувача й робочий простір через `React.cache`, на сторінці дашборда є `Promise.all`»).
+  Решта знахідок у межах Task A не застосовувалась (досить двох виправлень). `server-auth-actions` — діра в безпеці, а не
+  продуктивність: варто виправити окремо; `server-after-nonblocking` — у Task D разом із викликом n8n.
 
 ## Task B — `building-client-form`
 
