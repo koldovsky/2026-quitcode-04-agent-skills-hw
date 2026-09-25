@@ -1,9 +1,12 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
 import type { LeadStatus } from "@/lib/types";
 
@@ -50,17 +53,29 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
-
-  await logAudit("lead.created", lead.id);
+  // Fire-and-forget event (Respond: Immediately): the visitor does not wait for n8n or the audit.
+  // n8n gets the contact fields it needs — no IP, user agent, raw payload or internal notes.
+  const idempotencyKey = randomUUID();
+  after(async () => {
+    await triggerWorkflow(
+      "lead-created",
+      {
+        leadId: lead.id,
+        fullName: lead.fullName,
+        email: lead.email,
+        phone: lead.phone,
+        company: lead.company,
+        website: lead.website,
+        budget: lead.budget,
+        message: lead.message,
+        source: lead.source,
+        consentMarketing: lead.consentMarketing,
+        createdAt: lead.createdAt,
+      },
+      { idempotencyKey },
+    );
+    await logAudit("lead.created", lead.id);
+  });
 
   return { status: "ok" };
 }
