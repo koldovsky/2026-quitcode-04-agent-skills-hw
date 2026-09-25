@@ -51,12 +51,8 @@ export default async function QuotePage({ params }: PageProps<"/quotes/[id]">) {
         aria-live="polite"
         className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-700"
       >
-        {pending && (
-          <>
-            <p>Готуємо PDF-кошторис — зазвичай до двох хвилин. Сторінка оновиться сама.</p>
-            <QuoteStatusRefresh createdAt={quote.createdAt} />
-          </>
-        )}
+        {/* The waiting text lives in the client component: it changes when polling slows down or stops. */}
+        {pending && <QuoteStatusRefresh createdAt={quote.createdAt} />}
         {/* The callback route stores "ready" only together with a checked https:// link. */}
         {quote.status === "ready" && quote.documentUrl && (
           <a

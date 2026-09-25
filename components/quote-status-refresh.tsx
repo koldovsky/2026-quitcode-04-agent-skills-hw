@@ -9,10 +9,18 @@ const SLOW_AFTER_MS = 3 * 60 * 1000;
 // If no callback came by now it will not come by itself (n8n gave up or the workflow failed): stop polling.
 const STOP_AFTER_MS = 15 * 60 * 1000;
 
-// Rendered only while the quote is queued/processing: re-reads the Server Component until it is final.
+const MESSAGES = {
+  fresh: "Готуємо PDF-кошторис — зазвичай до двох хвилин. Сторінка оновиться сама.",
+  slow: "Цього разу довше, ніж зазвичай. Сторінка й далі оновлюється сама; можна закрити її й повернутися за цим посиланням пізніше.",
+  stalled:
+    "Кошторис досі не готовий, і сторінка більше не оновлюється сама. Оновіть її пізніше вручну або надішліть запит ще раз.",
+} as const;
+
+// Rendered only while the quote is queued/processing: re-reads the Server Component until it is final,
+// and says honestly whether it is still doing so.
 export function QuoteStatusRefresh({ createdAt }: { createdAt: string }) {
   const router = useRouter();
-  const [age, setAge] = useState<"fresh" | "slow" | "stalled">("fresh");
+  const [age, setAge] = useState<keyof typeof MESSAGES>("fresh");
 
   useEffect(() => {
     const update = () => {
@@ -29,12 +37,5 @@ export function QuoteStatusRefresh({ createdAt }: { createdAt: string }) {
     return () => clearInterval(timer);
   }, [router, createdAt]);
 
-  if (age === "fresh") return null;
-  return (
-    <p className="text-amber-700">
-      {age === "slow"
-        ? "Цього разу довше, ніж зазвичай. Можна закрити сторінку й повернутися за цим посиланням пізніше."
-        : "Кошторис досі не готовий. Оновіть сторінку пізніше або надішліть запит ще раз — менеджер отримає обидва."}
-    </p>
-  );
+  return <p className={age === "fresh" ? undefined : "text-amber-700"}>{MESSAGES[age]}</p>;
 }
