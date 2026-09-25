@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -7,6 +8,7 @@ import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { parseNoteForm, type NoteFormField } from "@/lib/note-form";
 import type { LeadStatus } from "@/lib/types";
 
@@ -53,15 +55,19 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
+  after(async () => {
+    // server-after-nonblocking: подія "до відома", результат воркфлоу нам не потрібен
+    try {
+      const result = await triggerWorkflow(
+        "lead-created",
+        { leadId: lead.id, fullName: lead.fullName, email: lead.email, company: lead.company },
+        { idempotencyKey: randomUUID(), correlationId: randomUUID(), withCallback: false },
+      );
+      if (!result.ok) console.error(`n8n lead-created not accepted for lead ${lead.id}`);
+    } catch {
+      console.error(`n8n lead-created not started for lead ${lead.id}`);
+    }
+  });
 
   await logAudit("lead.created", lead.id);
 
