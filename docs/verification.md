@@ -204,8 +204,9 @@ Cookie демо-користувача Olena (`leaddesk_session=demo-u_olena`); 
   `3639daa`). Після рев'ю CodeRabbit — `6c35603` (v0.2.3): шаблони колбека (потік з лімітом 64 КБ замість `request.text()`,
   перевірка форми тіла → 400), шаблон дії з `redirect()`, `callback.md` кроки 2–3 і 7; `check-contract.mjs` C6/C7/C12 —
   лише код без коментарів і справжні читання заголовків / порівняння з 300, C10 приймає читання потоком з лімітом.
-  `fdb0534` — `building-client-form` v0.1.1: значення повертаються з кожним станом невдачі. Деталі A/B —
-  `docs/ab-validation.md`.
+  `fdb0534` — `building-client-form` v0.1.1: значення повертаються з кожним станом невдачі. Після другого рев'ю —
+  `ad75083` (v0.2.4): C10 приймає лише читання тіла потоком з лімітом 64 КБ (`request.text()` → FAIL), `completed`
+  вимагає `documentUrl`; `c1a5cf4` — `building-client-form` v0.1.2. Деталі A/B — `docs/ab-validation.md`.
 
 **`check-contract.mjs` на коді `main`** (`git archive main | tar -x -C ../leaddesk-main`; id + PASS/FAIL, код виходу):
 
