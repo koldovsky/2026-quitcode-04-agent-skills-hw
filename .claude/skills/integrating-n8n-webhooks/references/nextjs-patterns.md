@@ -83,6 +83,9 @@ export async function triggerWorkflow(
         body: envelope,
         signal: AbortSignal.timeout(TIMEOUT_MS),
         cache: "no-store",
+        // A redirect would carry x-n8n-token to another host (fetch strips only authorization/cookie):
+        // never follow it — a 3xx ends up as "rejected" below.
+        redirect: "manual",
       });
       console.info(
         `[n8n] ${event} -> ${response.status} in ${Date.now() - started} ms (attempt ${attempt}, correlation ${correlationId})`,
@@ -172,7 +175,8 @@ export function releaseKey(key: string): void {
 ## `app/api/n8n/[event]/route.ts` — the callback
 
 ```ts
-import { verifyCallback } from "@/lib/n8n/callback";
+import { db } from "@/lib/db"; // your data layer
+import { CALLBACK_MAX_BYTES, verifyCallback } from "@/lib/n8n/callback";
 import { claimKey, releaseKey } from "@/lib/n8n/idempotency";
 
 // No `export const runtime = "edge"`: we need node:crypto.
@@ -180,15 +184,27 @@ import { claimKey, releaseKey } from "@/lib/n8n/idempotency";
 type CallbackData = {
   jobId: string;
   status: "completed" | "failed";
-  result?: { documentUrl?: string };
-  error?: { code?: string };
+  requestIdempotencyKey?: string;
+  result?: { documentUrl?: unknown };
+  error?: { code?: unknown };
 };
 
-// Path segment = the trigger event. Each handler saves the minimal state; false = unknown job.
+// Path segment = the trigger event. Each handler saves the minimal state BEFORE the response;
+// false = unknown job or unusable data (→ 400, key released).
 const HANDLERS: Record<string, (data: CallbackData) => Promise<boolean>> = {
   "quote-request": async (data) => {
-    // e.g. return db.completeQuoteByJobId(data.jobId, data.status, data.result?.documentUrl ?? null);
-    return Boolean(data.jobId);
+    const documentUrl = data.status === "completed" ? safeDocumentUrl(data.result?.documentUrl) : null;
+    if (data.status === "completed" && !documentUrl) return false;
+    const errorCode = typeof data.error?.code === "string" ? data.error.code.slice(0, 64) : null;
+    // Find the record by jobId, or by our idempotency key while jobId is not stored yet —
+    // the callback can outrun the handling of the 202 in the Server Action.
+    return db.completeQuote({
+      jobId: data.jobId,
+      requestIdempotencyKey: typeof data.requestIdempotencyKey === "string" ? data.requestIdempotencyKey : null,
+      status: data.status,
+      documentUrl,
+      errorCode,
+    });
   },
 };
 
@@ -198,6 +214,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   if (!handle) return Response.json({ error: "not_found" }, { status: 404 });
   const mediaType = req.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
   if (mediaType !== "application/json") return Response.json({ error: "unsupported_media_type" }, { status: 415 });
+  // Refuse an oversized body before buffering it; verifyCallback re-checks the real size after reading.
+  if (Number(req.headers.get("content-length") ?? 0) > CALLBACK_MAX_BYTES) {
+    return Response.json({ error: "payload_too_large" }, { status: 413 });
+  }
 
   const raw = await req.text(); // the exact signed bytes; never req.json() here
   const check = verifyCallback(raw, req.headers.get("x-n8n-timestamp"), req.headers.get("x-n8n-signature"));
@@ -240,10 +260,23 @@ function parseCallback(raw: string, event: string, key: string): CallbackData | 
   if (!json || typeof json !== "object") return null;
   const body = json as { version?: unknown; event?: unknown; data?: Record<string, unknown> };
   const data = body.data;
-  if (body.version !== 1 || typeof body.event !== "string" || !body.event.startsWith(`${event}.`)) return null;
-  if (!data || typeof data.jobId !== "string" || (data.status !== "completed" && data.status !== "failed")) return null;
+  // The body event is exactly `<path>.completed` (data.status says completed or failed).
+  if (body.version !== 1 || body.event !== `${event}.completed`) return null;
+  if (!data || typeof data.jobId !== "string" || data.jobId === "") return null;
+  if (data.status !== "completed" && data.status !== "failed") return null;
   if (key !== `${data.jobId}:${body.event}`) return null;
   return data as unknown as CallbackData;
+}
+
+// The link ends up as <a href> on a public page: only https, no credentials, bounded length.
+function safeDocumentUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 2048) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 ```
 
@@ -262,8 +295,9 @@ export async function requestQuote(_prev: QuoteFormState, formData: FormData): P
   const parsed = parseQuoteForm(formData); // server-side validation, no silent truncation
   if (!parsed.ok) return { status: "invalid", errors: parsed.errors, values: parsed.values };
 
-  const idempotencyKey = randomUUID();
-  const quote = await db.insertQuote({ ...parsed.data, status: "queued", idempotencyKey });
+  // The idempotency key is created once and stored with the record: every retry reuses it,
+  // and n8n echoes it back as data.requestIdempotencyKey.
+  const quote = await db.insertQuote({ ...parsed.data, status: "queued", idempotencyKey: randomUUID() });
 
   after(async () => {
     const callbackUrl = callbackUrlFor("quote-request");
@@ -272,36 +306,55 @@ export async function requestQuote(_prev: QuoteFormState, formData: FormData): P
           "quote-request",
           // The minimum the workflow needs — never the whole row.
           { quoteId: quote.id, company: quote.company, email: quote.email, description: quote.description, budget: quote.budget },
-          { idempotencyKey, callbackUrl },
+          { idempotencyKey: quote.idempotencyKey, callbackUrl },
         )
-      : { ok: false as const, reason: "config" as const };
-    await db.updateQuote(quote.id, result.ok ? { status: "processing", jobId: result.jobId } : { status: "failed" });
+      : ({ ok: false, reason: "config" } as const);
+
+    // Conditional transitions: a fast workflow's callback may already have set ready/failed.
+    // Never overwrite that with an unconditional update.
+    if (result.ok && result.jobId) await db.markQuoteProcessing(quote.id, result.jobId); // queued → processing
+    else await db.markQuoteNotStarted(quote.id, result.ok ? "rejected" : result.reason); // queued → failed
   });
 
   redirect(`/quotes/${quote.id}`); // or return { status: "ok", id: quote.id }
 }
 ```
 
+The three state changes, each guarded (in-memory example; in a real DB — `UPDATE … WHERE status = 'queued'`):
+
+```ts
+markQuoteProcessing(id, jobId)   // jobId ??= jobId; if status === "queued" → "processing"
+markQuoteNotStarted(id, code)    // only if status === "queued" → "failed" (no callback will come)
+completeQuote(result)            // find by jobId, else by idempotencyKey while jobId is null → "ready" | "failed"
+```
+
 - The form answers in milliseconds; n8n's answer arrives later and only changes the record.
-- The callback handler finds the record by `jobId` (saved above) or by `data.requestIdempotencyKey`.
 - The status page (`/quotes/[id]`) is a Server Component that reads the record; while it is `queued` or
-  `processing`, a tiny Client Component calls `router.refresh()` every few seconds.
+  `processing`, a tiny Client Component calls `router.refresh()` every few seconds — and **stops** after a
+  deadline (e.g. 15 min) with a message, because a callback that never came will not come by itself.
 
 ## Fire-and-forget event (existing `lead-created` style)
 
 ```ts
+// Two after() callbacks: the audit entry must not wait for n8n's retries.
+after(() => logAudit("lead.created", lead.id));
 after(() =>
-  triggerWorkflow("lead-created", { leadId: lead.id, source: lead.source }, { idempotencyKey: lead.idempotencyKey }),
+  triggerWorkflow(
+    "lead-created",
+    { leadId: lead.id, fullName: lead.fullName, email: lead.email, message: lead.message, source: lead.source },
+    { idempotencyKey }, // created once for this lead (store it with the record if you can)
+  ),
 );
 ```
 
 Never `await fetch(process.env.SOME_N8N_URL, …)` straight from an action; never send the whole lead
-(IP, user agent, raw payload, internal notes).
+(IP, user agent, raw payload, internal notes). When migrating an existing call, keep the fields the
+client's workflow already uses — ask the human which ones if unsure (stop rule).
 
 ## `.env.example`
 
 ```bash
-# n8n (server-only). Real values only in .env.local. Production URL — never /webhook-test/.
+# n8n (server-only). Real values only in .env.local. Production base URL (never the editor's test URL).
 N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook
 N8N_WEBHOOK_TOKEN=change-me-webhook-token
 N8N_CALLBACK_SECRET=change-me-callback-secret
