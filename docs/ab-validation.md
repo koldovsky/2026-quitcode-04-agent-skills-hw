@@ -221,6 +221,28 @@ exit=0
   тестових email і назв компаній. Урок — у скіл: `f6f10c3` (v0.2.2) додав до кроку «Статус» і чекліста вимоги
   «неможливий для вгадування id, межа опитування, `redirect()` з дії». Раніше `56948a4` (v0.2.1) — підказка в
   `send-signed-callback.mjs` і прибране попередження eslint (див. `docs/verification.md` → Task C).
+- **Після рев'ю CodeRabbit у PR** (10/11 кастомних перевірок PASS; попередження Task D + 9 inline-коментарів) —
+  виправлено окремими комітами, скіли оновлено:
+  - `fb76c69` — колбек: тіло читається **потоком з лімітом 64 КБ** (спершу `content-length`) замість `request.text()`
+    (CWE-770: необмежене читання до перевірки розміру); після підпису — **перевірка форми під час виконання** в
+    `lib/n8n/callback-body.ts`: невалідний JSON чи форма → **400** (було 500), `data.status` мусить дорівнювати суфіксу
+    `event`, обов'язковий `requestIdempotencyKey`, `documentUrl`/`error.code` — рядки; ключ звільняється при кожній невдачі;
+  - `4ff2614` — `markQuoteRequestFailed` змінює лише `queued`; результат `ready` колбек не понижує;
+  - `bb56486` — форма кошторису: введене зберігається після помилки валідації, помилки прив'язані до полів
+    (`aria-invalid`, `aria-describedby`), підсумок у `role="alert"`;
+  - `3dc8fe3` — форма нотатки (Task B): `required`, текст зберігається й після помилки збереження;
+  - `fdb0534` / `6c35603` — скіли `building-client-form` v0.1.1 і `integrating-n8n-webhooks` v0.2.3 (шаблони, `callback.md`,
+    посилений `check-contract.mjs`: C6/C7/C12 — лише код без коментарів, справжні читання заголовків і порівняння з 300);
+  - `a7226ab` — власник у `docs/n8n-integrations.md`: Maria Vorobets.
+
+  Перевірка після виправлень (продакшн-збірка + мок `--mode respond-202 --delay 5000`): матриця
+  `send-signed-callback.mjs` — 9/9 перевірюваних випадків PASS (`valid`/`duplicate` без `--request-key` → 404, як і пояснює
+  підказка скрипта; справжній `valid` — колбек мока нижче); додаткові підписані випадки — невалідний JSON, `status` не
+  збігається з подією, `documentUrl` не рядок, без `requestIdempotencyKey` — усі **400**; форма з помилками зберегла всі
+  4 значення, `role="alert"` «Перевірте поля: email, опис задачі.», `aria-invalid="true"` + `aria-describedby`; валідна
+  відправка — 283 мс, `POST /webhook/quote-request -> 202 … auth=ok idempotency=new`, колбек `-> 202`, «Кошторис готовий»;
+  у журналах немає тестового email і назви компанії. `check-contract.mjs` — 0 FAIL; ті самі фікстури з поганим кодом —
+  ті самі FAIL, а «обхід коментарем» (заголовки й `300` лише в коментарях) тепер дає FAIL у C6, C7, C12.
 - Ключі контракту в `.env.example`: `N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook`,
   `N8N_WEBHOOK_TOKEN=change-me-webhook-token`, `N8N_CALLBACK_SECRET=change-me-callback-secret`,
   `APP_BASE_URL=http://127.0.0.1:3000`; рядка з `/webhook-test/` немає.
@@ -229,7 +251,7 @@ exit=0
 - `check-contract.mjs` на фінальному коді (увесь проєкт, без `--changed-since`):
   ```
 n8n contract check — root: .
-scope: whole project; 41 code file(s), 1 .env example(s)
+scope: whole project; 42 code file(s), 1 .env example(s)
 
 C1   PASS  no /webhook-test/ URL in code or .env*.example
 C2   PASS  no NEXT_PUBLIC_ prefix on N8N_* variables

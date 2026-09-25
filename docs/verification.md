@@ -201,7 +201,11 @@ Cookie демо-користувача Olena (`leaddesk_session=demo-u_olena`); 
   прибрано невикористану змінну (попередження eslint). `f6f10c3` (v0.2.2) — після рев'ю фічі B: у крок «Статус» і
   чекліст додано вимоги для публічної сторінки статусу (id — `randomUUID`, межа опитування, `redirect()` з дії), бо
   прогін B зробив послідовні id (витік даних), вічне опитування й перехід лише з JS (виправлено в `ebb8de1`, `0df23ed`,
-  `3639daa`). Контракт n8n і перевірки `check-contract.mjs` не змінювались. Деталі A/B — `docs/ab-validation.md`.
+  `3639daa`). Після рев'ю CodeRabbit — `6c35603` (v0.2.3): шаблони колбека (потік з лімітом 64 КБ замість `request.text()`,
+  перевірка форми тіла → 400), шаблон дії з `redirect()`, `callback.md` кроки 2–3 і 7; `check-contract.mjs` C6/C7/C12 —
+  лише код без коментарів і справжні читання заголовків / порівняння з 300, C10 приймає читання потоком з лімітом.
+  `fdb0534` — `building-client-form` v0.1.1: значення повертаються з кожним станом невдачі. Деталі A/B —
+  `docs/ab-validation.md`.
 
 **`check-contract.mjs` на коді `main`** (`git archive main | tar -x -C ../leaddesk-main`; id + PASS/FAIL, код виходу):
 
@@ -416,7 +420,7 @@ C11 FAIL, а той самий роут, що викликає хелпер, —
 
 ```
 n8n contract check — root: .
-scope: whole project; 41 code file(s), 1 .env example(s)
+scope: whole project; 42 code file(s), 1 .env example(s)
 
 C1   PASS  no /webhook-test/ URL in code or .env*.example
 C2   PASS  no NEXT_PUBLIC_ prefix on N8N_* variables
