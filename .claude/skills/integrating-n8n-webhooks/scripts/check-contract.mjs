@@ -428,13 +428,15 @@ function callbackUnits() {
     if (!/(^|\/)app\/(.+\/)?route\.(ts|js|mjs)$/.test(f.path)) continue;
     if (!/export\s+(async\s+function\s+POST|function\s+POST|const\s+POST)\b/.test(f.code)) continue;
     if (!/n8n|N8N_|callback|signature|webhook/i.test(f.code)) continue;
+    // Everything the route imports directly (verification often lives in a helper with any name),
+    // plus n8n-looking modules those import in turn.
     const members = [f];
     const queue = [f];
-    while (queue.length && members.length < 8) {
+    while (queue.length && members.length < 12) {
       const cur = queue.shift();
       for (const m of cur.code.matchAll(/\bfrom\s+["']([^"']+)["']/g)) {
         const dep = resolveImport(cur, m[1]);
-        if (dep && !members.includes(dep) && (isLibN8n(dep) || /n8n|signature|callback|idempot/i.test(dep.path))) {
+        if (dep && !members.includes(dep) && (cur === f || isLibN8n(dep) || /n8n|signature|callback|idempot/i.test(dep.path))) {
           members.push(dep);
           queue.push(dep);
         }
@@ -534,13 +536,16 @@ check("C5", "callback signature: HMAC-SHA256, length check + timingSafeEqual, ne
   for (const u of units) {
     if (!/createHmac\s*\(\s*["']sha256["']|subtle\.(sign|verify)/.test(u.text)) fail(u.route.path, 1, "no HMAC-SHA256 over the raw body", true);
     if (!/timingSafeEqual\s*\(/.test(u.text)) fail(u.route.path, 1, "signature not compared with crypto.timingSafeEqual", true);
-    else if (!/(\.length|byteLength)\s*(!==|===|!=|==)|(!==|===|!=|==)\s*[\w$.]+\.(length|byteLength)\b/.test(u.text)) {
+    // A length check, or hashing both sides first (equal-length digests), keeps timingSafeEqual from throwing.
+    else if (!/(\.length|byteLength)\s*(!==|===|!=|==)|(!==|===|!=|==)\s*[\w$.]+\.(length|byteLength)\b|createHash\s*\(/.test(u.text)) {
       fail(u.route.path, 1, "no length check before timingSafeEqual (it throws on different lengths)", true);
     }
-    for (const f of u.members) {
+    // Only files that deal with the signature; whole words, so "assignedTo" is not a "sig".
+    const signatureWord = /\b(sig|sigs|signature\w*|\w+Signature\w*|signed\w*|expected\w*|computed\w*|digest\w*|\w+Digest\w*|hmac\w*|\w+Hmac\w*|mac)\b/i;
+    for (const f of u.members.filter((m) => /signature|hmac|x-n8n/i.test(m.code))) {
       for (const m of f.code.matchAll(/[^\n;]*?(!==|===|!=|==)[^\n;]*/g)) {
         const expr = codeOnly(m[0]);
-        if (/\b\w*(sig|signature|digest|hmac|expected|computed)\w*\b/i.test(expr) && !/\.(length|byteLength)\b|typeof\s/.test(expr)) {
+        if (signatureWord.test(expr) && !/\.(length|byteLength)\b|typeof\s/.test(expr)) {
           fail(f.path, lineOf(f, m.index), `signature compared with ${m[1]} — use timingSafeEqual`);
         }
       }
