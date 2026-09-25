@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "./db";
 import { SESSION_COOKIE } from "./session";
+import type { LeadListItem } from "./types";
 
 // cache(): layout, header and page each ask for the user within one request.
 export const getCurrentUser = cache(async () => {
@@ -24,8 +25,15 @@ export const getWorkspace = cache(async (slug: string) => {
   return workspace;
 });
 
-export async function getLeads(workspaceId: string) {
-  return db.getLeads(workspaceId);
+export async function getLeads(workspaceId: string): Promise<LeadListItem[]> {
+  const leads = await db.getLeads(workspaceId);
+  return leads.map(({ id, fullName, company, status, createdAt }) => ({
+    id,
+    fullName,
+    company,
+    status,
+    createdAt,
+  }));
 }
 
 export async function getLeadStats(workspaceId: string) {

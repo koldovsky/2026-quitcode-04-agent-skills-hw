@@ -51,6 +51,9 @@ export type Lead = {
   updatedAt: string;
 };
 
+// What the leads table on /dashboard needs — nothing more reaches the browser.
+export type LeadListItem = Pick<Lead, "id" | "fullName" | "company" | "status" | "createdAt">;
+
 export type NewLead = Omit<
   Lead,
   | "id"
