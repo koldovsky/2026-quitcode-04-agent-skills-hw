@@ -1,7 +1,6 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useActionState } from "react";
 import { requestQuote, type RequestQuoteState } from "@/app/quotes/actions";
 import { BUDGET_OPTIONS } from "@/lib/lead-form";
 
@@ -13,11 +12,6 @@ const inputClass =
 export function QuoteForm() {
   const [state, formAction, pending] = useActionState(requestQuote, initialState);
   const errors = state.status === "invalid" ? state.errors : {};
-  const router = useRouter();
-
-  useEffect(() => {
-    if (state.status === "ok") router.push(`/quotes/${state.id}`);
-  }, [state, router]);
 
   return (
     <form action={formAction} className="space-y-4" noValidate>

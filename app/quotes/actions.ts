@@ -1,6 +1,7 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { db } from "@/lib/db";
 import { triggerWorkflow } from "@/lib/n8n/client";
@@ -8,8 +9,7 @@ import { parseQuoteForm, type QuoteFormField } from "@/lib/quote-form";
 
 export type RequestQuoteState =
   | { status: "idle" }
-  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>> }
-  | { status: "ok"; id: string };
+  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>> };
 
 export async function requestQuote(
   _prevState: RequestQuoteState,
@@ -46,5 +46,6 @@ export async function requestQuote(
     }
   });
 
-  return { status: "ok", id: request.id };
+  // Redirect from the action (not router.push on the client): works without JavaScript too.
+  redirect(`/quotes/${request.id}`);
 }
