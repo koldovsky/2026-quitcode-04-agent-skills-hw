@@ -29,18 +29,20 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function text(formData: FormData, name: QuoteFormField) {
   const value = formData.get(name);
-  return typeof value === "string" ? value.trim() : "";
+  // Browsers submit textarea line breaks as CRLF but count them as one character for maxLength.
+  return typeof value === "string" ? value.replace(/\r\n?/g, "\n").trim() : "";
 }
 
 // Too long is an error, not a silent cut: the workflow must price exactly what the client wrote.
 export function parseQuoteForm(formData: FormData): ParseQuoteResult {
   const values: QuoteFormValues = {
     company: text(formData, "company"),
-    email: text(formData, "email").toLowerCase(),
+    email: text(formData, "email"),
     description: text(formData, "description"),
     budget: text(formData, "budget"),
   };
-  const { company = "", email = "", description = "", budget = "" } = values;
+  const { company = "", description = "", budget = "" } = values;
+  const email = (values.email ?? "").toLowerCase();
   const errors: Partial<Record<QuoteFormField, string>> = {};
 
   if (!company) errors.company = "Вкажіть назву компанії";
