@@ -513,7 +513,11 @@ check("C4", "callback route reads the raw body and parses JSON only after verify
         fail(f.path, lineOf(f, m.index), `${u.param}.${m[1]}() — read the raw text first; re-serialising breaks the signature`);
       }
     }
-    if (!new RegExp(`\\b${u.param}\\.(text|arrayBuffer)\\(\\s*\\)`).test(r.code)) fail(r.path, 1, `raw body is never read (${u.param}.text())`, true);
+    // Raw body: req.text()/arrayBuffer() in the route, or a helper the route passes req to that streams req.body.
+    const readsRaw =
+      new RegExp(`\\b${u.param}\\.(text|arrayBuffer)\\(\\s*\\)`).test(r.code) ||
+      (/\.getReader\(\s*\)/.test(u.text) && new RegExp(`\\w+\\(\\s*${u.param}\\b`).test(r.code));
+    if (!readsRaw) fail(r.path, 1, `raw body is never read (${u.param}.text() or a streaming reader)`, true);
     const verifyRe = /\b(timingSafeEqual|verify\w*|\w*[Ss]ignature\w*|\w*[Hh]mac\w*)\s*\(/g;
     const verifyAt = [...r.code.matchAll(verifyRe)].find((m) => !/^(createHmac|function)$/.test(m[1]));
     const unitVerifies = /timingSafeEqual|createHmac/.test(u.text);
