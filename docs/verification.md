@@ -17,14 +17,16 @@
 
 | Skill | Звідки (Project / Personal / вбудований) | Примітка |
 |---|---|---|
-| `vercel-react-best-practices` | Project | ~120 токенів (лише `name` + `description`; правила вантажаться, коли скіл викликано) |
+| `vercel-react-best-practices` | Project | ~120 токенів (лише `name` + `description`; правила завантажуються, коли скіл викликано) |
 | `building-client-form` | Project | ~310 токенів |
 | `integrating-n8n-webhooks` | Project | ~320 токенів; той самий запуск `claude -p "/context"` після коміту `82bef87` — усі три скіли Project |
 
 - Решта рядків розділу Skills — вбудовані скіли Claude Code (`dataviz`, `code-review`, `simplify`,
   `run`, `claude-api`, `update-config` тощо) з позначкою Built-in; жодного Personal.
 
-- Особисті скіли: `~/.claude/skills/` не існує. Є `~/.agents/skills/handoff` і
+- Особисті скіли: на момент цього запуску (25.09, до 14:28) `~/.claude/skills/` не існувало; пізніше десктоп-застосунок
+  створив там `synced/` зі скілами синхронізації облікового запису (`docs`, `pdf`, `skill-creator`…, див.
+  `docs/ab-validation.md`) — копій проєктних скілів серед них немає. Є `~/.agents/skills/handoff` і
   `~/.codex/skills/{handoff,n8n-rag-workflows,stop-slop}` — Claude Code ці теки не читає (їх читають
   Cursor/Codex), тож на перевірки в Claude Code вони не впливають.
 
@@ -45,9 +47,9 @@
 | `lib/data.ts:7`, `lib/data.ts:18` + 4 місця виклику | `server-cache-react` | `getCurrentUser()` без `cache()` — викликається в layout, header і page; `getWorkspace` у `cache()`, але з інлайн-об'єктом `{ slug }` — `Object.is` дає промах щоразу | `cache()` для `getCurrentUser`, `getWorkspace(slug: string)` | ✅ `bece8c3` |
 | `app/dashboard/page.tsx:32` → `components/leads-table.tsx:12` | `server-serialization` | Client Component отримує повні записи лідів (email, телефон, IP, `rawPayload`, внутрішні нотатки), а показує 5 полів | тип `LeadListItem` і вибір полів у `lib/data.ts` | ✅ `3e19f11` |
 | `app/dashboard/page.tsx:17` (`getLeadStats`, 1200 мс) | `async-suspense-boundaries` | найповільніший запит тримає всю сторінку | статистику — окремим async-компонентом за `<Suspense>` | не робили |
-| `app/actions.ts:68-77` | `server-auth-actions` | `updateLeadStatus` і `deleteLead` — публічні POST-ендпоінти без перевірки сесії й належності ліда до workspace | перевірка сесії й workspace всередині дії | не робили (див. нижче) |
-| `app/actions.ts:53-63` | `server-after-nonblocking` | форма чекає виклик n8n і `logAudit` (250 мс) перед відповіддю | повільне — в `after()` | не робили: виклик n8n змінюємо лише в Task D |
-| `components/leads-toolbar.tsx:4` | `bundle-conditional` | `exceljs` вантажиться з дашбордом, хоча потрібен лише після «Експорт в Excel» | `await import("exceljs")` в обробнику кліку | не робили |
+| `app/actions.ts:68-77` | `server-auth-actions` | `updateLeadStatus` і `deleteLead` — публічні POST-ендпоінти без перевірки сесії й належності ліда до workspace | перевірка сесії й workspace всередині дії | ✅ `b468334` — після Task D (див. нижче) |
+| `app/actions.ts:53-63` | `server-after-nonblocking` | форма чекає виклик n8n і `logAudit` (250 мс) перед відповіддю | повільне — в `after()` | ✅ у Task D: `f6ecfd4`, `61de794` (виклик n8n до BASE не чіпали) |
+| `components/leads-toolbar.tsx:4` | `bundle-conditional` | `exceljs` завантажується з дашбордом, хоча потрібен лише після «Експорт в Excel» | `await import("exceljs")` в обробнику кліку | не робили |
 | `components/leads-toolbar.tsx:6` | `bundle-dynamic-imports` | графік з `recharts` у бандлі сторінки, хоча за замовчуванням прихований | `next/dynamic` для `SourcesChart` | не робили |
 | `components/lead-search.tsx:20-24` | `client-swr-dedup` | після рендеру ще раз тягне `/api/leads` (усі ліди з email і телефоном), хоча сторінка їх уже має | отримувати рядки з сервера пропсом | не робили |
 | `components/lead-search.tsx:43-45` | `rerender-derived-state-no-effect` | результати пошуку — у `useState`, що оновлюється з `useEffect` | обчислювати під час рендеру | не робили |
@@ -76,11 +78,11 @@ curl -sL -b "$C" -H "RSC: 1" "$U" | wc -c                           # RSC, ба�
 |---|---|---|---|---|---|---|
 | `async-parallel` | `9be2047` | `app/dashboard/page.tsx` | три незалежні запити workspace — через `Promise.all` | TTFB 2,312 / 2,301 / 2,281 с | TTFB **1,478 / 1,480 / 1,480 с** | `curl` × 3 після прогріву |
 | `server-cache-react` | `bece8c3` | `lib/data.ts`, `app/dashboard/layout.tsx`, `app/dashboard/page.tsx`, `app/dashboard/leads/[id]/page.tsx`, `components/dashboard-header.tsx` | `getCurrentUser` у `cache()`; `getWorkspace(slug)` з примітивним ключем | за один `GET /dashboard`: `db:getUserBySession` **3**, `db:getWorkspace` **3** | `db:getUserBySession` **1**, `db:getWorkspace` **1** (TTFB 1,470 / 1,483 / 1,480 с — без змін) | лічильники в журналі `npm start` |
-| `server-serialization` | `3e19f11` | `lib/types.ts`, `lib/data.ts`, `components/leads-table.tsx` | `LeadsTable` отримує `LeadListItem` (5 полів) замість повного `Lead` | HTML 424 592 Б, RSC 315 197 Б; у RSC `email` ×344, `phone` ×344, `internalNotes` ×172, `rawPayload` ×172, `ipAddress` ×172 | HTML **111 377 Б**, RSC **31 257 Б**; жодного з цих полів | `wc -c`, `grep -oE` по RSC |
+| `server-serialization` | `3e19f11` | `lib/types.ts`, `lib/data.ts`, `components/leads-table.tsx` | `LeadsTable` отримує `LeadListItem` (5 полів) замість повного `Lead` | HTML 424 592 Б, RSC 315 197 Б; у RSC `email` ×344, `phone` ×344, `internalNotes` ×172 (на `main`); `rawPayload` ×172, `ipAddress` ×172 (ці два поля міряли вже перед `3e19f11`, на `bece8c3` — розміри ті самі) | HTML **111 377 Б**, RSC **31 257 Б**; жодного з цих полів | `wc -c`, `grep -oE` по RSC |
 
 - **Чому для заміру — `async-parallel`:** найпростіше видно в числах і саме він відповідає на скаргу
   клієнта «дашборд понад 2 секунди». Очікування — 100 + 100 + max(400, 1200, 400) ≈ 1,4 с замість
-  100 + 100 + 400 + 1200 + 400 ≈ 2,2 с; виміряно 2,30 → 1,48 с. Решта ~80 мс — рендер 172 рядків.
+  100 + 100 + 400 + 1200 + 400 ≈ 2,2 с; виміряно 2,30 → 1,48 с. Решта ~80 мс — імовірно, рендер 172 рядків (окремо не міряли).
 - **`server-cache-react`:** на TTFB не вплинув — і не мав: layout і page у App Router рендеряться
   паралельно, тож зайві запити сесії й workspace не лежали на критичному шляху (довідка
   `06-fetching-data.md`, «Parallel data fetching»). Ефект — утричі менше запитів до «бази» на кожне
@@ -94,9 +96,10 @@ curl -sL -b "$C" -H "RSC: 1" "$U" | wc -c                           # RSC, ба�
 - **Порада скіла, звірена з документацією Next.js 16 і не застосована:** `bundle-barrel-imports`
   радить додати пакет в `experimental.optimizePackageImports` — для `recharts` це вже зроблено в
   Next.js 16.3.5 за замовчуванням (`optimizePackageImports.md`, список «optimized by default»), тож
-  конфіг не чіпали. `server-after-nonblocking` і `server-auth-actions` для `app/actions.ts` свідомо
+  конфіг не чіпали. `server-after-nonblocking` і `server-auth-actions` для `app/actions.ts` у Task A свідомо
   відклали: у цьому файлі живе виклик n8n, а зміни в ньому до BASE (Task D) дали б прогону A частину
-  контракту задарма. Решта рядків «не робили» — поза «досить двох», залишено як знахідки рев'ю.
+  контракту задарма. Після Task D обидва зроблено: `after()` для `lead-created` — `f6ecfd4`, `61de794`;
+  `fix(server-auth-actions)` — `b468334`. Решта рядків «не робили» — понад обов'язкові два, залишено як знахідки рев'ю.
 - **Чи змінили числа виміряні виправлення:** так — `async-parallel` TTFB −36 %,
   `server-cache-react` запити 3 → 1, `server-serialization` RSC у 10 разів менше.
 - **Невдалий замір, який не пішов у таблицю:** перший замір після `async-parallel` показав TTFB
@@ -110,7 +113,7 @@ curl -sL -b "$C" -H "RSC: 1" "$U" | wc -c                           # RSC, ба�
 
 Скіл: `.claude/skills/building-client-form/SKILL.md` (коміт `dac2286`), лише інструкції: `name` =
 назва теки, `description` — 907 символів (що + «Use when …» + фрази-тригери українською й англійською
-+ «Not for …»), 110 рядків. Правила Vercel — за id (`server-auth-actions`, `server-serialization`,
++ «Not for …»), 109 рядків. Правила Vercel — за id (`server-auth-actions`, `server-serialization`,
 `server-after-nonblocking`), без копіювання.
 
 - Запит у свіжій сесії (нова сесія Claude Code у десктоп-застосунку, Opus 5.5, корінь репозиторію,
@@ -160,7 +163,7 @@ curl -sL -b "$C" -H "RSC: 1" "$U" | wc -c                           # RSC, ба�
 
 Скіл: `.claude/skills/integrating-n8n-webhooks/` (коміт `82bef87`). Мова скіла — англійська (технічна
 документація для агента); фрази-тригери в `description` — українською й англійською. `name` = назва
-теки, `description` — 927 символів (що + «Use when …» + тригери + «Not for …»), `SKILL.md` — 142 рядки.
+теки, `description` — 927 символів (що + «Use when …» + тригери + «Not for …»), `SKILL.md` — 141 рядок на момент коміту `82bef87` (143 після правок за рев'ю перед здачею).
 
 ```
 integrating-n8n-webhooks/
@@ -187,7 +190,7 @@ integrating-n8n-webhooks/
   один рівень; файли `references/` одне на одне не посилаються. Правила Vercel `server-auth-actions` і
   `server-after-nonblocking` — лише за id.
 - **Записку не копіювали:** переписано англійською, стиснуто й перегруповано під дії агента; додано те,
-  чого в записці немає, але що випливає з неї й з рев'ю CodeRabbit еталонного PR: не надсилати
+  чого в записці немає, але що випливає з неї й із зауважень CodeRabbit до еталонного PR автора курсу (`koldovsky/2026-quitcode-04-agent-skills-hw`, PR #1, гілка `ws04/sample`), який ми переглянули лише як приклад формату й типових помилок — код звідти не брали: не надсилати
   `x-n8n-token` на віддалений `http:` (лише loopback), для асинхронного воркфлоу успіх — лише 202 з
   непорожнім `job_id`, не логувати цілий об'єкт помилки `fetch` (може містити URL).
 - **Правила зупинки — перелік:** (1) є лише тестовий URL `/webhook-test/…` або невідомий production-шлях;
@@ -197,14 +200,16 @@ integrating-n8n-webhooks/
   (4) невідомі режим відповіді, шлях події чи формат колбека, і їх не перевірити моком; (5) потрібні
   зміни в n8n клієнта, нова залежність, `runtime = "edge"` чи «тимчасово» пропустити перевірку
   підпису/часу/ідемпотентності. Без винятків «якщо задача цього потребує».
-- **SHA коміту зі скілом:** `82bef87`. BASE для Task D — коміт після Task C з цим звітом (код той
-  самий; див. `docs/ab-validation.md`).
+- **SHA коміту зі скілом:** `82bef87`. BASE для Task D — `4baf4e7` (коміт після Task C з цим звітом; код
+  той самий; див. `docs/ab-validation.md`).
 - **Що скіл змінив у собі після прогонів:** `7593db2` — `check-contract.mjs`: перевірки колбека (C4/C5/C11)
   тепер враховують усі прямі імпорти роуту (на прогоні A верифікація жила в `lib/quote-workflow.ts`, і C5
-  хибно писав «signature not compared with timingSafeEqual»); хешування обох значень зараховано як
+  хибно повідомляв «signature not compared with timingSafeEqual»); хешування обох значень зараховано як
   вирівнювання довжин; `===` шукається лише цілими словами (у копії B `assignedTo` з `lib/db.ts` давало хибний
   FAIL при повному скані). Результати прогонів не змінились: A — 7 FAIL, B — 0 FAIL, `main` — 6 FAIL; справжнє
-  `signature !== …` перевірка ловить, як і раніше. Деталі — `docs/ab-validation.md`.
+  `signature !== …` перевірка ловить, як і раніше. Після рев'ю перед здачею — `b224d5e` (`--changed-since` для
+  проєкту в підтеці репозиторію, C11 без хибного «64», `process.exitCode`), `47fc4f6` і `6669b1c` (шаблони
+  `references/nextjs-patterns.md` узгоджено з кодом, що пройшов прогони). Деталі — `docs/ab-validation.md`.
 
 **Як перевіряли сам скрипт.** На `main` — розпакована копія `git archive main` у `../leaddesk-main`
 (`01a7dd4`). Для перевірок, яким на `main` нема на що дивитися (колбек-роуту ще немає), — навмисно
@@ -297,7 +302,7 @@ exit=1
 ```
 
 Під час цієї перевірки знайшли й виправили помилку самого скрипта: змінна `headers`, винесена з
-виклику `fetch`, не розкривалась (ім'я стояло в списку виключень), і C10 хибно писав «без
+виклику `fetch`, не розкривалась (ім'я стояло в списку виключень), і C10 хибно повідомляв «без
 x-n8n-token». Після виправлення — «without idempotency-key», як і має бути.
 
 **`--changed-since`** — окремий git-репозиторій з коду `main` (коміт `start`, тег `base`), далі
@@ -337,12 +342,12 @@ Docker Desktop):
 
 11 PASS, код виходу 0. З чужим секретом (`N8N_CALLBACK_SECRET=not-the-app-secret`) `valid` і
 `duplicate` отримують 401 → FAIL, код виходу 1 — матриця бачить поломку. Невідоме ім'я в `--only` або
-порожній `--only` → помилка використання, код 2. Там же форма заявки (відправка без JS) → мок:
+порожній `--only` → помилка використання, код 2. Там же (у тимчасовій копії з шаблонів, не код гілки) форма заявки (відправка без JS) → мок:
 `POST /webhook/lead-created -> 202 … auth=ok idempotency=new`, тіло 85 Б (лише `leadId` і `source`);
 у журналі сервера `[n8n] lead-created -> 202 in 169 ms (attempt 1, correlation …)`, email і текст
 заявки — 0 входжень.
 
-**`check-contract.mjs` на фінальному коді** (після перенесення прогону B і доведення, коміт `ec84492`):
+**`check-contract.mjs` на фінальному коді** (HEAD гілки після перенесення прогону B, доведення й виправлень за рев'ю):
 
 ```
 $ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs; echo "exit=$?"

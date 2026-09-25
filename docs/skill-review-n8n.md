@@ -2,7 +2,11 @@
 
 > Рев'ю **без встановлення**. Пакет читався як дані з неглибокого клону поза репозиторієм
 > (`../ws04-work/review-n8n-skills`); клон не відкривали як проєкт в агенті, жодного скрипта чи хука не
-> запускали, нічого не встановлювали.
+> запускали, нічого не встановлювали. Ознаки: у `.claude/skills/` гілки — лише три теки
+> (`building-client-form`, `integrating-n8n-webhooks`, `vercel-react-best-practices`); у git немає ні
+> `plugin.json`, ні `mcp.json`, ні `hooks/`; `/plugin install` і `npx skills add` для цього пакета не
+> запускали; `grep -rl "czlonkowski|n8n-mcp-skills" ~/.claude/plugins ~/.claude/settings.json ~/.claude/skills .claude` —
+> порожньо (плагінів і marketplace цього пакета не додано).
 
 **Дата, інструмент, ОС:** 25.09.2026 · Claude Code 2.1.280 (Opus 5.5) · Windows 10 Pro 19045 + Git Bash
 
@@ -12,7 +16,7 @@
 |---|---|
 | Репозиторій | <https://github.com/czlonkowski/n8n-skills> |
 | Тека в репозиторії → `name` | `skills/<15 тек>` → `name` = назва теки для кожного (`n8n-workflow-patterns`, `n8n-code-javascript`, `n8n-validation-expert`, `using-n8n-mcp-skills` …) |
-| Версія | коміт `19cd793f4789e3ef9c657ccf26e097f641a77df0` (16.09.2026, `main`, «Merge pull request #53 …»); у маніфестах — `1.35.0`. Тегів, прив'язаних до рев'ю, не брали — закріплювали б за цим SHA |
+| Версія | коміт `19cd793f4789e3ef9c657ccf26e097f641a77df0` (16.09.2026, `main`, «Merge pull request #53 …»); у маніфестах — `1.35.0`. Тег не використовували: закріплювали б саме цей SHA |
 | Навіщо нам | Перевірити, чи можна дати команді готові n8n-скіли замість / на додачу до власного `integrating-n8n-webhooks`: у клієнтських проєктах є люди, що налаштовують воркфлоу в n8n |
 
 ## 1. Подивитись, не встановлюючи

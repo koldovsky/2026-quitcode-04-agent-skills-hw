@@ -14,7 +14,7 @@ Contract: `.claude/skills/integrating-n8n-webhooks`. One row per event.
 - Request `data`: `leadId`, `fullName`, `email`, `phone`, `company`, `website`, `budget`, `message`,
   `source`, `consentMarketing`, `createdAt` — no IP, user agent, raw form payload or internal notes.
 - `idempotency-key`: a UUID created once per submitted lead. Success = any 2xx; no callback.
-- Path decision: the previous `.env.example` pointed at the test URL `/webhook-test/lead-created`; per
+- Path decision: the previous `.env.example` pointed at the editor's test URL for `lead-created`; per
   the team contract the event name is the production path. Confirm it is published in the client's n8n.
 
 ## quote-request

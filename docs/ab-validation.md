@@ -17,13 +17,18 @@
   - `grep -rlE "x-n8n-token|timingSafeEqual|idempotency-key" ../leaddesk-ab-a --exclude-dir=node_modules` →
     «no contract - ok» (у коді BASE контракту немає: виклик `lead-created` до Task D не чіпали);
   - `git ls-files` копій відрізняється рівно 9 файлами скіла.
-- **Особисті копії скіла:** `~/.claude/skills` містить лише порожню службову теку `synced` (без жодного
-  `SKILL.md`). `~/.agents/skills` і `~/.codex/skills` мають сторонні скіли (`handoff`, `n8n-rag-workflows`,
-  `stop-slop`), але Claude Code ці теки не читає — `/context` нижче їх не показує.
-- **Обмеження, однакове для обох:** `/context` показує скіли з джерелом «claude.ai sync» (`anthropic-skills:docs`,
-  `pdf`, `skill-creator`, `morning`, `import-memory`; у знімку A ще `xlsx`, `pptx`, `docx` — синхронізація
-  облікового запису ще тривала). Вони приходять з облікового запису, не з проєкту, стосуються документів, а не
-  n8n чи форм, і в жодному прогоні не викликались.
+- **Особисті копії скіла:** копій проєктних скілів немає ніде. `~/.claude/skills` до 14:28 не існувало; о
+  14:28–14:33 (до прогонів, A почався о 14:43) десктоп-застосунок створив `~/.claude/skills/synced/<uuid>/` зі
+  скілами синхронізації облікового запису claude.ai: `docs`, `import-memory`, `morning`, `pdf`, `skill-creator`
+  (і `docx`, `pptx`, `xlsx` у `.staging/`). Перевірка:
+  `find ~/.claude/skills -name SKILL.md -exec grep -l -iE "^name: *(integrating-n8n|building-client|vercel)" {} +` →
+  порожньо. Під час підготовки копій ця тека помилково записана як «порожня»: пошук ішов з `-maxdepth 3`, а
+  скіли лежать глибше — виправлено після рев'ю. `~/.agents/skills` і `~/.codex/skills` мають сторонні скіли
+  (`handoff`, `n8n-rag-workflows`, `stop-slop`), але Claude Code ці теки не читає — `/context` їх не показує.
+- **Обмеження, майже однакове для обох:** саме ці синхронізовані скіли `/context` показує з джерелом
+  «claude.ai sync» (`anthropic-skills:docs`, `pdf`, `skill-creator`, `morning`, `import-memory`; у знімку A ще
+  `xlsx`, `pptx`, `docx` — синхронізація ще тривала). Вони приходять з облікового запису, не з проєкту,
+  стосуються документів, а не n8n чи форм, і в жодному прогоні не викликались.
 - **Запит:** текст між лініями з `materials/ab-task.md` без змін, нова сесія на кожен прогін
 - **Відповідь на уточнення:** агент не питав в обох прогонах (запити дозволів на читання файлів копії, `lint`,
   `build`, запуск перевірок — дозволено однаково в обох). Поза теку копії жоден агент не просився.
@@ -56,8 +61,11 @@
 - **Звідки агент узяв домовленості:** загальні знання й наявний код. Сам сказав, що вивчив «форму лідів,
   `lib/db.ts` та патерни Server Actions» і документацію Next 16 у `node_modules` (route handlers, `after()`,
   `redirect`). З наявного коду — схема змінної: у `.env.example` був `N8N_WEBHOOK_URL=…/webhook-test/lead-created`,
-  і агент додав поруч `N8N_QUOTE_WEBHOOK_URL=…/webhook-test/quote-request`. З загальних знань — таймаут,
-  `after()` для аудиту, `timingSafeEqual`, «не будувати URL колбека з `Host`», «Respond: Immediately» в n8n.
+  і агент додав поруч `N8N_QUOTE_WEBHOOK_URL=…/webhook-test/quote-request`. `after()` для аудиту в BASE вже
+  був — у формі нотаток з Task B (`app/dashboard/leads/[id]/actions.ts`: `after(() => logAudit(…))`), тож
+  його агент, найімовірніше, узяв з наявного коду або з документації Next у `node_modules` (журнал сесії цього
+  не розрізняє). З загальних знань — таймаут 10 с, `timingSafeEqual` для токена, «не будувати URL колбека з
+  `Host`», «Respond: Immediately» в n8n.
   Рішень команди (HMAC-підпис колбека, `x-n8n-token`, `idempotency-key`, 202 + `job_id`, імена змінних,
   production URL) взяти не було звідки.
 - **Запитання агента і фінальна відповідь (скорочено):** запитань не було. «Додав `/quotes/new`, Server Action,
@@ -73,21 +81,35 @@
   `N8N_CALLBACK_SECRET` (порожнє значення), `APP_URL`.
 - **`check-contract.mjs --root ../leaddesk-ab-a --changed-since base`** — лише код прогону:
   ```
-  FAIL  C1   .env.example:10  test webhook URL in .env.example
-  PASS  C2
-  FAIL  C3   lib/quote-workflow.ts:28  fetch to n8n outside lib/n8n/* — use the n8n client module
-  FAIL  C4   app/api/quotes/[id]/callback/route.ts:26  request.json() — read the raw text first; re-serialising breaks the signature
-             app/api/quotes/[id]/callback/route.ts:1  raw body is never read (request.text())
-  FAIL  C5   app/api/quotes/[id]/callback/route.ts:1  no HMAC-SHA256 over the raw body
-  PASS  C6
-  PASS  C7
-  PASS  C8
-  FAIL  C9   .env.example:1  missing N8N_WEBHOOK_BASE_URL · missing N8N_WEBHOOK_TOKEN · missing APP_BASE_URL
-             .env.example:10  N8N_QUOTE_WEBHOOK_URL is not a contract key
-             .env.example:13  N8N_CALLBACK_SECRET must be a change-me-… placeholder
-  FAIL  C10  lib/quote-workflow.ts:28  fetch to n8n without x-n8n-token and idempotency-key
-  FAIL  C11  app/api/quotes/[id]/callback/route.ts:1  no 415 · no 413 (64 KB) · x-n8n-timestamp is not checked · idempotency-key is not used
-
+  check-contract · root: ..\leaddesk-ab-a · scope: changed since base (11 changed + 0 untracked files)
+  
+  FAIL  C1   no /webhook-test/ URL in code or .env.example
+          .env.example:10  test webhook URL in .env.example
+  PASS  C2   no NEXT_PUBLIC_ n8n variables; no N8N_* or lib/n8n import in a "use client" file
+  FAIL  C3   n8n is called only from lib/n8n/*, which starts with import "server-only"
+          lib/quote-workflow.ts:28  fetch to n8n outside lib/n8n/* — use the n8n client module
+  FAIL  C4   callback route reads the raw body and parses JSON only after verifying the signature
+          app/api/quotes/[id]/callback/route.ts:26  request.json() — read the raw text first; re-serialising breaks the signature
+          app/api/quotes/[id]/callback/route.ts:1  raw body is never read (request.text())
+  FAIL  C5   callback signature: HMAC-SHA256, length check + timingSafeEqual, never === / !==
+          app/api/quotes/[id]/callback/route.ts:1  no HMAC-SHA256 over the raw body
+  PASS  C6   every fetch to n8n has signal: AbortSignal.timeout(...)
+  PASS  C7   no bodies, personal data, secrets or whole error objects in console.* of n8n code
+  PASS  C8   no runtime = "edge"
+  FAIL  C9   .env.example has the contract keys; .env.local is git-ignored; used N8N_* keys are listed
+          .env.example:1  missing N8N_WEBHOOK_BASE_URL
+          .env.example:1  missing N8N_WEBHOOK_TOKEN
+          .env.example:1  missing APP_BASE_URL
+          .env.example:10  N8N_QUOTE_WEBHOOK_URL is not a contract key (N8N_WEBHOOK_BASE_URL, N8N_WEBHOOK_TOKEN, N8N_CALLBACK_SECRET)
+          .env.example:13  N8N_CALLBACK_SECRET must be a change-me-… placeholder
+  FAIL  C10  every fetch to n8n sends x-n8n-token and idempotency-key; no secrets in the URL
+          lib/quote-workflow.ts:28  fetch to n8n without x-n8n-token and idempotency-key
+  FAIL  C11  callback route: 415 content-type, 413 64 KB, 401 x-n8n-timestamp ±300 s, idempotency-key
+          app/api/quotes/[id]/callback/route.ts:1  no 415 for a non-JSON content-type
+          app/api/quotes/[id]/callback/route.ts:1  no 413 for bodies over 64 KB
+          app/api/quotes/[id]/callback/route.ts:1  x-n8n-timestamp is not checked
+          app/api/quotes/[id]/callback/route.ts:1  idempotency-key is not used to drop repeated callbacks
+  
   4 PASS, 7 FAIL · 6 finding(s) outside the changed lines not shown
   exit=1
   ```
@@ -108,8 +130,13 @@
   ```
   Колбек n8n за контрактом (HMAC у `x-n8n-signature`) застосунок A відхиляє з 401 — він чекає
   `Authorization: Bearer`. Сторінка лишається на «Готуємо кошторис…».
-- **Час від «Надіслати» до відповіді форми:** 322 мс (`POST /quotes/new` → 303, відправка як HTML-форма);
-  у додатковому прогоні — 163 мс. Виклик n8n іде синхронно в дії, тож із повільним n8n форма чекала б до 10 с.
+- **Час від «Надіслати» до відповіді форми:** 322 мс (у додатковому прогоні — 163 мс). Як міряли (однаково для
+  A і B): скрипт поза репозиторієм (`../ws04-work/submit-quote.mjs`) бере приховані поля Server Action з
+  відрендереного `<form>` на `/quotes/new` і надсилає форму як звичайний HTML POST (без JS); час — від запиту до
+  відповіді `303` з `location: /quotes/<id>`. Мок тут відповідав миттєво (403 за 1 мс), тож 322 мс ще нічого не
+  кажуть про очікування n8n. **Дозамір з повільним n8n** (мок `--mode last-node --delay 2000`, без Header Auth,
+  щоб запит не відхилявся одразу; порти 3100/5679): `POST /quotes/new -> 303 in 2289 ms`, мок —
+  `POST /webhook/quote-request -> 200 in 2013 ms` — форма A чекає n8n у самій дії (до 10 с таймауту).
 - **Що показала `/quotes/<id>`:** «Не вдалося підготувати кошторис» (запуск відхилено 403); у додатковому
   прогоні — «Готуємо кошторис…» назавжди.
 - **Журнал сервера:** `Failed to start quote-request workflow for quote_c1af3d85-…: n8n responded with HTTP 403`.
@@ -147,8 +174,20 @@
   `APP_BASE_URL` (секрети — `change-me-…`, адреси локальні, `/webhook`).
 - **`check-contract.mjs --root ../leaddesk-ab-b --changed-since base`** — лише код прогону:
   ```
-  PASS  C1 … PASS  C11   (усі 11)
-
+  check-contract · root: ..\leaddesk-ab-b · scope: changed since base (14 changed + 0 untracked files)
+  
+  PASS  C1   no /webhook-test/ URL in code or .env.example
+  PASS  C2   no NEXT_PUBLIC_ n8n variables; no N8N_* or lib/n8n import in a "use client" file
+  PASS  C3   n8n is called only from lib/n8n/*, which starts with import "server-only"
+  PASS  C4   callback route reads the raw body and parses JSON only after verifying the signature
+  PASS  C5   callback signature: HMAC-SHA256, length check + timingSafeEqual, never === / !==
+  PASS  C6   every fetch to n8n has signal: AbortSignal.timeout(...)
+  PASS  C7   no bodies, personal data, secrets or whole error objects in console.* of n8n code
+  PASS  C8   no runtime = "edge"
+  PASS  C9   .env.example has the contract keys; .env.local is git-ignored; used N8N_* keys are listed
+  PASS  C10  every fetch to n8n sends x-n8n-token and idempotency-key; no secrets in the URL
+  PASS  C11  callback route: 415 content-type, 413 64 KB, 401 x-n8n-timestamp ±300 s, idempotency-key
+  
   11 PASS, 0 FAIL · 6 finding(s) outside the changed lines not shown
   exit=0
   ```
@@ -159,8 +198,11 @@
   workflow d7555b48-ffec-482f-9dc9-b27c1bc30a26 running for 5000 ms, then callback event=quote-request.completed
   callback POST http://127.0.0.1:3000/api/n8n/quote-request -> 202 in 152 ms (try 1/3) event=quote-request.completed body 382 B sha256=bd6ed6a9…
   ```
-- **Час від «Надіслати» до відповіді форми:** 151 мс (`POST /quotes/new` → 303). Перша відправка з порожнім
-  бюджетом — 200 з помилкою валідації (бюджет у B — обов'язкове число 100–1 000 000 $), як і має бути.
+- **Час від «Надіслати» до відповіді форми:** 151 мс (`POST /quotes/new` → 303; спосіб — як у A). Перша
+  відправка з порожнім бюджетом — 200 з помилкою валідації (бюджет у B — обов'язкове число 100–1 000 000 $), як і
+  має бути. **Дозамір з повільним n8n** (мок `--mode last-node --delay 2000` з Header Auth, ті самі порти):
+  `POST /quotes/new -> 303 in 195 ms`, а мок отримав виклик і відповів за `2008 ms` уже після відповіді
+  користувачу (`auth=ok idempotency=new`) — форма B n8n не чекає.
 - **Що показала `/quotes/<id>`:** через ~5 с — «Готово» і посилання
   `https://files.example.test/n8n/d7555b48-ffec-482f-9dc9-b27c1bc30a26.pdf` (той самий `jobId`, що в журналі мока).
 - **Матриця колбеків** проти роуту B на справжньому `job_id` (мок `--delay 60000`, щоб запит був у `processing`):
@@ -181,9 +223,9 @@
 | `check-contract.mjs --changed-since base`: FAIL (id) | **7 FAIL**: C1, C3, C4, C5, C9, C10, C11 | **0 FAIL** |
 | URL вебхука: `/webhook/` чи `/webhook-test/` | `/webhook-test/` у `.env.example` | `/webhook` (база) + `/quote-request` |
 | `auth=` / `idempotency=` у журналі мока | `auth=missing` → 403 (без Header Auth: `idempotency=absent`) | `auth=ok idempotency=new` |
-| Колбек дійшов; код відповіді застосунку | ні (403 на запуску); з вимкненим Header Auth — 401 (чекає Bearer, не HMAC) | так, 202 |
+| Колбек дійшов; код відповіді застосунку | ні (403 на запуску); у додатковому прогоні без Header Auth — дійшов і отримав 401 (застосунок чекає Bearer, не HMAC) | так, 202 |
 | `/quotes/<id>` | «Не вдалося підготувати кошторис» | «Готово» + посилання на PDF |
-| Час відповіді форми | 322 мс (n8n викликається синхронно, до 10 с) | 151 мс (n8n — в `after()`) |
+| Час відповіді форми (мок миттєвий / n8n відповідає через 2 с) | 322 мс / **2289 мс** — чекає n8n у дії | 151 мс / **195 мс** — n8n в `after()` |
 | Тіла чи персональні дані в журналі сервера | немає | немає |
 | Змінних середовища | 3 власні (`N8N_QUOTE_WEBHOOK_URL`, `N8N_CALLBACK_SECRET`, `APP_URL`) | 4 з контракту |
 | Змінених файлів | 11 (+565) | 14 (+753), зокрема `docs/n8n-integrations.md` |
@@ -204,15 +246,17 @@
     Закрило C3, C6, C7, C10.
   - `ec84492` — `.env.example`: прибрано рядок `N8N_WEBHOOK_URL=…/webhook-test/lead-created`; у
     `docs/n8n-integrations.md` — рядок і примітки для `lead-created`. Закрило C1, C9.
-  - Новий код прогону B доробок не потребував.
+  - Сам новий код прогону B до контракту доробок не потребував (його `check-contract --changed-since base` — 0 FAIL);
+    зміни в ньому зроблено пізніше, під час рев'ю перед здачею (див. нижче).
+  - `ab77078` — косметика: коментар у `.env.example`, доданий агентом B, більше не містить рядка тестового URL.
 - **Ключі контракту в `.env.example`:** `N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook`,
   `N8N_WEBHOOK_TOKEN=change-me-webhook-token`, `N8N_CALLBACK_SECRET=change-me-callback-secret`,
-  `APP_BASE_URL=http://127.0.0.1:3000`; `/webhook-test/` немає. У `.env.local` ті самі ключі додала людина
-  скриптом `update-env-local.mjs` (поза репозиторієм; генерує секрети, друкує лише назви ключів).
+  `APP_BASE_URL=http://127.0.0.1:3000`; тестового URL немає (і в коментарях теж). У `.env.local` ті самі ключі
+  додала людина скриптом `update-env-local.mjs` (поза репозиторієм; генерує секрети, друкує лише назви ключів).
 - **`npm run lint`, `npm run build` на гілці:** без помилок і попереджень.
-- **`check-contract.mjs` на фінальному коді:** 11 PASS, 0 FAIL, exit 0 (повний вивід — `docs/verification.md`).
-- **Сценарій «форма → колбек → `/quotes/<id>`» ще раз, уже на гілці** (`npm run build && npm start`,
-  `node --env-file=.env.local tools/mock-n8n.mjs --mode respond-202 --delay 5000`):
+- **`check-contract.mjs` на фінальному коді (HEAD):** 11 PASS, 0 FAIL, exit 0 (повний вивід — `docs/verification.md`).
+- **Сценарій «форма → колбек → `/quotes/<id>`» ще раз, уже на гілці** — одразу після доведення (`ec84492`;
+  `npm run build && npm start`, `node --env-file=.env.local tools/mock-n8n.mjs --mode respond-202 --delay 5000`):
   ```
   POST /quotes/new -> HTTP 303 in 187 ms, location: /quotes/q_63a2dbf6-…
   [mock] POST /webhook/quote-request -> 202 in 4 ms auth=ok idempotency=new | headers: …,idempotency-key,…,x-correlation-id,x-n8n-token | body 317 B
@@ -228,22 +272,53 @@
   даних у журналі сервера — 0 входжень.
 - **Реєстр інтеграцій:** `docs/n8n-integrations.md` — `quote-request` (створив агент B) і `lead-created`
   (доповнено під час доведення).
-- **Що скіл змінив у собі після прогонів:** `7593db2` — перевірки колбека в `check-contract.mjs` тепер
-  враховують усі прямі імпорти роуту. На прогоні A верифікація токена жила в `lib/quote-workflow.ts`, і C5
-  хибно повідомляв «signature not compared with timingSafeEqual». Хешування обох значень зараховано як
-  вирівнювання довжин, а `===` шукається лише цілими словами (`assignedTo` у `lib/db.ts` — не «sig»). FAIL-и
-  прогонів від цього не змінились.
+
+### Після рев'ю перед здачею
+
+Перед push гілку перевірили два незалежні агенти-рецензенти (відповідність умовам і технічне рев'ю). Їхні
+знахідки перевірено вручну; виправлено окремими комітами:
+
+| Коміт | Що | Звідки |
+|---|---|---|
+| `36da9a9` | колбек: 413 за `content-length` ще до читання тіла (розмір перевіряється й після) | `req.text()` буферизував будь-яке тіло |
+| `f256595` | форма кошторису: `label htmlFor`, `aria-describedby` на помилку, підсумок `role="alert"`; нормалізація CRLF перед підрахунком довжини | правило 5 нашого ж `building-client-form` |
+| `8465ded` | клієнт n8n: `redirect: "manual"` — `x-n8n-token` не йде за редиректом на інший хост | fetch зберігає власні заголовки при переході |
+| `61de794` | `lead-created`: аудит — окремий `after()`, не чекає повторів n8n | аудит міг чекати до ~34 с |
+| `b468334` | `fix(server-auth-actions)`: `updateLeadStatus`/`deleteLead` перевіряють сесію, належність ліда workspace і значення статусу | знахідка рев'ю Task A, старий код у файлі з діфу PR |
+| `aec8887` | сторінка статусу перестає опитувати через 15 хв без колбека | безкінечний `router.refresh()` |
+
+Перевірено на гілці (порти 3100/5679, бо 3000 і 5678 зайняті іншими застосунками на цій машині): сценарій
+форма → `POST /webhook/quote-request -> 202 auth=ok idempotency=new` → колбек 202 → «Готово»; порожня
+відправка — `role="alert"` «Перевірте 4 поля», `aria-describedby="quote-company-error"`; матриця колбеків на
+справжньому `job_id` — 11/11 (зокрема `oversized` → 413); прямий виклик Server Action `updateLeadStatus` з
+чужим лідом (`lead_0007`, workspace Brightline) від Olena → `forbidden`, статус ліда не змінився; без cookie →
+307 на `/login`; свій лід → `ok`; статус `hacked` → `forbidden`. У журналі сервера — 0 входжень персональних даних.
+
+- **Що скіл змінив у собі після прогонів:**
+  - `7593db2` — перевірки колбека в `check-contract.mjs` враховують усі прямі імпорти роуту: на прогоні A
+    верифікація токена жила в `lib/quote-workflow.ts`, і C5 хибно повідомляв «signature not compared with
+    timingSafeEqual»; хешування обох значень зараховано як вирівнювання довжин; `===` шукається лише цілими
+    словами (раніше підрядок `sig` у `assignedTo` з `lib/db.ts` давав хибний збіг при повному скані копії B).
+  - `b224d5e` — `--changed-since` правильно працює, коли `--root` — підтека git-репозиторію (`git diff
+    --relative`; раніше такий проєкт давав 11 PASS на поганому коді); C11 більше не приймає будь-яке «64» за
+    ліміт 64 КБ; код виходу через `process.exitCode`.
+  - `47fc4f6`, `6669b1c` — шаблони в `references/nextjs-patterns.md` тепер відповідають коду, що пройшов
+    прогони: умовні переходи статусу після 202 (у старому шаблоні колбек, що випередив обробку 202, назавжди
+    перетворювався назад на `processing`), 413 до читання тіла, сувора перевірка події й `https`-посилання,
+    `redirect: "manual"`, аудит окремим `after()`; у `SKILL.md` — звідки брати `--job-id` для матриці.
+  - Результати прогонів від цих змін не змінились: A — 7 FAIL, B — 0 FAIL, `main` — 6 FAIL.
 
 ## Висновок
 
-Скіл змінив результат суттєво, і це видно не з враження, а з мока: без скіла агент зробив акуратну фічу за
-загальними знаннями (таймаут, `after()` для аудиту, `timingSafeEqual`, захист від підміни `Host`), але вона не
-працює з n8n, налаштованим за домовленостями команди, — запуск отримує 403 (немає `x-n8n-token`), а колбек з
-HMAC-підписом отримав би 401; у `.env.example` потрапив тестовий URL, скопійований зі старого рядка. Зі
-скілом агент сам завантажив його, узяв шаблони з `references/`, перевірив себе скриптами скіла і дав код, що
-проходить усі 11 перевірок і весь сценарій (202 → підписаний колбек → «Готово») з першого разу. З моком,
-який відповідає миттєво, обидві форми швидкі (151 проти 322 мс), але A чекає n8n у самій дії (до 10 с на
-повільному n8n), а B не чекає його зовсім — виклик в `after()`. Доробляти після прогону B довелося лише старий
-`lead-created` — там, де агент за правилом зупинки спитав людину, а не вирішив сам. Після прогонів у скілі
-виправлено хибне повідомлення перевірки колбека; далі варто додати в `nextjs-patterns.md` приклад переведення
-наявного fire-and-forget виклику зі збереженням полів, які потрібні воркфлоу.
+Скіл змінив результат суттєво, і це видно з мока, а не з враження. Без скіла агент зробив акуратну фічу за
+загальними знаннями й наявним кодом (таймаут, `after()` для аудиту, `timingSafeEqual`, захист від підміни
+`Host`), але вона не працює з n8n, налаштованим за домовленостями команди: запуск отримує 403 (немає
+`x-n8n-token`), а в додатковому прогоні без Header Auth колбек з HMAC-підписом отримав 401; у `.env.example`
+потрапив тестовий URL, скопійований зі старого рядка. Зі скілом агент сам завантажив його, узяв шаблони з
+`references/`, перевірив себе скриптами скіла і дав код, що проходить усі 11 перевірок і весь сценарій
+(202 → підписаний колбек → «Готово») з першого разу. На повільному n8n (відповідь через 2 с) форма A
+відповідає за 2289 мс, бо чекає n8n у самій дії, а форма B — за 195 мс: виклик в `after()`. Доробляти після
+прогону B довелося лише старий `lead-created` — там, де агент за правилом зупинки спитав людину. Рев'ю перед
+здачею знайшло в перенесеному коді й у шаблонах скіла кілька слабких місць (гонка статусів у шаблоні, 413 до
+читання тіла, доступність форми, редиректи з токеном) — їх виправлено і в коді, і в скілі, щоб наступний
+проєкт їх не успадкував.
