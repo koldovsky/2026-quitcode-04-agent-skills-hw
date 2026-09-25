@@ -440,10 +440,12 @@ export const db = {
     });
   },
 
+  // Only a request still waiting can become "failed": a late start failure (e.g. our timeout
+  // while n8n did accept the job) must not overwrite a result the callback already delivered.
   markQuoteRequestFailed(id: string) {
     return query("markQuoteRequestFailed", () => {
       const request = store.quoteRequests.find((r) => r.id === id);
-      if (!request) return false;
+      if (!request || request.status !== "queued") return false;
       request.status = "failed";
       request.updatedAt = new Date().toISOString();
       return true;
@@ -464,6 +466,9 @@ export const db = {
     return query("saveQuoteJobResult", () => {
       const request = store.quoteRequests.find((r) => r.idempotencyKey === idempotencyKey);
       if (!request) return null;
+      // A delivered result is final: never downgrade "ready". A real n8n result may still
+      // replace our local "failed" guess (start timed out, but the workflow did run).
+      if (request.status === "ready") return request.id;
       request.status = result.status === "completed" ? "ready" : "failed";
       request.jobId = result.jobId;
       request.documentUrl = result.documentUrl;
