@@ -12,7 +12,7 @@ description: >-
   підпис, колбеки — це integrating-n8n-webhooks) і не для суто візуальних змін стилів.
 metadata:
   owner: "Studio Nova dev"
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Building client forms
@@ -55,8 +55,10 @@ metadata:
      | { status: "idle" }
      | { status: "invalid"; errors: Partial<Record<NoteFormField, string>>; values: { text: string } }
      | { status: "ok" }
-     | { status: "error"; message: string };
+     | { status: "error"; message: string; values: { text: string } };
    ```
+   Значення повертаємо з **кожним** станом невдачі (`invalid` і `error`, напр. «не вдалося зберегти»), щоб
+   поле не спорожніло.
    Сигнатура `(prevState: State, formData: FormData) => Promise<State>`. Ніколи не повертаємо рядок з
    бази, об'єкт ліда чи користувача — лише статус, помилки полів і введені користувачем значення.
 
