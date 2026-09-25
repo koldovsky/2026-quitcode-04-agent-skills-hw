@@ -19,7 +19,8 @@ export type QuoteFormValues = Partial<Record<QuoteFormField, string>>;
 
 export type QuoteFormState =
   | { status: "idle" }
-  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues };
+  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues }
+  | { status: "rate_limited"; values: QuoteFormValues };
 
 export type ParseQuoteResult =
   | { ok: true; data: QuoteFormData }

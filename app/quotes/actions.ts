@@ -1,18 +1,30 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { db } from "@/lib/db";
 import { callbackUrlFor, triggerWorkflow } from "@/lib/n8n/client";
 import { parseQuoteForm, type QuoteFormState } from "@/lib/quote-form";
+import { takeRateLimit } from "@/lib/rate-limit";
 
 const QUOTE_EVENT = "quote-request";
+// Every accepted request starts a 40–90 s workflow that renders a PDF: cap it per client IP.
+const QUOTES_PER_IP = 5;
+const QUOTE_WINDOW_MS = 10 * 60 * 1000;
 
 // Public form, like the lead form on /: no session, so the action validates everything itself.
 export async function requestQuote(_prevState: QuoteFormState, formData: FormData): Promise<QuoteFormState> {
   const parsed = parseQuoteForm(formData);
   if (!parsed.ok) return { status: "invalid", errors: parsed.errors, values: parsed.values };
+
+  // Counted only for valid requests, before anything is stored or sent to n8n. The IP is not logged.
+  const requestHeaders = await headers();
+  const ip = requestHeaders.get("x-forwarded-for")?.split(",")[0].trim() || requestHeaders.get("x-real-ip") || "unknown";
+  if (!takeRateLimit(`quote:${ip}`, QUOTES_PER_IP, QUOTE_WINDOW_MS)) {
+    return { status: "rate_limited", values: { ...parsed.data, budget: String(parsed.data.budget) } };
+  }
 
   const quote = await db.insertQuote({
     ...parsed.data,

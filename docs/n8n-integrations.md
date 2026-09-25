@@ -30,3 +30,10 @@ Contract: `.claude/skills/integrating-n8n-webhooks`. One row per event.
   before the 202 is processed.
 - Quote statuses: `queued` → `processing` → `ready` | `failed`. `failed` without a callback means n8n was
   not reached or did not answer 202.
+- Rate limit (demo): at most 5 valid quote requests per client IP (`x-forwarded-for`, then `x-real-ip`) per
+  10 minutes, checked in `requestQuote` before the record is stored or n8n is called; the 6th gets
+  `{ status: "rate_limited" }` and keeps the typed values. `lib/rate-limit.ts` keeps the window in process
+  memory — fine for one `next start` process; on serverless or several instances move it to a shared store
+  (Redis/KV/DB). The IP is used only as the key and is not logged.
+- Status page: polls every 3 s, says «slower than usual» after 3 min and stops polling after 15 min without a
+  callback (the text then says so).

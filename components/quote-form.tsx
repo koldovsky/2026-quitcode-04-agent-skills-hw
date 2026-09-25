@@ -12,7 +12,7 @@ const inputClass =
 export function QuoteForm() {
   const [state, formAction, pending] = useActionState(requestQuote, initialState);
   const errors = state.status === "invalid" ? state.errors : {};
-  const values = state.status === "invalid" ? state.values : {};
+  const values = state.status === "invalid" || state.status === "rate_limited" ? state.values : {};
   const errorCount = Object.keys(errors).length;
 
   // Every field: visible label, aria-invalid, and aria-describedby pointing at its own error text.
@@ -34,6 +34,11 @@ export function QuoteForm() {
   return (
     // key: remount with the submitted values so defaultValue shows them after a failed check.
     <form action={formAction} key={JSON.stringify(values)} className="space-y-4" noValidate>
+      {state.status === "rate_limited" && (
+        <p role="alert" className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Забагато запитів з цієї адреси. Спробуйте ще раз за кілька хвилин — введене збережено.
+        </p>
+      )}
       {errorCount > 0 && (
         <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
           {errorCount === 1 ? "Перевірте 1 поле." : `Перевірте ${errorCount} поля.`}
