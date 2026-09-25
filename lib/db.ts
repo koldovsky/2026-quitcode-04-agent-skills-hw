@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   Lead,
@@ -5,6 +6,8 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuoteRequest,
+  QuoteRequest,
   SourceCount,
   User,
   Workspace,
@@ -20,6 +23,7 @@ type Store = {
   leads: Lead[];
   audit: AuditEntry[];
   nextLeadNumber: number;
+  quoteRequests: QuoteRequest[];
 };
 
 const LATENCY_MS = {
@@ -31,10 +35,15 @@ const LATENCY_MS = {
   getLead: 80,
   insertLead: 120,
   updateLeadStatus: 80,
+  appendLeadNote: 80,
   deleteLead: 80,
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuoteRequest: 120,
+  getQuoteRequest: 80,
+  markQuoteRequestFailed: 80,
+  saveQuoteJobResult: 80,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -161,6 +170,11 @@ function leadId(n: number) {
   return `lead_${String(n).padStart(4, "0")}`;
 }
 
+// /quotes/[id] is public and shows the requester's data, so the id must not be guessable.
+function quoteRequestId() {
+  return `quote_${randomUUID()}`;
+}
+
 function seedLeads(count: number, workspaces: Workspace[], users: User[]): Lead[] {
   const random = mulberry32(20260921);
   const pick = <T,>(items: readonly T[]) => items[Math.floor(random() * items.length)];
@@ -261,7 +275,14 @@ function createStore(): Store {
     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
   ];
   const leads = seedLeads(200, workspaces, users);
-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
+  return {
+    workspaces,
+    users,
+    leads,
+    audit: [],
+    nextLeadNumber: leads.length + 1,
+    quoteRequests: [],
+  };
 }
 
 // One store per server process (also survives module reloads in `next dev`).
@@ -369,6 +390,16 @@ export const db = {
     });
   },
 
+  appendLeadNote(id: string, note: string) {
+    return query("appendLeadNote", () => {
+      const lead = store.leads.find((l) => l.id === id);
+      if (!lead) return false;
+      lead.internalNotes = lead.internalNotes ? `${lead.internalNotes}\n\n${note}` : note;
+      lead.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
   deleteLead(id: string) {
     return query("deleteLead", () => {
       const index = store.leads.findIndex((l) => l.id === id);
@@ -381,6 +412,69 @@ export const db = {
   insertAuditEntry(entry: AuditEntry) {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
+    });
+  },
+
+  insertQuoteRequest(input: NewQuoteRequest) {
+    return query("insertQuoteRequest", (): QuoteRequest => {
+      const now = new Date().toISOString();
+      const request: QuoteRequest = {
+        ...input,
+        id: quoteRequestId(),
+        status: "queued",
+        jobId: null,
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      store.quoteRequests.push(request);
+      return structuredClone(request);
+    });
+  },
+
+  getQuoteRequest(id: string) {
+    return query("getQuoteRequest", () => {
+      const request = store.quoteRequests.find((r) => r.id === id);
+      return request ? structuredClone(request) : null;
+    });
+  },
+
+  // Only a request still waiting can become "failed": a late start failure (e.g. our timeout
+  // while n8n did accept the job) must not overwrite a result the callback already delivered.
+  markQuoteRequestFailed(id: string) {
+    return query("markQuoteRequestFailed", () => {
+      const request = store.quoteRequests.find((r) => r.id === id);
+      if (!request || request.status !== "queued") return false;
+      request.status = "failed";
+      request.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  // Знайдено за idempotencyKey, а не id: колбек знає лише те, що сам надіслав n8n.
+  saveQuoteJobResult(
+    idempotencyKey: string,
+    result: {
+      jobId: string;
+      status: "completed" | "failed";
+      documentUrl: string | null;
+      errorCode: string | null;
+      completedAt: string;
+    },
+  ) {
+    return query("saveQuoteJobResult", () => {
+      const request = store.quoteRequests.find((r) => r.idempotencyKey === idempotencyKey);
+      if (!request) return null;
+      // A delivered result is final: never downgrade "ready". A real n8n result may still
+      // replace our local "failed" guess (start timed out, but the workflow did run).
+      if (request.status === "ready") return request.id;
+      request.status = result.status === "completed" ? "ready" : "failed";
+      request.jobId = result.jobId;
+      request.documentUrl = result.documentUrl;
+      request.errorCode = result.errorCode;
+      request.updatedAt = result.completedAt;
+      return request.id;
     });
   },
 };
