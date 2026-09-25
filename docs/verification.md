@@ -194,7 +194,11 @@ Cookie демо-користувача Olena (`leaddesk_session=demo-u_olena`); 
   **до** Task D — див. «Виправлення після рев'ю» нижче. У BASE — виправлення Task A, форма нотаток з Task B, три
   скіли; `/quotes` немає, виклик n8n у `app/actions.ts` не змінений. Свіжа сесія (`claude -p "/context"`) бачить
   `integrating-n8n-webhooks` як Project.
-- Що скіл змінив у собі після прогонів (коміти й чому): _(заповнюється після Task D)_
+- Що скіл змінив у собі після прогонів (коміти й чому): `88fe3c4` (v0.2.1) — (1) `send-signed-callback.mjs`: у `--help`
+  і підказці після запуску пояснено, чому `valid`/`duplicate` дають 404 без `--request-key` (агент B у прогоні втратив на
+  цьому ітерацію: перший запуск матриці — 9/11, після `--request-key` реального запиту — 11/11); (2) `check-contract.mjs`:
+  прибрано невикористану змінну (попередження eslint). Контракт, `SKILL.md` і перевірки не змінювались — прогін B дав
+  0 FAIL без доробок коду. Деталі A/B — `docs/ab-validation.md`.
 
 **`check-contract.mjs` на коді `main`** (`git archive main | tar -x -C ../leaddesk-main`; id + PASS/FAIL, код виходу):
 
@@ -404,7 +408,31 @@ exit=1
 14 PASS / 0 FAIL, `next build` ✓; фікстура «хелпер з `timingSafeEqual` є, але заголовок порівнюється через `!==`» —
 C11 FAIL, а той самий роут, що викликає хелпер, — 14 PASS; barrel-імпорт `@/lib/n8n` з `await` поза `after()` — C9 FAIL.
 
-**`check-contract.mjs` на фінальному коді** (після перенесення прогону B — 0 FAIL): _(Task D)_
+**`check-contract.mjs` на фінальному коді** (після перенесення прогону B — коміт `24088c1`; увесь проєкт, без
+`--changed-since`):
+
+```
+n8n contract check — root: .
+scope: whole project; 41 code file(s), 1 .env example(s)
+
+C1   PASS  no /webhook-test/ URL in code or .env*.example
+C2   PASS  no NEXT_PUBLIC_ prefix on N8N_* variables
+C3   PASS  n8n webhook calls only from lib/n8n/client.ts
+C4   PASS  lib/n8n/client.ts exists and starts with import "server-only"
+C5   PASS  every fetch to n8n has a timeout (AbortSignal.timeout)
+C6   PASS  outgoing n8n request sets x-n8n-token, idempotency-key, x-correlation-id
+C7   PASS  request body is the envelope { version: 1, event, data }
+C8   PASS  .env.example follows the contract variables
+C9   PASS  Server Actions start n8n workflows inside after()
+C10  PASS  callback reads the raw body; no req.json()/JSON.parse before the signature check
+C11  PASS  callback signature: length check + timingSafeEqual, never === / !==
+C12  PASS  callback checks a 300 s timestamp window and an idempotency-key
+C13  PASS  no runtime = "edge"
+C14  PASS  no request bodies, form data or personal data in logs of n8n-related code
+
+14 checks: 14 PASS, 0 FAIL
+exit=0
+```
 
 ## Task E3 (бонус) — ті самі скіли в Cursor
 
