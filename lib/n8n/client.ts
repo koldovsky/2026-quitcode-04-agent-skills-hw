@@ -77,6 +77,9 @@ export async function triggerWorkflow(
         body: envelope,
         signal: AbortSignal.timeout(TIMEOUT_MS),
         cache: "no-store",
+        // A redirect would carry x-n8n-token to another host (fetch strips only authorization/cookie):
+        // never follow it — a 3xx ends up as "rejected" below.
+        redirect: "manual",
       });
       console.info(
         `[n8n] ${event} -> ${response.status} in ${Date.now() - started} ms (attempt ${attempt}, correlation ${correlationId})`,
