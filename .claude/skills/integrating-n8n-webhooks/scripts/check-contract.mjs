@@ -633,7 +633,7 @@ check("C11", "callback route: 415 content-type, 413 64 KB, 401 x-n8n-timestamp �
     const t = u.text;
     const at = u.route.path;
     if (!/content-type/i.test(t) || !/\b415\b/.test(t)) fail(at, 1, "no 415 for a non-JSON content-type", true);
-    if (!/\b413\b/.test(t) || !/64\s*\*\s*1024|65536|64_?000|\b64\b/.test(t)) fail(at, 1, "no 413 for bodies over 64 KB", true);
+    if (!/\b413\b/.test(t) || !/64\s*\*\s*1024|\b65_?536\b/.test(t)) fail(at, 1, "no 413 for bodies over 64 KB", true);
     if (!/x-n8n-timestamp/i.test(t)) fail(at, 1, "x-n8n-timestamp is not checked", true);
     else if (!/\b300\b|5\s*\*\s*60\b/.test(t)) fail(at, 1, "no ±300 s window for x-n8n-timestamp", true);
     if (!/idempotency-key/i.test(t)) fail(at, 1, "idempotency-key is not used to drop repeated callbacks", true);
@@ -655,7 +655,8 @@ if (args["changed-since"]) {
   }
   scope = { ref, changed: new Map(), untracked: new Set() };
   let current = null;
-  for (const line of git("diff", "-U0", "--no-color", "--no-ext-diff", ref, "--").split("\n")) {
+  // --relative: paths relative to --root even when it is a subdirectory of the repository.
+  for (const line of git("diff", "--relative", "-U0", "--no-color", "--no-ext-diff", ref, "--").split("\n")) {
     const file = /^\+\+\+ b\/(.+)$/.exec(line);
     if (file) {
       current = new Set();
@@ -702,4 +703,4 @@ for (const r of results) {
   for (const f of shown) console.log(`        ${f.path}:${f.line}  ${f.message}`);
 }
 console.log(`\n${results.length - failed} PASS, ${failed} FAIL${scope ? ` · ${hidden} finding(s) outside the changed lines not shown` : ""}`);
-process.exit(failed ? 1 : 0);
+process.exitCode = failed ? 1 : 0;
