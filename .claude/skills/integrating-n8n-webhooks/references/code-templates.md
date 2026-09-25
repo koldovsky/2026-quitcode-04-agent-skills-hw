@@ -80,7 +80,7 @@ export async function triggerWorkflow(
 }
 ```
 
-## 2. `lib/n8n/signature.ts` — перевірка колбека
+## 2. `lib/n8n/signature.ts` — вікно часу, підпис, тіло з лімітом
 
 ```ts
 import "server-only";
@@ -103,31 +103,97 @@ export function verifySignature(raw: string, timestamp: string, signatureHeader:
   // timingSafeEqual кидає виняток на різних довжинах — тому спершу довжина
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
+
+// Reads the raw body as text, but never more than maxBytes: rejects by content-length first,
+// then streams and stops as soon as the limit is exceeded. Returns null when the body is too large.
+export async function readBodyLimited(request: Request, maxBytes: number): Promise<string | null> {
+  const declared = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > maxBytes) return null;
+  if (!request.body) return "";
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 ```
 
-## 3. `app/api/n8n/[event]/route.ts` — ендпоінт колбека (кроки 1–10)
+## 3. `lib/n8n/callback-body.ts` — перевірка форми підписаного тіла (крок 7)
+
+Будь-яка невідповідність — `null`, роут відповідає 400. `CallbackData` — тип зі сховища проєкту
+(`jobId`, `status`, `requestIdempotencyKey`, `correlationId?`, `result?`, `error?`, `completedAt?`).
 
 ```ts
-import { after } from "next/server";
-import { CALLBACK_MAX_BYTES, isFreshTimestamp, verifySignature } from "@/lib/n8n/signature";
-// Заглушки: реалізуйте в шарі даних проєкту (унікальність ключа — обов'язкова).
+import "server-only";
+import type { CallbackData } from "@/lib/n8n/store";
+
+const isNonEmptyString = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+// Runtime validation of the signed body (step 7). Returns the typed data or null (-> 400).
+export function parseCallback(raw: string, pathEvent: string, idempotencyKey: string): { event: string; data: CallbackData } | null {
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(body) || body.version !== 1 || typeof body.event !== "string" || !isRecord(body.data)) return null;
+
+  const suffix = body.event === `${pathEvent}.completed` ? "completed" : body.event === `${pathEvent}.failed` ? "failed" : null;
+  const d = body.data;
+  if (
+    !suffix ||
+    d.status !== suffix ||
+    !isNonEmptyString(d.jobId) ||
+    !isNonEmptyString(d.requestIdempotencyKey) ||
+    idempotencyKey !== `${d.jobId}:${body.event}`
+  ) {
+    return null;
+  }
+  if (d.result !== undefined && !(isRecord(d.result) && (d.result.documentUrl === undefined || typeof d.result.documentUrl === "string"))) return null;
+  if (d.error !== undefined && !(isRecord(d.error) && (d.error.code === undefined || typeof d.error.code === "string"))) return null;
+  if (d.correlationId !== undefined && typeof d.correlationId !== "string") return null;
+  if (d.completedAt !== undefined && typeof d.completedAt !== "string") return null;
+
+  return {
+    event: body.event,
+    data: {
+      jobId: d.jobId,
+      status: suffix,
+      requestIdempotencyKey: d.requestIdempotencyKey,
+      correlationId: d.correlationId as string | undefined,
+      result: d.result as CallbackData["result"],
+      error: d.error as CallbackData["error"],
+      completedAt: d.completedAt as string | undefined,
+    },
+  };
+}
+```
+
+## 3a. `app/api/n8n/[event]/route.ts` — ендпоінт колбека (кроки 1–10)
+
+`claimIdempotencyKey` / `releaseIdempotencyKey` / `saveJobResult` — функції сховища проєкту (унікальність ключа
+обов'язкова; `saveJobResult` не понижує вже `ready` запис). Повільне (листи, сповіщення) після запису — в
+`after()`.
+
+```ts
+import { revalidatePath } from "next/cache";
+import { CALLBACK_MAX_BYTES, isFreshTimestamp, readBodyLimited, verifySignature } from "@/lib/n8n/signature";
+import { parseCallback } from "@/lib/n8n/callback-body";
 import { claimIdempotencyKey, releaseIdempotencyKey, saveJobResult } from "@/lib/n8n/store";
 
 const KNOWN_EVENTS = new Set(["quote-request"]);
-
-type CallbackBody = {
-  version: number;
-  event: string;
-  data: {
-    jobId: string;
-    status: "completed" | "failed";
-    requestIdempotencyKey?: string;
-    correlationId?: string;
-    result?: { documentUrl?: string };
-    error?: { code?: string };
-    completedAt?: string;
-  };
-};
 
 function reply(status: number, payload: Record<string, unknown> = {}) {
   return Response.json(payload, { status });
@@ -139,10 +205,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ eve
   if (!KNOWN_EVENTS.has(event)) return reply(404);
   if (!request.headers.get("content-type")?.startsWith("application/json")) return reply(415);
 
-  // 2. Сире тіло — один раз, без request.json()
-  const raw = await request.text();
-  // 3. Розмір
-  if (Buffer.byteLength(raw) > CALLBACK_MAX_BYTES) return reply(413);
+  // 2–3. Сире тіло одним рядком, але не більше 64 КБ: спершу content-length, далі потік з лімітом
+  const raw = await readBodyLimited(request, CALLBACK_MAX_BYTES);
+  if (raw === null) return reply(413);
   // 4. Вікно часу 300 с
   const timestamp = request.headers.get("x-n8n-timestamp");
   if (!isFreshTimestamp(timestamp)) return reply(401);
@@ -152,42 +217,36 @@ export async function POST(request: Request, { params }: { params: Promise<{ eve
   // 6. Застовпити idempotency-key
   const idempotencyKey = request.headers.get("idempotency-key");
   if (!idempotencyKey) return reply(400);
-  if (!(await claimIdempotencyKey(idempotencyKey))) return reply(200, { duplicate: true });
+  if (!claimIdempotencyKey(idempotencyKey)) return reply(200, { duplicate: true });
+
+  // 7. Лише тепер розбираємо JSON і перевіряємо форму; будь-яка невідповідність — 400
+  const callback = parseCallback(raw, event, idempotencyKey);
+  if (!callback) {
+    releaseIdempotencyKey(idempotencyKey);
+    return reply(400);
+  }
 
   try {
-    // 7. Лише тепер розбираємо JSON і звіряємо ключ із підписаним тілом
-    const body = JSON.parse(raw) as CallbackBody;
-    const okEvent = body.event === `${event}.completed` || body.event === `${event}.failed`;
-    if (body.version !== 1 || !okEvent || typeof body.data?.jobId !== "string" ||
-        idempotencyKey !== `${body.data.jobId}:${body.event}`) {
-      await releaseIdempotencyKey(idempotencyKey);
-      return reply(400);
-    }
-
     // 8. Мінімальний стан — до відповіді
-    const saved = await saveJobResult(event, body.data);
-    if (!saved) {
-      await releaseIdempotencyKey(idempotencyKey);
+    const requestId = await saveJobResult(event, callback.data);
+    if (!requestId) {
+      releaseIdempotencyKey(idempotencyKey);
       return reply(404);
     }
-    const { jobId, correlationId } = body.data;
-    console.info(`n8n in event=${event} job=${jobId} corr=${correlationId ?? "-"} status=202`);
-
-    // 10. Повільне — після відповіді
-    after(async () => {
-      // напр. лист клієнту / сповіщення команди; помилки ловимо й логуємо без персональних даних
-    });
+    revalidatePath(`/quotes/${requestId}`);
+    console.info(`n8n in event=${callback.event} job=${callback.data.jobId} corr=${callback.data.correlationId ?? "-"} status=202`);
 
     // 9. Прийнято
     return reply(202, { ok: true });
   } catch {
-    await releaseIdempotencyKey(idempotencyKey);
+    releaseIdempotencyKey(idempotencyKey);
     return reply(500);
   }
 }
 ```
 
-Не додаємо `export const runtime = "edge"` — потрібен `node:crypto`.
+Не додаємо `export const runtime = "edge"` — потрібен `node:crypto`. `request.text()` не використовуємо: воно
+читає тіло без ліміту ще до перевірки розміру.
 
 ## 4. Server Action, що запускає довгий воркфлоу
 
@@ -195,6 +254,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ eve
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { triggerWorkflow } from "@/lib/n8n/client";
 
@@ -223,7 +283,8 @@ export async function requestSomething(prevState: State, formData: FormData): Pr
     }
   });
 
-  return { status: "ok", id: record.id }; // лише { status, id }
+  // На сторінку статусу — redirect() з дії (не router.push на клієнті): так форма працює й без JavaScript.
+  redirect(`/quotes/${record.id}`);
 }
 ```
 

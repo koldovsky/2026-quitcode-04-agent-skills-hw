@@ -12,7 +12,7 @@ description: >-
   редагування воркфлоу в редакторі n8n і не для коду вузла Code.
 metadata:
   owner: "Studio Nova dev"
-  version: "0.2.2"
+  version: "0.2.3"
 ---
 
 # Integrating n8n webhooks
@@ -38,7 +38,7 @@ metadata:
 | Надійність | `AbortSignal.timeout(10_000)` на спробу; ≤ 2 повтори (1 с, 3 с) лише на мережу / таймаут / 5xx / 524 з тим самим ключем; 4xx не повторюємо; дивимось лише на код статусу | [contract.md](references/contract.md) |
 | Довгі воркфлоу | Може наблизитися до 100 с або тривалість невідома → **лише** 202 + колбек; дія відповідає `{ status, id }`, виклик n8n — в `after()` | [contract.md](references/contract.md) |
 | URL | У коді й `.env.example` — лише `/webhook/`, ніколи `/webhook-test/` | [contract.md](references/contract.md) |
-| Колбек | `POST /api/n8n/[event]`; `sha256=HMAC(N8N_CALLBACK_SECRET, "${timestamp}.${rawBody}")`; сире тіло; довжина + `timingSafeEqual`; вікно 300 с; `idempotency-key` = `${data.jobId}:${event}`; запис до відповіді; 202 | [callback.md](references/callback.md) |
+| Колбек | `POST /api/n8n/[event]`; `sha256=HMAC(N8N_CALLBACK_SECRET, "${timestamp}.${rawBody}")`; сире тіло потоком ≤ 64 КБ; довжина + `timingSafeEqual`; вікно 300 с; `idempotency-key` = `${data.jobId}:${event}`; запис до відповіді; 202 | [callback.md](references/callback.md) |
 | Журнали | Подія, напрям, correlation id, статус, тривалість, спроба; ніколи тіла, персональних даних, токенів, підписів | [operations.md](references/operations.md) |
 
 ## Як робимо
@@ -53,7 +53,7 @@ metadata:
    виняток → `status: "failed"`, щоб запис не завис у `queued`.
    Шаблон — [code-templates.md](references/code-templates.md) §4. Форму роби за скілом форм проєкту, якщо він є.
 4. **Колбек.** `app/api/n8n/[event]/route.ts` + `lib/n8n/signature.ts` за [code-templates.md](references/code-templates.md)
-   §2–3. Порядок перевірок і коди відповідей — строго за таблицею в [callback.md](references/callback.md).
+   §2–3a. Порядок перевірок і коди відповідей — строго за таблицею в [callback.md](references/callback.md).
    Сховище ключів — з унікальністю; пам'ять процесу — лише для демо, з коментарем.
 5. **Статус.** Сторінка статусу читає запис з бази (`queued` → `ready` / `failed`, посилання на документ);
    n8n з неї не викликаємо. Якщо сторінка публічна — id запису **неможливо вгадати** (`randomUUID()`, не
@@ -73,7 +73,7 @@ metadata:
 - [ ] 4. Тіло — конверт { version: 1, event, data, callbackUrl }, data без зайвих персональних даних.
 - [ ] 5. Таймаут 10 с на спробу; ≤ 2 повтори лише на мережу/таймаут/5xx/524; 4xx не повторюються.
 - [ ] 6. Довгий воркфлоу: дія відповідає одразу { status, id }, виклик n8n — в after().
-- [ ] 7. Колбек: 404/415 до тіла → req.text() → 413 → 401 (час) → 401 (підпис) → дублікат 200 → 400 → запис → 202.
+- [ ] 7. Колбек: 404/415 до тіла → тіло потоком ≤ 64 КБ (413) → 401 (час) → 401 (підпис) → дублікат 200 → 400 (зокрема невалідний JSON) → запис → 202.
 - [ ] 8. Підпис: довжина + timingSafeEqual; жодного === чи JSON.parse до перевірки.
 - [ ] 9. idempotency-key застовплено з унікальністю, звіряється з тілом, звільняється при збої.
 - [ ] 10. Немає /webhook-test/, runtime = "edge", тіл і персональних даних у журналах.

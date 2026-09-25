@@ -35,8 +35,8 @@ Checks:
   C8  .env.example uses N8N_WEBHOOK_BASE_URL (/webhook), N8N_WEBHOOK_TOKEN, N8N_CALLBACK_SECRET,
       APP_BASE_URL; secrets are change-me-...; no legacy N8N_WEBHOOK_URL
   C9  Server Actions that start a workflow do it in after(), not while the user waits
-  C10 callback route reads the raw body (req.text()); no req.json()/JSON.parse before the
-      signature check. Callback routes are found by path (app/api/n8n/**) or by content
+  C10 callback route reads the raw body (request.text() or a size-capped stream read); no
+      req.json()/JSON.parse before the signature check. Callback routes are found by path (app/api/n8n/**) or by content
       (x-n8n-signature / x-n8n-timestamp / N8N_CALLBACK_SECRET) anywhere under app/
   C11 callback signature compared with a length check + timingSafeEqual, never === / !==
   C12 callback checks a 300 s timestamp window and an idempotency-key
@@ -311,8 +311,12 @@ check("C6", "outgoing n8n request sets x-n8n-token, idempotency-key, x-correlati
   const sites = n8nFetchSites();
   if (sites.length === 0) return "(n/a: no fetch to n8n)";
   for (const s of sites) {
-    const t = text(s.f);
-    const missing = ["x-n8n-token", "idempotency-key", "x-correlation-id"].filter((h) => !t.toLowerCase().includes(h));
+    // Comment-free code only, and each header as a quoted name (object key or headers.set("…")),
+    // so a comment or an unrelated string cannot satisfy the check.
+    const t = codeText(s.f).toLowerCase();
+    const missing = ["x-n8n-token", "idempotency-key", "x-correlation-id"].filter(
+      (h) => !new RegExp(`["'\`]${h}["'\`]\\s*[:,)]`).test(t),
+    );
     if (missing.length) report(rel(s.f), s.line, `missing header(s): ${missing.join(", ")}`);
   }
 });
@@ -321,8 +325,8 @@ check("C7", "request body is the envelope { version: 1, event, data }", (report)
   const sites = n8nFetchSites();
   if (sites.length === 0) return "(n/a: no fetch to n8n)";
   for (const s of sites) {
-    const t = text(s.f);
-    if (!/\bversion\s*:\s*1\b/.test(t) || !/\bevent\b/.test(t) || !/\bdata\b/.test(t)) {
+    const t = codeText(s.f);
+    if (!/\bversion\s*:\s*1\b/.test(t) || !/\bevent\s*[,:}]/.test(t) || !/\bdata\s*[,:}]/.test(t)) {
       report(rel(s.f), s.line, "body is not the { version: 1, event, data } envelope");
     }
   }
@@ -421,7 +425,10 @@ check("C10", "callback reads the raw body; no req.json()/JSON.parse before the s
     for (const n of findLines(f, /JSON\.parse\(/)) {
       if (n < vLine && /JSON\.parse\(/.test(codeOnly(lines(f)[n - 1]))) report(rel(f), n, "JSON.parse before the signature check");
     }
-    if (!/\.text\(\s*\)/.test(text(f))) report(rel(f), 1, "raw body is not read with req.text()");
+    // Raw body: request.text() or, better, a size-capped stream read (getReader) directly or via a helper.
+    const readsRaw = /\.text\(\s*\)|\.arrayBuffer\(\s*\)|getReader\(/.test(codeText(f)) ||
+      (/\bread\w*Body\w*\s*\(/.test(codeText(f)) && cryptoFiles.concat(n8nLibFiles).some((h) => /getReader\(/.test(codeText(h))));
+    if (!readsRaw) report(rel(f), 1, "raw body is not read as text (request.text() or a limited stream read)");
   }
 });
 
@@ -460,10 +467,16 @@ check("C11", "callback signature: length check + timingSafeEqual, never === / !=
 
 check("C12", "callback checks a 300 s timestamp window and an idempotency-key", (report) => {
   if (callbackRoutes.length === 0) return "(n/a: no n8n callback route)";
-  const pool = [...new Set([...callbackRoutes, ...n8nLibFiles, ...cryptoFiles])].map(text).join("\n");
+  // Comment-free code: the route must read both headers, and 300 must be used in a comparison
+  // (directly or through a constant = 300), not merely appear somewhere.
+  const pool = [...new Set([...callbackRoutes, ...n8nLibFiles, ...cryptoFiles])].map(codeText).join("\n");
+  const windowNames = [...pool.matchAll(/\b(\w+)\s*=\s*300\b/g)].map((m) => m[1]);
+  const windowRe = new RegExp(`(?:<=?|>=?)\\s*(?:300\\b${windowNames.map((n) => `|${n}\\b`).join("")})|(?:\\b300${windowNames.map((n) => `|\\b${n}`).join("")})\\s*(?:<=?|>=?)`);
+  const readsHeader = (t, h) => new RegExp(`headers\\.get\\(\\s*["'\`]${h}["'\`]\\s*\\)`, "i").test(t);
   for (const f of callbackRoutes) {
-    if (!/x-n8n-timestamp/i.test(text(f)) || !/\b300\b/.test(pool)) report(rel(f), 1, "no 300 s window check on x-n8n-timestamp");
-    if (!/idempotency-key/i.test(text(f))) report(rel(f), 1, "idempotency-key is not checked");
+    const t = codeText(f);
+    if (!readsHeader(t, "x-n8n-timestamp") || !windowRe.test(pool)) report(rel(f), 1, "no 300 s window check on x-n8n-timestamp");
+    if (!readsHeader(t, "idempotency-key")) report(rel(f), 1, "idempotency-key header is not read");
   }
 });
 
