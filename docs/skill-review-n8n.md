@@ -45,7 +45,7 @@
 |---|---|---|
 | `scripts/` та інші виконувані файли | **Є**: 10 bash-хуків, `build.sh`, `skills/n8n-self-hosting/assets/init-data.sh`. Хуки лише читають JSON зі stdin (через `jq` або `python3`), пишуть маркери в `${TMPDIR}/n8n-mcp-skills-state/` і `~/.cache/n8n-mcp-skills/`, друкують `additionalContext`; мережі не викликають | `find . -type f ! -name "*.md"`; прочитано `hooks.json`, `session-start.sh`, `_emit.sh`, `get-node.sh`, `validate-workflow.sh`; `grep -nE "rm \|mkdir\|touch\|curl\|python3\|eval\|exec " hooks -r` |
 | `allowed-tools` | Немає в жодному `SKILL.md` | frontmatter усіх 15 файлів |
-| Команди під час рендеру `` !`cmd` `` | Немає (4 збіги — приклади `` `&&` `||` `` у таблицях і шаблонні рядки в `COMMON_MISTAKES.md`) | `grep -rn '!`' skills` |
+| Команди під час рендеру `` !`cmd` `` | Немає (4 збіги — приклади операторів `&&` і `\|\|` у таблицях і шаблонні рядки в `COMMON_MISTAKES.md`) | `grep -rn '!`' skills` |
 | Хуки | **Є, і вони «завжди ввімкнені»**: `SessionStart` (startup/resume/clear/compact) вставляє весь `using-n8n-mcp-skills/SKILL.md` (188 рядків) у **кожну** сесію — навіть не про n8n; `PreToolUse` на `get_node`, `n8n_create_workflow`, `n8n_update_*`, `validate_workflow`, `n8n_test_workflow`, `n8n_instances`, `n8n_manage_credentials` дописують агенту «invoke the … skill via the Skill tool» | `hooks/hooks.json`, `hooks/session-start.sh` |
 | MCP-сервери | **Є**: `mcp.json` підключає віддалений хостинговий сервер `https://api.n8n-mcp.com/mcp` (стороння служба, дані воркфлоу йдуть туди) | `cat mcp.json` |
 | `plugin.json` / маніфест плагіна | **Є** — пакет задуманий як плагін (`/plugin install czlonkowski/n8n-skills` у README) | `plugin.json`, `.claude-plugin/*`, `README.md:232–248` |
