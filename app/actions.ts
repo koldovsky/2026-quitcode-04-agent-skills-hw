@@ -4,11 +4,12 @@ import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
+import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { triggerWorkflow } from "@/lib/n8n/client";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import type { LeadStatus } from "@/lib/types";
+import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -82,13 +83,30 @@ export async function submitLead(
   return { status: "ok" };
 }
 
-export async function updateLeadStatus(id: string, status: LeadStatus) {
-  await db.updateLeadStatus(id, status);
-  revalidatePath("/dashboard");
-  revalidatePath(`/dashboard/leads/${id}`);
+type LeadMutationResult = { status: "ok" } | { status: "forbidden" };
+
+// Server Actions are public POST endpoints: the session and the lead's workspace are checked here,
+// not only by the page that renders the buttons. No session → /login (getCurrentUser redirects).
+async function ownLead(id: unknown) {
+  const user = await getCurrentUser();
+  if (typeof id !== "string") return null;
+  const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), getLead(id)]);
+  return lead && lead.workspaceId === workspace.id ? lead : null;
 }
 
-export async function deleteLead(id: string) {
-  await db.deleteLead(id);
+export async function updateLeadStatus(id: string, status: LeadStatus): Promise<LeadMutationResult> {
+  const lead = await ownLead(id);
+  if (!lead || !LEAD_STATUSES.includes(status)) return { status: "forbidden" };
+  await db.updateLeadStatus(lead.id, status);
   revalidatePath("/dashboard");
+  revalidatePath(`/dashboard/leads/${lead.id}`);
+  return { status: "ok" };
+}
+
+export async function deleteLead(id: string): Promise<LeadMutationResult> {
+  const lead = await ownLead(id);
+  if (!lead) return { status: "forbidden" };
+  await db.deleteLead(lead.id);
+  revalidatePath("/dashboard");
+  return { status: "ok" };
 }
