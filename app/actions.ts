@@ -1,11 +1,15 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import type { LeadStatus } from "@/lib/types";
+import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -14,6 +18,7 @@ export type SubmitLeadState =
   | { status: "invalid"; errors: Partial<Record<LeadFormField, string>> }
   | { status: "ok" };
 
+// Public form on / — no session check on purpose; everything else (validation) happens here.
 export async function submitLead(
   _prevState: SubmitLeadState,
   formData: FormData,
@@ -50,28 +55,58 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
-
-  await logAudit("lead.created", lead.id);
+  // Fire-and-forget event (Respond: Immediately): the visitor does not wait for n8n or the audit.
+  // n8n gets the contact fields it needs — no IP, user agent, raw payload or internal notes.
+  // Two separate after() callbacks: the audit entry must not wait for n8n's retries.
+  after(() => logAudit("lead.created", lead.id));
+  const idempotencyKey = randomUUID();
+  after(async () => {
+    await triggerWorkflow(
+      "lead-created",
+      {
+        leadId: lead.id,
+        fullName: lead.fullName,
+        email: lead.email,
+        phone: lead.phone,
+        company: lead.company,
+        website: lead.website,
+        budget: lead.budget,
+        message: lead.message,
+        source: lead.source,
+        consentMarketing: lead.consentMarketing,
+        createdAt: lead.createdAt,
+      },
+      { idempotencyKey },
+    );
+  });
 
   return { status: "ok" };
 }
 
-export async function updateLeadStatus(id: string, status: LeadStatus) {
-  await db.updateLeadStatus(id, status);
-  revalidatePath("/dashboard");
-  revalidatePath(`/dashboard/leads/${id}`);
+type LeadMutationResult = { status: "ok" } | { status: "forbidden" };
+
+// Server Actions are public POST endpoints: the session and the lead's workspace are checked here,
+// not only by the page that renders the buttons. No session → /login (getCurrentUser redirects).
+async function ownLead(id: unknown) {
+  const user = await getCurrentUser();
+  if (typeof id !== "string") return null;
+  const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), getLead(id)]);
+  return lead && lead.workspaceId === workspace.id ? lead : null;
 }
 
-export async function deleteLead(id: string) {
-  await db.deleteLead(id);
+export async function updateLeadStatus(id: string, status: LeadStatus): Promise<LeadMutationResult> {
+  const lead = await ownLead(id);
+  if (!lead || !LEAD_STATUSES.includes(status)) return { status: "forbidden" };
+  await db.updateLeadStatus(lead.id, status);
   revalidatePath("/dashboard");
+  revalidatePath(`/dashboard/leads/${lead.id}`);
+  return { status: "ok" };
+}
+
+export async function deleteLead(id: string): Promise<LeadMutationResult> {
+  const lead = await ownLead(id);
+  if (!lead) return { status: "forbidden" };
+  await db.deleteLead(lead.id);
+  revalidatePath("/dashboard");
+  return { status: "ok" };
 }
