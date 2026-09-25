@@ -5,7 +5,7 @@
 > запускали, нічого не встановлювали. Ознаки: у `.claude/skills/` гілки — лише три теки
 > (`building-client-form`, `integrating-n8n-webhooks`, `vercel-react-best-practices`); у git немає ні
 > `plugin.json`, ні `mcp.json`, ні `hooks/`; `/plugin install` і `npx skills add` для цього пакета не
-> запускали; `grep -rl "czlonkowski|n8n-mcp-skills" ~/.claude/plugins ~/.claude/settings.json ~/.claude/skills .claude` —
+> запускали; `grep -rlE "czlonkowski|n8n-mcp-skills" ~/.claude/plugins ~/.claude/settings.json ~/.claude/skills .claude` —
 > порожньо (плагінів і marketplace цього пакета не додано).
 
 **Дата, інструмент, ОС:** 25.09.2026 · Claude Code 2.1.280 (Opus 5.5) · Windows 10 Pro 19045 + Git Bash
