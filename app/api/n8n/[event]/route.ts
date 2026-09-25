@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { verifyCallback } from "@/lib/n8n/callback";
+import { CALLBACK_MAX_BYTES, verifyCallback } from "@/lib/n8n/callback";
 import { claimKey, releaseKey } from "@/lib/n8n/idempotency";
 
 // Callbacks from n8n. Public endpoint: only the HMAC signature is trusted.
@@ -35,6 +35,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   if (!handle) return Response.json({ error: "not_found" }, { status: 404 });
   const mediaType = req.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
   if (mediaType !== "application/json") return Response.json({ error: "unsupported_media_type" }, { status: 415 });
+  // Refuse an oversized body before buffering it; verifyCallback re-checks the real size (413) after reading.
+  if (Number(req.headers.get("content-length") ?? 0) > CALLBACK_MAX_BYTES) {
+    return Response.json({ error: "payload_too_large" }, { status: 413 });
+  }
 
   const raw = await req.text(); // the exact signed bytes; never req.json() here
   const check = verifyCallback(raw, req.headers.get("x-n8n-timestamp"), req.headers.get("x-n8n-signature"));
