@@ -18,7 +18,9 @@ Options:
   --job-id <id>        data.jobId for the "valid" case (default: random UUID). Use a job your app
                        knows if the route answers 404 for unknown jobs.
   --request-key <key>  data.requestIdempotencyKey (the key your app sent to n8n), if the route
-                       looks the record up by it.
+                       looks the record up by it. Without it "valid" and "duplicate" use a random
+                       key, so such a route answers 404 for them - create a request first and pass
+                       its key here.
   --only <cases>       Comma-separated case names to run (default: all).
   -h, --help           Show this help.
 
@@ -137,6 +139,7 @@ if (only) for (const name of only) if (!cases.some(([n]) => n === name)) usage(`
 console.log(`callback matrix -> ${url.origin}${path} (event ${event})\n`);
 console.log("case               expected  got   result");
 let failures = 0;
+const got404 = new Set();
 for (const [name, expected, run, extra] of cases) {
   if (only && !only.has(name)) continue;
   let got = "ERR";
@@ -144,6 +147,7 @@ for (const [name, expected, run, extra] of cases) {
   try {
     const r = await run();
     got = String(r.status);
+    if (r.status === 404) got404.add(name);
     ok = r.status === expected && (!extra || extra(r));
   } catch (error) {
     got = error.cause?.code ?? error.name;
@@ -152,4 +156,11 @@ for (const [name, expected, run, extra] of cases) {
   console.log(`${name.padEnd(18)} ${String(expected).padEnd(9)} ${got.padEnd(5)} ${ok ? "PASS" : "FAIL"}`);
 }
 console.log(`\n${failures ? `${failures} case(s) FAIL` : "all cases PASS"}`);
+if (got404.has("valid") && !opts["request-key"] && !opts["job-id"]) {
+  console.log(
+    'hint: "valid" got 404 - the route probably looks the record up by data.requestIdempotencyKey (or jobId)\n' +
+      "and this run used a random one. Create a request in the app first, then pass its key:\n" +
+      "  --request-key <the idempotency-key your app sent to n8n>   (and/or --job-id <jobId>)",
+  );
+}
 process.exit(failures ? 1 : 0);

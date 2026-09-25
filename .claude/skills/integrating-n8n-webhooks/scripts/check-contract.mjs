@@ -405,7 +405,7 @@ const HELPERS = safeCompareHelpers();
 // First line of the route where the signature is verified: a timingSafeEqual( call or a helper that makes one.
 function verifyLine(f) {
   const re = new RegExp(`timingSafeEqual\\s*\\(${[...HELPERS].map((n) => `|\\b${n}\\s*\\(`).join("")}`);
-  const hit = lines(f).findIndex((l, i) => re.test(codeOnly(l)) && !/^\s*import\b/.test(l) && !/^\s*(export\s+)?(async\s+)?function\b/.test(l));
+  const hit = lines(f).findIndex((l) => re.test(codeOnly(l)) && !/^\s*import\b/.test(l) && !/^\s*(export\s+)?(async\s+)?function\b/.test(l));
   return hit === -1 ? Infinity : hit + 1;
 }
 
