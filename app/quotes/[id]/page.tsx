@@ -8,6 +8,18 @@ export const dynamic = "force-dynamic";
 const dateTimeFormat = new Intl.DateTimeFormat("uk-UA", { dateStyle: "medium", timeStyle: "short" });
 const usd = new Intl.NumberFormat("uk-UA", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
+// Longest we keep polling for the n8n callback (the workflow takes 40–90 s).
+const POLL_LIMIT_MS = 5 * 60 * 1000;
+
+function msLeftToPoll(createdAt: string) {
+  return POLL_LIMIT_MS - (Date.now() - new Date(createdAt).getTime());
+}
+
+// documentUrl comes from the signed callback; still render only http(s) links.
+function safeHttpUrl(url: string | null) {
+  return url && /^https?:\/\//i.test(url) ? url : null;
+}
+
 const STATUS_LABEL = {
   queued: "Готуємо кошторис…",
   ready: "Кошторис готовий",
@@ -18,6 +30,8 @@ export default async function QuoteStatusPage({ params }: PageProps<"/quotes/[id
   const { id } = await params;
   const request = await db.getQuoteRequest(id);
   if (!request) notFound();
+  const pollMs = request.status === "queued" ? msLeftToPoll(request.createdAt) : 0;
+  const documentUrl = safeHttpUrl(request.documentUrl);
 
   return (
     <div className="mx-auto w-full max-w-2xl flex-1 space-y-6 px-6 py-12">
@@ -25,7 +39,7 @@ export default async function QuoteStatusPage({ params }: PageProps<"/quotes/[id
         ← Новий запит
       </Link>
 
-      {request.status === "queued" && <QuoteStatusPoller />}
+      {pollMs > 0 && <QuoteStatusPoller stopAfterMs={pollMs} />}
 
       <div className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">{STATUS_LABEL[request.status]}</h1>
@@ -34,15 +48,21 @@ export default async function QuoteStatusPage({ params }: PageProps<"/quotes/[id
         </p>
       </div>
 
-      {request.status === "queued" && (
+      {request.status === "queued" && pollMs > 0 && (
         <p className="rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-700">
           Зазвичай це займає 40–90 секунд. Сторінка оновлюється автоматично.
         </p>
       )}
 
-      {request.status === "ready" && request.documentUrl && (
+      {request.status === "queued" && pollMs <= 0 && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
+          Відповіді від сервісу кошторисів ще немає. Оновіть сторінку пізніше або напишіть нам напряму.
+        </p>
+      )}
+
+      {request.status === "ready" && documentUrl && (
         <a
-          href={request.documentUrl}
+          href={documentUrl}
           className="inline-block rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
         >
           Завантажити кошторис (PDF)
