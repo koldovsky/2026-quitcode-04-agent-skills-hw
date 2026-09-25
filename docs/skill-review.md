@@ -70,11 +70,25 @@
 - Чому CLI не показав блок під час `--list`: запуск був з `DISABLE_TELEMETRY=1` (з ним CLI аудити не
   завантажує) і з агентської сесії (CLI сам перейшов у неінтерактивний режим). Блок «Security Risk
   Assessments» у CLI — див. розділ 6 (встановлення запускається людиною у звичайному терміналі).
+- Блок у CLI під час встановлення (25.09.2026, людина у звичайному терміналі PowerShell, без
+  `DISABLE_TELEMETRY`), показаний **перед** «Proceed with installation?»:
+  ```
+  Security Risk Assessments
+                                Gen     Socket     Snyk
+  vercel-react-best-practices   Safe    0 alerts   Low Risk
+  Details: https://skills.sh/vercel-labs/agent-skills
+  ```
+  Збігається з skills.sh. Дат і версії CLI не показує.
 - До чого прив'язаний аудит: сторінка skills.sh — до пари «репозиторій + назва скіла», **не до тега**:
   ні Gen, ні Snyk не вказують версії, Socket показує лише хеш вмісту. Дата аналізу (14.09) пізніша за
   наш тег (28.08), а вміст теки скіла не змінювався з 14.04.2026, тож аудит, найімовірніше, бачив той
   самий вміст, — але це збіг, а не гарантія: після нового коміту в `main` аудит оновиться, а наш тег —
   ні. Тому оцінка аудитів — додатковий сигнал, основне — власний чекліст вище.
+  Звірка хешів це підтверджує: `computedHash` у нашому `skills-lock.json` —
+  `6b526d013e28073246a36f99b529bc43745d30832ecfa8217b359c34f260ca6b`, а Socket аналізував
+  `ca7b0c0c6e5f2750043f7f0cd72d16ac4e2abc48f9b5500d047a4b77a2506212`. Хеші різні. Причина може бути в
+  різних алгоритмах (CLI рахує хеш без `metadata.json`), але довести, що аудит бачив саме наші файли,
+  неможливо.
 
 ## 4. Ліцензія й походження
 
@@ -106,10 +120,20 @@
   ```
   спершу без `DISABLE_TELEMETRY` — щоб побачити блок «Security Risk Assessments» перед «Proceed with
   installation?»; `Installation scope` → Project.
+- Як пройшло (25.09.2026, людина в PowerShell): `Installation scope` → Project; блок аудитів → `Proceed
+  with installation?` → Yes; `✓ vercel-react-best-practices (copied) → …\.claude\skills\vercel-react-best-practices`.
+  На разову пропозицію «Install the find-skills skill?» — **No**: ще один сторонній скіл без рев'ю й
+  без закріпленої версії, до того ж він попав би в прогони A/B (Task D).
+  У «Installation Summary» CLI надрукував шлях `.agents\skills\…` з позначкою `copy → Claude Code`, але
+  теки `.agents/` після встановлення немає.
 - Де лягли файли; справжні файли чи посилання: `.claude/skills/vercel-react-best-practices/` —
-  справжні файли (`--copy`), без `.agents/` (`-a claude-code` без `cursor`). Результат перевірки — у
-  `docs/verification.md`.
-- Що потрапило в git: тека скіла (75 файлів) і `skills-lock.json` (джерело, тег, хеш).
+  справжні файли (`--copy`), без `.agents/` (`-a claude-code` без `cursor`). Перевірка:
+  `find .claude/skills/vercel-react-best-practices -type f | wc -l` → 75; `ls .agents` → немає;
+  `dir /AL .claude\skills` → жодного junction/symlink; `diff -rq` з клоном тега → відрізняється лише
+  `metadata.json`, який CLI не копіює; `~/.claude/skills` не створено.
+- Що потрапило в git: тека скіла (75 файлів) і `skills-lock.json`: `source: vercel-labs/agent-skills`,
+  `ref: agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278`, `skillPath: skills/react-best-practices/SKILL.md`,
+  `computedHash: 6b526d01…60ca6b`.
 - Як оновлювати: та сама команда з новим тегом → `git diff .claude/skills/vercel-react-best-practices skills-lock.json`
   → рев'ю змін за цим чеклістом (особливо нові не-md файли, frontmatter, посилання) → окремий коміт.
   `npx skills@1.7.0 experimental_install` зі `skills-lock.json` пише лише в `.agents/skills/`, тому
