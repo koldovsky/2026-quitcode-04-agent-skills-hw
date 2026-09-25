@@ -12,7 +12,7 @@ description: >-
   підпис, колбеки — це integrating-n8n-webhooks) і не для суто візуальних змін стилів.
 metadata:
   owner: "Studio Nova dev"
-  version: "0.1.1"
+  version: "0.1.2"
 ---
 
 # Building client forms
@@ -68,8 +68,9 @@ metadata:
      без `onSubmit` + `fetch`;
    - кнопка `disabled={pending}` і текст «Зберігаємо…» під час відправки;
    - **введене не зникає:** React 19 скидає некеровані поля після дії, тому
-     `defaultValue={state.status === "invalid" ? state.values.text : ""}` і `key` на формі, що
-     змінюється разом зі станом, щоб `defaultValue` застосувався.
+     `defaultValue={state.status === "invalid" || state.status === "error" ? state.values.text : ""}` і `key`
+     на формі, що змінюється разом зі станом (напр. `${state.status}:${state.values.text}`), щоб `defaultValue`
+     застосувався після будь-якої невдачі.
 
 5. **Доступні помилки:**
    - у кожного поля видимий `<label htmlFor>` / `id` (не лише `placeholder`);
