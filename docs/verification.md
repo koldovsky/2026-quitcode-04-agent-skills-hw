@@ -4,6 +4,7 @@
 > числа, імена файлів, SHA комітів. Порядок дій — у `docs/walkthrough.md`.
 > Прогони A/B і фіча «запит на кошторис» — в окремому звіті `docs/ab-validation.md` (Task D).
 
+- **Учасник:** Maria Vorobets · mvorobets@quitcode.com
 - **Інструмент і версія, модель:** Claude Code 2.1.252 · Opus 5.5
 - **ОС і термінал, Node:** macOS 15 (Darwin 24.6) · zsh · Node 24.21
 
