@@ -17,10 +17,11 @@ export function releaseIdempotencyKey(key: string): void {
   seenKeys.delete(key);
 }
 
-type CallbackData = {
+export type CallbackData = {
   jobId: string;
   status: "completed" | "failed";
-  requestIdempotencyKey?: string;
+  requestIdempotencyKey: string;
+  correlationId?: string;
   result?: { documentUrl?: string };
   error?: { code?: string };
   completedAt?: string;
