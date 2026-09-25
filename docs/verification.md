@@ -8,13 +8,21 @@
 
 ## Скіли видно у свіжій сесії
 
-- Як перевіряли: _заповнюється після свіжої сесії (S2): `/context` → розділ Skills_
+- Як перевіряли: окремий неінтерактивний запуск у корені репозиторію після коміту `dac2286`
+  (скіли Task A і B закомічені, Task C ще немає) — `MSYS_NO_PATHCONV=1 claude -p "/context"`, CLI
+  2.1.280, що входить до десктоп-застосунку (`%LOCALAPPDATA%\Packages\Claude_…\LocalCache\Roaming\Claude\claude-code\2.1.280\claude.exe`;
+  окремо CLI не встановлювали). У десктоп-застосунку `/context` показує лише загальний розмір розділу
+  Skills без назв, а `/skills` відкриває вікно налаштувань — тому список знято через CLI.
+  Модель у виводі: `claude-opus-5-5[1m]`.
 
 | Skill | Звідки (Project / Personal / вбудований) | Примітка |
 |---|---|---|
-| `vercel-react-best-practices` | | |
-| `building-client-form` | | |
-| `integrating-n8n-webhooks` | | |
+| `vercel-react-best-practices` | Project | ~120 токенів (лише `name` + `description`; правила вантажаться, коли скіл викликано) |
+| `building-client-form` | Project | ~310 токенів |
+| `integrating-n8n-webhooks` | Project | _допишемо після Task C_ |
+
+- Решта рядків розділу Skills — вбудовані скіли Claude Code (`dataviz`, `code-review`, `simplify`,
+  `run`, `claude-api`, `update-config` тощо) з позначкою Built-in; жодного Personal.
 
 - Особисті скіли: `~/.claude/skills/` не існує. Є `~/.agents/skills/handoff` і
   `~/.codex/skills/{handoff,n8n-rag-workflows,stop-slop}` — Claude Code ці теки не читає (їх читають
@@ -100,7 +108,50 @@ curl -sL -b "$C" -H "RSC: 1" "$U" | wc -c                           # RSC, ба�
 
 ## Task B — `building-client-form`
 
-_Заповнюється після Task B._
+Скіл: `.claude/skills/building-client-form/SKILL.md` (коміт `dac2286`), лише інструкції: `name` =
+назва теки, `description` — 907 символів (що + «Use when …» + фрази-тригери українською й англійською
++ «Not for …»), 110 рядків. Правила Vercel — за id (`server-auth-actions`, `server-serialization`,
+`server-after-nonblocking`), без копіювання.
+
+- Запит у свіжій сесії (нова сесія Claude Code у десктоп-застосунку, Opus 5.5, корінь репозиторію,
+  HEAD = `dac2286`; скіл не названо):
+  > На сторінці ліда в дашборді (/dashboard/leads/[id]) додай форму «Додати нотатку»: одне текстове
+  > поле до 500 символів; нотатка дописується до внутрішніх нотаток ліда.
+- **Чи спрацював скіл і як це видно:** так, з першої спроби. У стрічці інструментів сесії одразу
+  після запиту — рядок **«Ran skill/building-client-form»** (виклик інструмента `Skill`), далі агент
+  написав: «Я вивчив сторінку ліда, шар даних і скіл форм проєкту». `description` не змінювали.
+- **Що зроблено (файли)** — коміт `a441087`:
+  - `lib/note-form.ts` — `parseNoteForm`: порожня нотатка → помилка; > 500 символів → «Нотатка
+    задовга: 501 із 500 символів» без обрізання; `\r\n` нормалізується до підрахунку (textarea
+    надсилає CRLF, а `maxLength` у браузері рахує перенос як один символ);
+  - `app/dashboard/leads/[id]/actions.ts` — `addLeadNote`: `getCurrentUser()` (без сесії → `/login`),
+    перевірка `lead.workspaceId === workspace.id` (однакова відповідь `forbidden` для «немає» і
+    «чужий»), валідація, `db.appendLeadNote`, `after(() => logAudit(...))`, `revalidatePath`;
+    повертає лише `{ status }`;
+  - `components/note-form.tsx` — `useActionState`, `label htmlFor`, `aria-invalid`,
+    `aria-describedby`, підсумок `role="alert"`, `key` + `defaultValue`, щоб введене не зникало;
+  - `lib/db.ts` — `appendLeadNote`; `app/dashboard/leads/[id]/page.tsx` — блок нотаток видно завжди,
+    переноси рядків показуються.
+  - Агент також створив `.claude/launch.json` для свого dev-сервера — видалили, не комітили.
+- **Спостереження агента:** id ліда спершу передавався через `addLeadNote.bind(null, leadId)`, і
+  відправка без JS у dev-режимі не завершувалась (обрив за 30 с); агент замінив `bind` прихованим
+  полем `leadId`, яке сервер перевіряє, як і решту `FormData`. До скіла це не додавали: причину окремо
+  не перевіряли.
+- **Пункти Verify зі скіла — перевірили самі** на продакшн-збірці (`npm run build`,
+  `next start -p 3001`; порт 3000 тримав dev-сервер сесії перевірки). Кожна відправка — як звичайна
+  HTML-форма без JavaScript: скрипт бере приховані поля Server Action з відрендереного `<form>` і
+  надсилає `multipart/form-data` POST (скрипт і вивід — поза репозиторієм, `../ws04-work/task-b/`):
+
+  | Пункт Verify | Результат |
+  |---|---|
+  | `npm run lint`, `npm run build` | ✅ без помилок |
+  | Порожня відправка | ✅ HTTP 200, 521 мс; «Напишіть текст нотатки», `aria-invalid="true"`, `role="alert"` |
+  | Задовгий текст (501 символ, в обхід `maxLength`) | ✅ «Нотатка задовга: 501 із 500»; введений текст повернувся в `<textarea>` |
+  | Звичайна нотатка | ✅ HTTP 200, 552 мс; «Нотатку додано», нотатка є на сторінці |
+  | Без JavaScript | ✅ усі рядки цієї таблиці — саме no-JS POST |
+  | Дія з чужим лідом (`leadId=lead_0007`, workspace Brightline, cookie Olena зі Studio Nova) | ✅ «Лід не знайдено або він належить іншому робочому простору»; від імені Marta (Brightline) — маркера в нотатках `lead_0007` немає |
+  | Дія без сесії | ✅ 307 → `/login` |
+  | Журнал сервера | ✅ лише лічильники `db:*`; маркерів нотаток (`verify-…`, `foreign-…`, `xxxxxxxxxx`) — 0 входжень; `db:appendLeadNote` — 1 раз (лише валідна відправка), `db:insertAuditEntry` — 1 раз, уже в `after()` |
 
 ## Task C — `integrating-n8n-webhooks`
 
