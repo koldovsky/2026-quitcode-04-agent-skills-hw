@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   Lead,
@@ -23,7 +24,6 @@ type Store = {
   audit: AuditEntry[];
   nextLeadNumber: number;
   quoteRequests: QuoteRequest[];
-  nextQuoteNumber: number;
 };
 
 const LATENCY_MS = {
@@ -170,8 +170,9 @@ function leadId(n: number) {
   return `lead_${String(n).padStart(4, "0")}`;
 }
 
-function quoteRequestId(n: number) {
-  return `quote_${String(n).padStart(4, "0")}`;
+// /quotes/[id] is public and shows the requester's data, so the id must not be guessable.
+function quoteRequestId() {
+  return `quote_${randomUUID()}`;
 }
 
 function seedLeads(count: number, workspaces: Workspace[], users: User[]): Lead[] {
@@ -281,7 +282,6 @@ function createStore(): Store {
     audit: [],
     nextLeadNumber: leads.length + 1,
     quoteRequests: [],
-    nextQuoteNumber: 1,
   };
 }
 
@@ -420,7 +420,7 @@ export const db = {
       const now = new Date().toISOString();
       const request: QuoteRequest = {
         ...input,
-        id: quoteRequestId(store.nextQuoteNumber++),
+        id: quoteRequestId(),
         status: "queued",
         jobId: null,
         documentUrl: null,
