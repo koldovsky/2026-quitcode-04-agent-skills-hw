@@ -6,8 +6,8 @@
 - **Інструмент і версія:** Claude Code 2.1.252 (десктоп-застосунок, вкладка Code)
 - **Модель і рівень міркування (effort), однакові в обох прогонах:** Claude Sonnet 5 (`claude-sonnet-5`), effort
   high; режим дозволів — manual (дії агента підтверджувала людина, однаково в обох; поза текою копії запитів не було)
-- **Код:** BASE = `e7e36bd` (три скіли, виправлення Task A, форма нотаток з Task B; ще без `/quotes` і змін у виклику
-  n8n) · скіл `integrating-n8n-webhooks` для копії B — з HEAD `a5711df` (скіл той самий, що в `e7e36bd`, v0.2.0)
+- **Код:** BASE = `0d5a1d9` (три скіли, виправлення Task A, форма нотаток з Task B; ще без `/quotes` і змін у виклику
+  n8n) · скіл `integrating-n8n-webhooks` для копії B — з HEAD `1cc70b4` (скіл той самий, що в `0d5a1d9`, v0.2.0)
 - **Копії:** `../leaddesk-ab-a` (без жодного скіла), `../leaddesk-ab-b` (лише `integrating-n8n-webhooks`); у кожній —
   коміт `start` з тегом `base` (A: `7b3da6a`, B: `958fb4a`). `node_modules` — APFS-клон (`cp -cR`) з робочого
   репозиторію: той самий `package-lock.json`, без мережі й install-скриптів (замість `npm install`)
@@ -201,31 +201,31 @@ exit=0
 
 - Як переносили: `git apply --3way --exclude='.claude/launch.json' docs/ab/b-with-skill.diff` у корені робочого
   репозиторію (гілка на коді BASE + лише документи). 15 файлів застосовано чисто («Falling back to direct application»
-  для нових файлів — норма). Коміт **`24088c1`** `feat(quotes): request-a-quote feature from A/B run B (integrating-n8n-webhooks)`.
+  для нових файлів — норма). Коміт **`b723df3`** `feat(quotes): request-a-quote feature from A/B run B (integrating-n8n-webhooks)`.
   `.claude/launch.json` не переносили (локальний конфіг браузерної панелі; у робочому репо він у `.git/info/exclude`),
   `.env.local` і `node_modules` — теж ні; нових залежностей агент не додавав (`package.json` не змінений).
 - Що довелось доробити руками після перенесення: **для контракту n8n — нічого**: `check-contract.mjs` на всьому коді
   гілки одразу дав 0 FAIL, бо агент B сам переніс старий виклик `lead-created` і `.env.example` на контракт; руками —
   лише `.env.local` гілки (4 ключі, секрети згенеровано скриптом). Але незалежне рев'ю фічі (окремий агент) знайшло
   три вади коду прогону B, яких не ловить ні скіл, ні `check-contract.mjs` — виправлено окремими комітами:
-  1. `a677bda` — **витік даних:** id запитів були послідовні (`quote_0001`…), а `/quotes/[id]` публічна й показує компанію,
+  1. `ebb8de1` — **витік даних:** id запитів були послідовні (`quote_0001`…), а `/quotes/[id]` публічна й показує компанію,
      email, задачу й бюджет — будь-хто міг перебрати чужі запити. Тепер `quote_<randomUUID>`; перевірено: старий
      `/quotes/quote_0001` → 404.
-  2. `4928daf` — **форма без JavaScript:** перехід на `/quotes/<id>` робив `router.push` у клієнтському ефекті, тож без JS
+  2. `0df23ed` — **форма без JavaScript:** перехід на `/quotes/<id>` робив `router.push` у клієнтському ефекті, тож без JS
      користувач не бачив свого запиту. Тепер `redirect()` з Server Action; перевірено нативною відправкою форми (без
      обробників React) — перехід на `/quotes/quote_c351fdfb-…`.
-  3. `c3978ab` — **вічне опитування:** без колбека сторінка оновлювалась кожні 5 с назавжди. Тепер межа 5 хв і повідомлення
+  3. `3639daa` — **вічне опитування:** без колбека сторінка оновлювалась кожні 5 с назавжди. Тепер межа 5 хв і повідомлення
      «відповіді ще немає»; посилання на документ — лише `http(s)`.
   Після виправлень: `check-contract.mjs` — 0 FAIL, lint і build без помилок; сценарій з моком — форма 303 мс,
   `POST /webhook/quote-request -> 202 … auth=ok idempotency=new`, колбек `-> 202`, «Кошторис готовий»; у журналах немає
-  тестових email і назв компаній. Урок — у скіл: `24e1862` (v0.2.2) додав до кроку «Статус» і чекліста вимоги
-  «неможливий для вгадування id, межа опитування, `redirect()` з дії». Раніше `88fe3c4` (v0.2.1) — підказка в
+  тестових email і назв компаній. Урок — у скіл: `f6f10c3` (v0.2.2) додав до кроку «Статус» і чекліста вимоги
+  «неможливий для вгадування id, межа опитування, `redirect()` з дії». Раніше `56948a4` (v0.2.1) — підказка в
   `send-signed-callback.mjs` і прибране попередження eslint (див. `docs/verification.md` → Task C).
 - Ключі контракту в `.env.example`: `N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook`,
   `N8N_WEBHOOK_TOKEN=change-me-webhook-token`, `N8N_CALLBACK_SECRET=change-me-callback-secret`,
   `APP_BASE_URL=http://127.0.0.1:3000`; рядка з `/webhook-test/` немає.
 - `npm run lint`, `npm run build` на гілці: без помилок (одне попередження eslint було в `check-contract.mjs` скіла —
-  прибрано в `88fe3c4`); у збірці — `○ /quotes/new` (статична), `ƒ /quotes/[id]`, `ƒ /api/n8n/[event]`.
+  прибрано в `56948a4`); у збірці — `○ /quotes/new` (статична), `ƒ /quotes/[id]`, `ƒ /api/n8n/[event]`.
 - `check-contract.mjs` на фінальному коді (увесь проєкт, без `--changed-since`):
   ```
 n8n contract check — root: .
