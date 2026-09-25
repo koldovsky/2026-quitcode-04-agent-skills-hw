@@ -12,7 +12,7 @@ description: >-
   редагування воркфлоу в редакторі n8n і не для коду вузла Code.
 metadata:
   owner: "Studio Nova dev"
-  version: "0.2.3"
+  version: "0.2.4"
 ---
 
 # Integrating n8n webhooks

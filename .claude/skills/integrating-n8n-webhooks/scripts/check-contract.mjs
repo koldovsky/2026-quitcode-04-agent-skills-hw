@@ -35,8 +35,8 @@ Checks:
   C8  .env.example uses N8N_WEBHOOK_BASE_URL (/webhook), N8N_WEBHOOK_TOKEN, N8N_CALLBACK_SECRET,
       APP_BASE_URL; secrets are change-me-...; no legacy N8N_WEBHOOK_URL
   C9  Server Actions that start a workflow do it in after(), not while the user waits
-  C10 callback route reads the raw body (request.text() or a size-capped stream read); no
-      req.json()/JSON.parse before the signature check. Callback routes are found by path (app/api/n8n/**) or by content
+  C10 callback route reads the raw body with a size-capped stream read (64 KB; not request.text());
+      no req.json()/JSON.parse before the signature check. Callback routes are found by path (app/api/n8n/**) or by content
       (x-n8n-signature / x-n8n-timestamp / N8N_CALLBACK_SECRET) anywhere under app/
   C11 callback signature compared with a length check + timingSafeEqual, never === / !==
   C12 callback checks a 300 s timestamp window and an idempotency-key
@@ -384,6 +384,33 @@ check("C9", "Server Actions start n8n workflows inside after()", (report) => {
 });
 
 
+// A bounded body read: streams with getReader(), compares the running size with a limit, cancels on overflow.
+function isBoundedReader(src) {
+  return /getReader\(/.test(src) && /\.cancel\(/.test(src) && /\b\w+\s*[<>]=?\s*\w+/.test(src) && /(byteLength|length)\b/.test(src);
+}
+// Names of functions (in any file) whose body is a bounded reader.
+function boundedReaderHelpers() {
+  const names = new Set();
+  for (const f of codeFiles) {
+    const t = codeText(f);
+    if (!/getReader\(/.test(t)) continue;
+    const re = /(?:function\s+(\w+)\s*\(|(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>)/g;
+    let m;
+    while ((m = re.exec(t))) {
+      const bodyStart = t.indexOf("{", m.index);
+      if (bodyStart === -1) continue;
+      let depth = 0;
+      let i = bodyStart;
+      for (; i < t.length; i++) {
+        if (t[i] === "{") depth++;
+        else if (t[i] === "}" && --depth === 0) break;
+      }
+      if (isBoundedReader(t.slice(bodyStart, i))) names.add(m[1] || m[2]);
+    }
+  }
+  return names;
+}
+
 // Names of functions (in any file) whose body calls timingSafeEqual(...)
 function safeCompareHelpers() {
   const names = new Set();
@@ -406,6 +433,7 @@ function safeCompareHelpers() {
   return names;
 }
 const HELPERS = safeCompareHelpers();
+const BOUNDED_READERS = boundedReaderHelpers();
 // First line of the route where the signature is verified: a timingSafeEqual( call or a helper that makes one.
 function verifyLine(f) {
   const re = new RegExp(`timingSafeEqual\\s*\\(${[...HELPERS].map((n) => `|\\b${n}\\s*\\(`).join("")}`);
@@ -413,7 +441,7 @@ function verifyLine(f) {
   return hit === -1 ? Infinity : hit + 1;
 }
 
-check("C10", "callback reads the raw body; no req.json()/JSON.parse before the signature check", (report) => {
+check("C10", "callback reads the raw body size-capped (64 KB stream); no req.json()/JSON.parse before the signature check", (report) => {
   if (callbackRoutes.length === 0) return "(n/a: no n8n callback route)";
   for (const f of callbackRoutes) {
     const vLine = verifyLine(f);
@@ -425,10 +453,18 @@ check("C10", "callback reads the raw body; no req.json()/JSON.parse before the s
     for (const n of findLines(f, /JSON\.parse\(/)) {
       if (n < vLine && /JSON\.parse\(/.test(codeOnly(lines(f)[n - 1]))) report(rel(f), n, "JSON.parse before the signature check");
     }
-    // Raw body: request.text() or, better, a size-capped stream read (getReader) directly or via a helper.
-    const readsRaw = /\.text\(\s*\)|\.arrayBuffer\(\s*\)|getReader\(/.test(codeText(f)) ||
-      (/\bread\w*Body\w*\s*\(/.test(codeText(f)) && cryptoFiles.concat(n8nLibFiles).some((h) => /getReader\(/.test(codeText(h))));
-    if (!readsRaw) report(rel(f), 1, "raw body is not read as text (request.text() or a limited stream read)");
+    // Raw body must be read with a size cap: request.text()/arrayBuffer() load the whole body before any
+    // size check (unbounded allocation). Accept only a bounded stream read, inline or via a helper that
+    // reads with getReader(), counts bytes against a limit and cancels, called with the 64 KB limit.
+    const t = codeText(f);
+    const LIMIT_ARG = /CALLBACK_MAX_BYTES|64\s*\*\s*1024|65536/;
+    const unbounded = findLines(f, /\b(req|request)\.(text|arrayBuffer)\(\s*\)/).filter((n) => /\.(text|arrayBuffer)\(/.test(codeOnly(lines(f)[n - 1])));
+    for (const n of unbounded) report(rel(f), n, "unbounded body read: use a size-capped stream read (64 KB) before the signature check");
+    const inlineBounded = isBoundedReader(t);
+    const helperCalls = [...BOUNDED_READERS].filter((name) => new RegExp(`\\b${name}\\s*\\([^)]*(${LIMIT_ARG.source})`).test(t));
+    if (!inlineBounded && helperCalls.length === 0 && unbounded.length === 0) {
+      report(rel(f), 1, "raw body is not read with a size-capped stream read (getReader + byte limit + cancel, 64 KB)");
+    }
   }
 });
 
