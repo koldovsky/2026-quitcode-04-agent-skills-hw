@@ -199,7 +199,12 @@ integrating-n8n-webhooks/
   підпису/часу/ідемпотентності. Без винятків «якщо задача цього потребує».
 - **SHA коміту зі скілом:** `82bef87`. BASE для Task D — коміт після Task C з цим звітом (код той
   самий; див. `docs/ab-validation.md`).
-- **Що скіл змінив у собі після прогонів:** _допишемо після Task D._
+- **Що скіл змінив у собі після прогонів:** `7593db2` — `check-contract.mjs`: перевірки колбека (C4/C5/C11)
+  тепер враховують усі прямі імпорти роуту (на прогоні A верифікація жила в `lib/quote-workflow.ts`, і C5
+  хибно писав «signature not compared with timingSafeEqual»); хешування обох значень зараховано як
+  вирівнювання довжин; `===` шукається лише цілими словами (у копії B `assignedTo` з `lib/db.ts` давало хибний
+  FAIL при повному скані). Результати прогонів не змінились: A — 7 FAIL, B — 0 FAIL, `main` — 6 FAIL; справжнє
+  `signature !== …` перевірка ловить, як і раніше. Деталі — `docs/ab-validation.md`.
 
 **Як перевіряли сам скрипт.** На `main` — розпакована копія `git archive main` у `../leaddesk-main`
 (`01a7dd4`). Для перевірок, яким на `main` нема на що дивитися (колбек-роуту ще немає), — навмисно
@@ -337,4 +342,24 @@ Docker Desktop):
 у журналі сервера `[n8n] lead-created -> 202 in 169 ms (attempt 1, correlation …)`, email і текст
 заявки — 0 входжень.
 
-**`check-contract.mjs` на фінальному коді** (після перенесення прогону B — 0 FAIL): _допишемо після Task D._
+**`check-contract.mjs` на фінальному коді** (після перенесення прогону B і доведення, коміт `ec84492`):
+
+```
+$ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs; echo "exit=$?"
+check-contract · root: …\2026-quitcode-04-agent-skills-hw · scope: all files
+
+PASS  C1   no /webhook-test/ URL in code or .env.example
+PASS  C2   no NEXT_PUBLIC_ n8n variables; no N8N_* or lib/n8n import in a "use client" file
+PASS  C3   n8n is called only from lib/n8n/*, which starts with import "server-only"
+PASS  C4   callback route reads the raw body and parses JSON only after verifying the signature
+PASS  C5   callback signature: HMAC-SHA256, length check + timingSafeEqual, never === / !==
+PASS  C6   every fetch to n8n has signal: AbortSignal.timeout(...)
+PASS  C7   no bodies, personal data, secrets or whole error objects in console.* of n8n code
+PASS  C8   no runtime = "edge"
+PASS  C9   .env.example has the contract keys; .env.local is git-ignored; used N8N_* keys are listed
+PASS  C10  every fetch to n8n sends x-n8n-token and idempotency-key; no secrets in the URL
+PASS  C11  callback route: 415 content-type, 413 64 KB, 401 x-n8n-timestamp ±300 s, idempotency-key
+
+11 PASS, 0 FAIL
+exit=0
+```
