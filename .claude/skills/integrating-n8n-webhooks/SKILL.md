@@ -60,7 +60,7 @@ Order is fixed:
 
 1. unknown event → 404; `content-type` not `application/json` → 415 (before reading the body);
 2. `const raw = await req.text()` — no `req.json()`, no `JSON.parse` before step 5;
-3. body > 64 KB → 413;
+3. body > 64 KB → 413 (refuse by `content-length` before reading, re-check the real size after);
 4. `x-n8n-timestamp` more than 300 s from now (either way) → 401;
 5. `x-n8n-signature` = `sha256=` + hex HMAC-SHA256(`N8N_CALLBACK_SECRET`, `` `${timestamp}.${raw}` ``):
    compare lengths, then `crypto.timingSafeEqual` — never `===` → 401 with no details;
@@ -126,7 +126,9 @@ No exceptions of the kind "the task requires it": these are decisions for a huma
       the form answers in well under a second; the mock logs `POST /webhook/<event> -> 202 … auth=ok
       idempotency=new`; after ~5 s `callback POST … -> 202`; the status page shows the result.
 - [ ] `node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-signed-callback.mjs --url http://127.0.0.1:3000/api/n8n/<event> --job-id <id>`
-      → every case gets its expected status (bad signature, stale time, reformatted body, replay…).
+      → every case gets its expected status (bad signature, stale time, reformatted body, replay…). `<id>` = the
+      `job_id` of a quote that is still `processing` (mock log: `workflow <id> running…`; run the mock with a long
+      `--delay`), otherwise `valid`/`duplicate` get 400 for an unknown job.
 - [ ] The server log for the whole scenario has no bodies, emails, phones, tokens or signatures.
 
 ## Skill files

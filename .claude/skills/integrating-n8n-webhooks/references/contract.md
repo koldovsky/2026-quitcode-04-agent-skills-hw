@@ -127,7 +127,7 @@ sent). The path segment is the trigger event (`quote-request`); the body event i
 |---|---|---|
 | 1 | event from the path is known; `content-type` is `application/json` — **before** reading the body | 404 / 415 |
 | 2 | `const raw = await req.text()` — body can be read once; no `req.json()`, no `JSON.parse` yet (re-serialising changes bytes, the signature would not match) | — |
-| 3 | `Buffer.byteLength(raw) > 64 * 1024` | 413 |
+| 3 | `content-length` over 64 KB → refuse before reading; then `Buffer.byteLength(raw) > 64 * 1024` | 413 |
 | 4 | `x-n8n-timestamp` is an integer and `abs(now - ts) <= 300` s (anti-replay window, our decision) | 401 |
 | 5 | HMAC over `` `${timestamp}.${raw}` ``; compare lengths first, then `crypto.timingSafeEqual` (it throws on different lengths). Never `===`. | 401, no details |
 | 6 | claim `idempotency-key` (unique insert); already claimed | 200 `{"duplicate": true}` |
