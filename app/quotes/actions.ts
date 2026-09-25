@@ -5,11 +5,11 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { db } from "@/lib/db";
 import { triggerWorkflow } from "@/lib/n8n/client";
-import { parseQuoteForm, type QuoteFormField } from "@/lib/quote-form";
+import { parseQuoteForm, type QuoteFormField, type QuoteFormValues } from "@/lib/quote-form";
 
 export type RequestQuoteState =
   | { status: "idle" }
-  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>> };
+  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues };
 
 export async function requestQuote(
   _prevState: RequestQuoteState,
@@ -17,7 +17,7 @@ export async function requestQuote(
 ): Promise<RequestQuoteState> {
   const parsed = parseQuoteForm(formData);
   if (!parsed.ok) {
-    return { status: "invalid", errors: parsed.errors };
+    return { status: "invalid", errors: parsed.errors, values: parsed.values };
   }
 
   const idempotencyKey = randomUUID();

@@ -9,9 +9,12 @@ export type QuoteFormData = {
   budget: number | null;
 };
 
+// What the user typed, sent back after a validation error so the fields are not emptied.
+export type QuoteFormValues = Record<QuoteFormField, string>;
+
 export type ParseResult =
   | { ok: true; data: QuoteFormData }
-  | { ok: false; errors: Partial<Record<QuoteFormField, string>> };
+  | { ok: false; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -43,5 +46,14 @@ export function parseQuoteForm(formData: FormData): ParseResult {
     }
   }
 
-  return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, data };
+  if (Object.keys(errors).length > 0) {
+    const values: QuoteFormValues = {
+      company: data.company,
+      email: text(formData, "email", 200),
+      taskDescription: data.taskDescription,
+      budget,
+    };
+    return { ok: false, errors, values };
+  }
+  return { ok: true, data };
 }
