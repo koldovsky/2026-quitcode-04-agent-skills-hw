@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import { requestQuote, type RequestQuoteState } from "@/app/quotes/actions";
 import { BUDGET_OPTIONS } from "@/lib/lead-form";
-import type { QuoteFormField } from "@/lib/quote-form";
+import { TASK_DESCRIPTION_MAX_LENGTH, type QuoteFormField } from "@/lib/quote-form";
 
 const initialState: RequestQuoteState = { status: "idle" };
 
@@ -80,7 +80,7 @@ export function QuoteForm() {
         <label htmlFor="quote-taskDescription" className="block text-sm font-medium">
           Опишіть задачу
         </label>
-        <textarea {...a11y("taskDescription")} required rows={4} defaultValue={values?.taskDescription ?? ""} className={inputClass} />
+        <textarea {...a11y("taskDescription")} required rows={4} maxLength={TASK_DESCRIPTION_MAX_LENGTH} defaultValue={values?.taskDescription ?? ""} className={inputClass} />
         {fieldError("taskDescription")}
       </div>
 

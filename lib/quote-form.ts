@@ -2,6 +2,8 @@ import { BUDGET_OPTIONS } from "./lead-form";
 
 export type QuoteFormField = "company" | "email" | "taskDescription" | "budget";
 
+export const TASK_DESCRIPTION_MAX_LENGTH = 2000;
+
 export type QuoteFormData = {
   company: string;
   email: string;
@@ -27,7 +29,8 @@ export function parseQuoteForm(formData: FormData): ParseResult {
   const data: QuoteFormData = {
     company: text(formData, "company", 120),
     email: text(formData, "email", 200).toLowerCase(),
-    taskDescription: text(formData, "taskDescription", 2000),
+    // Checked untruncated below: an over-long description is an error, not silently cut.
+    taskDescription: text(formData, "taskDescription", TASK_DESCRIPTION_MAX_LENGTH * 2),
     budget: null,
   };
 
@@ -36,6 +39,9 @@ export function parseQuoteForm(formData: FormData): ParseResult {
   if (!data.company) errors.company = "Вкажіть компанію";
   if (!EMAIL_RE.test(data.email)) errors.email = "Перевірте email";
   if (data.taskDescription.length < 10) errors.taskDescription = "Опишіть задачу хоча б одним реченням";
+  else if (data.taskDescription.length > TASK_DESCRIPTION_MAX_LENGTH) {
+    errors.taskDescription = `Опис задовгий: ${data.taskDescription.length} із ${TASK_DESCRIPTION_MAX_LENGTH} символів`;
+  }
 
   const budget = text(formData, "budget", 10);
   if (budget) {
