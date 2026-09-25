@@ -23,7 +23,10 @@ it ourselves. Give the human these settings as text (example: event `quote-reque
    `{{ $execution.id }}:quote-request.completed` (same `jobId` and `event` as in the body),
    `x-correlation-id` from the incoming headers. Body Content Type **Raw**, Content Type
    `application/json`, Body = field `body`. Options → Timeout `10000`. Settings → Retry On Fail,
-   Max Tries `3`, Wait Between Tries `1000`.
+   Max Tries `3`, Wait Between Tries `1000` (team setting for **callbacks** n8n → app). This is not the
+   app's own retry policy (Next.js → n8n: 1 s, then 3 s, never on 4xx — `contract.md`): Retry On Fail waits a
+   fixed interval and also repeats on 4xx; that is harmless here because the route answers 4xx only for bad or
+   unknown callbacks and deduplicates by `idempotency-key`.
    If n8n runs in Docker and the app on the host — `host.docker.internal`, not `localhost`.
 8. **Save** and **Publish**. Publish again after every change.
 

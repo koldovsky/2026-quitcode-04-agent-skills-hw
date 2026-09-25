@@ -2,7 +2,7 @@
 
 Read this when implementing or reviewing either direction. `SKILL.md` has the short form.
 
-```
+```text
 Next.js (Server Action / Route Handler)              n8n
   lib/n8n/client.ts ── POST /webhook/<event> ───────▶ Webhook node (Header Auth)
                        x-n8n-token, idempotency-key,   └─ Respond to Webhook: 202 {job_id}
@@ -126,12 +126,12 @@ sent). The path segment is the trigger event (`quote-request`); the body event i
 | # | Step | On failure |
 |---|---|---|
 | 1 | event from the path is known; `content-type` is `application/json` — **before** reading the body | 404 / 415 |
-| 2 | `const raw = await req.text()` — body can be read once; no `req.json()`, no `JSON.parse` yet (re-serialising changes bytes, the signature would not match) | — |
+| 2 | `const raw = await req.text()` (or a reader that streams `req.body` and stops past 64 KB) — body can be read once; no `req.json()`, no `JSON.parse` yet (re-serialising changes bytes, the signature would not match) | — |
 | 3 | `content-length` over 64 KB → refuse before reading; then `Buffer.byteLength(raw) > 64 * 1024` | 413 |
 | 4 | `x-n8n-timestamp` is an integer and `abs(now - ts) <= 300` s (anti-replay window, our decision) | 401 |
 | 5 | HMAC over `` `${timestamp}.${raw}` ``; compare lengths first, then `crypto.timingSafeEqual` (it throws on different lengths). Never `===`. | 401, no details |
 | 6 | claim `idempotency-key` (unique insert); already claimed | 200 `{"duplicate": true}` |
-| 7 | `JSON.parse(raw)`, validate shape; body event must match the path; key must equal `` `${data.jobId}:${event}` `` | 400 + release the key |
+| 7 | `JSON.parse(raw)`, validate shape; body `event` must be `` `${pathEvent}.completed` ``; key must equal `` `${data.jobId}:${body.event}` `` (full body event, e.g. `quote-request.completed`) | 400 + release the key |
 | 8 | save minimal state (`status = ready`, document URL) **before** the response | 5xx + release the key |
 | 9 | respond | 202 `{"ok": true}` |
 | 10 | slow follow-ups (emails, notifications) | in `after()` |

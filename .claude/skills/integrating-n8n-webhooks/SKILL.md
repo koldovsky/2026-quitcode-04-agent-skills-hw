@@ -59,13 +59,15 @@ workflow runs → it is async. Modes and URLs: [references/response-modes.md](re
 Order is fixed:
 
 1. unknown event → 404; `content-type` not `application/json` → 415 (before reading the body);
-2. `const raw = await req.text()` — no `req.json()`, no `JSON.parse` before step 5;
+2. read the raw text once (`req.text()`, or a reader that streams `req.body` and stops past 64 KB) — no
+   `req.json()`, no `JSON.parse` before step 5;
 3. body > 64 KB → 413 (refuse by `content-length` before reading, re-check the real size after);
 4. `x-n8n-timestamp` more than 300 s from now (either way) → 401;
 5. `x-n8n-signature` = `sha256=` + hex HMAC-SHA256(`N8N_CALLBACK_SECRET`, `` `${timestamp}.${raw}` ``):
    compare lengths, then `crypto.timingSafeEqual` — never `===` → 401 with no details;
 6. claim `idempotency-key` (unique); already seen → 200 `{ "duplicate": true }`;
-7. now `JSON.parse(raw)`, validate shape; event ≠ path or key ≠ `` `${data.jobId}:${event}` `` → 400
+7. now `JSON.parse(raw)`, validate shape; body `event` ≠ `` `${pathEvent}.completed` `` or key ≠
+   `` `${data.jobId}:${body.event}` `` (e.g. `5f0c…:quote-request.completed`) → 400
    (and release the key);
 8. save the minimal state **before** responding (release the key if saving fails);
 9. respond 202 `{ "ok": true }`; slow follow-ups go to `after()`.
@@ -89,7 +91,7 @@ names, emails, phones, IPs, tokens, signatures, secrets or full URLs with query 
 
 ## Checklist
 
-```
+```text
 - [ ] 1. No /webhook-test/ URL in code or .env.example; base URL ends with /webhook.
 - [ ] 2. No NEXT_PUBLIC_N8N_*; no N8N_* or lib/n8n import in a "use client" file.
 - [ ] 3. Every n8n fetch lives in lib/n8n/*, which starts with import "server-only".

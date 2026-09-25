@@ -130,7 +130,29 @@ export const CALLBACK_WINDOW_S = 300;
 
 export type CallbackCheck = { ok: true } | { ok: false; status: 401 | 413 | 500 };
 
-/** Steps 3–5 of the callback order. `raw` is the body exactly as received (req.text()). */
+/**
+ * Step 2–3: the raw body as text, or null as soon as it grows past `limit` bytes — also when the
+ * sender gives no content-length (chunked). Decoded like req.text(), so the signed bytes are the same.
+ */
+export async function readBodyLimited(req: Request, limit = CALLBACK_MAX_BYTES): Promise<string | null> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
+/** Steps 3–5 of the callback order. `raw` is the body exactly as received (readBodyLimited). */
 export function verifyCallback(
   raw: string,
   timestamp: string | null,
@@ -176,9 +198,10 @@ export function releaseKey(key: string): void {
 
 ```ts
 import { db } from "@/lib/db"; // your data layer
-import { CALLBACK_MAX_BYTES, verifyCallback } from "@/lib/n8n/callback";
+import { CALLBACK_MAX_BYTES, readBodyLimited, verifyCallback } from "@/lib/n8n/callback";
 import { claimKey, releaseKey } from "@/lib/n8n/idempotency";
 
+// Callbacks from n8n. Public endpoint: only the HMAC signature is trusted.
 // No `export const runtime = "edge"`: we need node:crypto.
 
 type CallbackData = {
@@ -189,15 +212,12 @@ type CallbackData = {
   error?: { code?: unknown };
 };
 
-// Path segment = the trigger event. Each handler saves the minimal state BEFORE the response;
-// false = unknown job or unusable data (→ 400, key released).
+// Path segment = the trigger event. Each handler saves the minimal state; false = unknown job / bad data.
 const HANDLERS: Record<string, (data: CallbackData) => Promise<boolean>> = {
   "quote-request": async (data) => {
     const documentUrl = data.status === "completed" ? safeDocumentUrl(data.result?.documentUrl) : null;
     if (data.status === "completed" && !documentUrl) return false;
     const errorCode = typeof data.error?.code === "string" ? data.error.code.slice(0, 64) : null;
-    // Find the record by jobId, or by our idempotency key while jobId is not stored yet —
-    // the callback can outrun the handling of the 202 in the Server Action.
     return db.completeQuote({
       jobId: data.jobId,
       requestIdempotencyKey: typeof data.requestIdempotencyKey === "string" ? data.requestIdempotencyKey : null,
@@ -214,12 +234,13 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   if (!handle) return Response.json({ error: "not_found" }, { status: 404 });
   const mediaType = req.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
   if (mediaType !== "application/json") return Response.json({ error: "unsupported_media_type" }, { status: 415 });
-  // Refuse an oversized body before buffering it; verifyCallback re-checks the real size after reading.
+  // Refuse an oversized body before reading it; readBodyLimited also stops at 64 KB without content-length.
   if (Number(req.headers.get("content-length") ?? 0) > CALLBACK_MAX_BYTES) {
     return Response.json({ error: "payload_too_large" }, { status: 413 });
   }
 
-  const raw = await req.text(); // the exact signed bytes; never req.json() here
+  const raw = await readBodyLimited(req); // the exact signed bytes; never req.json() here
+  if (raw === null) return Response.json({ error: "payload_too_large" }, { status: 413 });
   const check = verifyCallback(raw, req.headers.get("x-n8n-timestamp"), req.headers.get("x-n8n-signature"));
   if (!check.ok) return Response.json({ error: "rejected" }, { status: check.status });
 
@@ -245,7 +266,6 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
 
   const correlationId = req.headers.get("x-correlation-id") ?? "-";
   console.info(`[n8n] callback ${event} ${data.status} accepted (correlation ${correlationId})`);
-  // Slow follow-ups (emails, notifications) go to after(() => …) from "next/server".
   return Response.json({ ok: true }, { status: 202 });
 }
 
@@ -260,7 +280,6 @@ function parseCallback(raw: string, event: string, key: string): CallbackData | 
   if (!json || typeof json !== "object") return null;
   const body = json as { version?: unknown; event?: unknown; data?: Record<string, unknown> };
   const data = body.data;
-  // The body event is exactly `<path>.completed` (data.status says completed or failed).
   if (body.version !== 1 || body.event !== `${event}.completed`) return null;
   if (!data || typeof data.jobId !== "string" || data.jobId === "") return null;
   if (data.status !== "completed" && data.status !== "failed") return null;
@@ -268,7 +287,7 @@ function parseCallback(raw: string, event: string, key: string): CallbackData | 
   return data as unknown as CallbackData;
 }
 
-// The link ends up as <a href> on a public page: only https, no credentials, bounded length.
+// The link is rendered as <a href> on a public page: only https, no credentials.
 function safeDocumentUrl(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 2048) return null;
   try {
