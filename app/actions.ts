@@ -17,6 +17,7 @@ export type SubmitLeadState =
   | { status: "invalid"; errors: Partial<Record<LeadFormField, string>> }
   | { status: "ok" };
 
+// Public form on / — no session check on purpose; everything else (validation) happens here.
 export async function submitLead(
   _prevState: SubmitLeadState,
   formData: FormData,
@@ -55,6 +56,8 @@ export async function submitLead(
 
   // Fire-and-forget event (Respond: Immediately): the visitor does not wait for n8n or the audit.
   // n8n gets the contact fields it needs — no IP, user agent, raw payload or internal notes.
+  // Two separate after() callbacks: the audit entry must not wait for n8n's retries.
+  after(() => logAudit("lead.created", lead.id));
   const idempotencyKey = randomUUID();
   after(async () => {
     await triggerWorkflow(
@@ -74,7 +77,6 @@ export async function submitLead(
       },
       { idempotencyKey },
     );
-    await logAudit("lead.created", lead.id);
   });
 
   return { status: "ok" };
