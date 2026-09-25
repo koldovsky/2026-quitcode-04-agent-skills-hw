@@ -101,3 +101,35 @@ export type AuditEntry = {
   leadId: string;
   at: string;
 };
+
+export const QUOTE_STATUSES = ["queued", "processing", "ready", "failed"] as const;
+
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
+export type Quote = {
+  id: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number;
+  status: QuoteStatus;
+  /** Sent to n8n as idempotency-key on every attempt; n8n echoes it as data.requestIdempotencyKey. */
+  idempotencyKey: string;
+  correlationId: string;
+  /** job_id from n8n's 202 answer. */
+  jobId: string | null;
+  documentUrl: string | null;
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Pick<Quote, "company" | "email" | "description" | "budget" | "idempotencyKey" | "correlationId">;
+
+export type QuoteCallback = {
+  jobId: string;
+  requestIdempotencyKey: string | null;
+  status: "completed" | "failed";
+  documentUrl: string | null;
+  errorCode: string | null;
+};
