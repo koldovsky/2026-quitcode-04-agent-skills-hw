@@ -5,7 +5,17 @@ Contract: `.claude/skills/integrating-n8n-webhooks`. One row per event.
 | event | direction | n8n path | mode | owner |
 |---|---|---|---|---|
 | `quote-request` | Next.js → n8n → callback `/api/n8n/quote-request` | `/webhook/quote-request` | Respond to Webhook 202 `{job_id}` + signed callback (workflow runs 40–90 s) | _TBD_ |
-| `lead-created` | Next.js → n8n | ⚠️ only a test URL is known (`/webhook-test/lead-created`) | Immediately (fire-and-forget) | _TBD_ |
+| `lead-created` | Next.js → n8n | `/webhook/lead-created` | Immediately (fire-and-forget) | _TBD_ |
+
+## lead-created
+
+- Trigger: Server Action `submitLead` (`app/actions.ts`) from the public form on `/`; the n8n call and the
+  audit entry run in `after()`, the visitor sees «Дякуємо» at once.
+- Request `data`: `leadId`, `fullName`, `email`, `phone`, `company`, `website`, `budget`, `message`,
+  `source`, `consentMarketing`, `createdAt` — no IP, user agent, raw form payload or internal notes.
+- `idempotency-key`: a UUID created once per submitted lead. Success = any 2xx; no callback.
+- Path decision: the previous `.env.example` pointed at the test URL `/webhook-test/lead-created`; per
+  the team contract the event name is the production path. Confirm it is published in the client's n8n.
 
 ## quote-request
 
