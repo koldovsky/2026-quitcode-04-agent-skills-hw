@@ -78,7 +78,13 @@ export type NoteFormState =
   | { status: "idle" }
   | { status: "invalid"; errors: Partial<Record<NoteFormField, string>>; values: { text: string } }
   | { status: "ok" }
-  | { status: "error"; message: string };
+  | { status: "error"; message: string; values: { text: string } };
+
+// The typed note, returned with any failure so the field is not emptied.
+function noteValues(formData: FormData) {
+  const raw = formData.get("text");
+  return { text: typeof raw === "string" ? raw.slice(0, 1000) : "" };
+}
 
 export async function addLeadNote(
   _prevState: NoteFormState,
@@ -87,12 +93,12 @@ export async function addLeadNote(
   const user = await getCurrentUser();
   const leadId = formData.get("leadId");
   if (typeof leadId !== "string" || !leadId) {
-    return { status: "error", message: "Лід не знайдено" };
+    return { status: "error", message: "Лід не знайдено", values: noteValues(formData) };
   }
 
   const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), getLead(leadId)]);
   if (!lead || lead.workspaceId !== workspace.id) {
-    return { status: "error", message: "Лід не знайдено" };
+    return { status: "error", message: "Лід не знайдено", values: noteValues(formData) };
   }
 
   const parsed = parseNoteForm(formData);
@@ -102,7 +108,7 @@ export async function addLeadNote(
 
   const saved = await db.appendLeadNote(lead.id, parsed.data.text);
   if (!saved) {
-    return { status: "error", message: "Не вдалося зберегти нотатку. Спробуйте ще раз." };
+    return { status: "error", message: "Не вдалося зберегти нотатку. Спробуйте ще раз.", values: noteValues(formData) };
   }
 
   revalidatePath(`/dashboard/leads/${lead.id}`);

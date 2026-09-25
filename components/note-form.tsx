@@ -10,7 +10,8 @@ export function NoteForm({ leadId }: { leadId: string }) {
   const [state, formAction, pending] = useActionState(addLeadNote, initialState);
   const error = state.status === "invalid" ? state.errors.text : undefined;
   // Нове значення ключа після кожної відповіді перемонтовує форму, щоб застосувався defaultValue.
-  const formKey = state.status === "invalid" ? `invalid:${state.values.text}` : state.status;
+  const formKey =
+    state.status === "invalid" || state.status === "error" ? `${state.status}:${state.values.text}` : state.status;
 
   return (
     <form
@@ -46,7 +47,8 @@ export function NoteForm({ leadId }: { leadId: string }) {
           name="text"
           rows={3}
           maxLength={NOTE_MAX_LENGTH}
-          defaultValue={state.status === "invalid" ? state.values.text : ""}
+          required
+          defaultValue={state.status === "invalid" || state.status === "error" ? state.values.text : ""}
           aria-invalid={!!error}
           aria-describedby={error ? "text-error" : undefined}
           className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
