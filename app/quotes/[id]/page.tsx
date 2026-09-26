@@ -16,7 +16,7 @@ const STATUS_TEXT: Record<QuoteStatus, { title: string; hint: string; style: str
   },
   processing: {
     title: "Готуємо кошторис",
-    hint: "Зазвичай це займає 1–2 хвилини. Сторінка оновиться сама.",
+    hint: "Зазвичай це займає 1–2 хвилини.",
     style: "bg-amber-50 text-amber-700 ring-amber-200",
   },
   ready: {
@@ -81,7 +81,7 @@ export default async function QuotePage({ params }: PageProps<"/quotes/[id]">) {
           )}
         </section>
 
-        {inProgress && <QuoteStatusRefresher />}
+        {inProgress && <QuoteStatusRefresher createdAt={quote.createdAt} />}
       </main>
     </div>
   );
