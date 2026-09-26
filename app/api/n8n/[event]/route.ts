@@ -38,6 +38,12 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
     return Response.json({ error: "unsupported_media_type" }, { status: 415 });
   }
 
+  // Refuse a declared oversized body before reading it into memory; the real length is checked again below.
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    return Response.json({ error: "too_large" }, { status: 413 });
+  }
+
   // Raw text: the signature covers the exact bytes, JSON re-serialization would change them.
   const raw = await req.text();
   if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return Response.json({ error: "too_large" }, { status: 413 });
@@ -61,6 +67,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
     if (
       !body ||
       (body.event !== `${event}.completed` && body.event !== `${event}.failed`) ||
+      // data.status must agree with the event, or a ".failed" event could mark a quote ready
+      body.event !== `${event}.${body.data.status}` ||
       key !== `${body.data.jobId}:${body.event}`
     ) {
       await db.releaseCallbackKey(key);
@@ -92,6 +100,10 @@ async function handleQuoteCallback(body: CallbackBody): Promise<HandlerResult> {
     console.warn("n8n.callback", { event: body.event, correlationId, error: "quote_not_found" });
     return "applied";
   }
+
+  // The workflow copies x-correlation-id from our request into the signed body: a callback that carries
+  // another request's correlation id is not about this quote.
+  if (body.data.correlationId !== quote.correlationId) return "conflict";
 
   // A finished quote is never overwritten: a second or stale workflow run gets 409.
   const patch =
