@@ -91,6 +91,7 @@ const cases = [
   ["real-looking token in .env.example", { ...GOOD, ".env.example": ENV_OK.replace("change-me-webhook-token", "s3cr3t-live-token") }, { C7: "FAIL" }],
   ["Server Action awaits n8n without after()", { ...GOOD, "app/quotes/actions.ts": `"use server";\nimport { triggerN8nWebhook } from "@/lib/n8n/client";\nexport async function r() { await triggerN8nWebhook({ event: "q", data: {}, idempotencyKey: "k", correlationId: "c" }); return { status: "ok" }; }\n` }, { C8: "FAIL" }],
   ["callback reads req.json()", { ...GOOD, "app/api/n8n/[event]/route.ts": ROUTE_OK.replace("const raw = await req.text();", "const parsed = await req.json(); const raw = JSON.stringify(parsed);") }, { C9: "FAIL" }],
+  ["capped stream read counts as raw body", { ...GOOD, "app/api/n8n/[event]/route.ts": ROUTE_OK.replace("const raw = await req.text();", "const reader = req.body!.getReader(); const raw = await readCapped(reader);") }, { C9: "PASS" }],
   ["JSON.parse before the signature check", { ...GOOD, "app/api/n8n/[event]/route.ts": ROUTE_OK.replace("const raw = await req.text();", "const raw = await req.text();\n  const early = JSON.parse(raw);") }, { C9: "FAIL", C10: "PASS" }],
   ["signature compared with !==", { ...GOOD, "app/api/n8n/[event]/route.ts": ROUTE_OK.replace("signatureBuf.length !== expected.length || !crypto.timingSafeEqual(signatureBuf, expected)", 'req.headers.get("x-n8n-signature") !== expected.toString()') }, { C10: "FAIL" }],
   ["verification in an imported helper (lib/quote-callback.ts)", {

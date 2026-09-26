@@ -40,7 +40,7 @@ Route Handler — публічний HTTP-ендпоінт, тож довіря�
 | # | Крок | Відповідь |
 |---|---|---|
 | 1 | Подія зі шляху невідома → 404; **медіатип** (без параметрів) не `application/json` → 415. `application/json; charset=utf-8` — так, `application/jsonx` — ні (не `startsWith`!). **До** читання тіла | 404 / 415 |
-| 2 | `const raw = await req.text()` — тіло як сирий текст. Ні `req.json()`, ні `JSON.parse` до підпису: повторна серіалізація міняє байти | — |
+| 2 | Тіло як сирий текст — обмеженим читанням потоку (`readBodyLimited`), не `req.text()`: chunked-запит без `Content-Length` інакше прочитався б у пам'ять повністю. Ні `req.json()`, ні `JSON.parse` до підпису: повторна серіалізація міняє байти | — |
 | 3 | `Content-Length` > 64 КБ → 413 **ще до читання тіла**; після читання — ще раз за фактичною довжиною `raw` (колбек несе посилання, не файли) | 413 |
 | 4 | `x-n8n-timestamp` відрізняється від «зараз» більш ніж на **300 с** у будь-який бік → 401 (захист від replay) | 401 |
 | 5 | HMAC від `` `${timestamp}.${raw}` ``; порівняння: спершу довжини, потім `crypto.timingSafeEqual` (кидає на різних довжинах). **Не** `===`. Не збігається → 401 **без подробиць** | 401 |
@@ -81,8 +81,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
 
   const declared = Number(req.headers.get("content-length"));                                     // 3 (до читання)
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return Response.json({ error: "too_large" }, { status: 413 });
-  const raw = await req.text();                                                                   // 2
-  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return Response.json({ error: "too_large" }, { status: 413 }); // 3
+  const raw = await readBodyLimited(req, MAX_BODY_BYTES);                                         // 2 (сирі байти)
+  if (raw === null) return Response.json({ error: "too_large" }, { status: 413 });                // 3: chunked без Content-Length теж
 
   const ts = Number(req.headers.get("x-n8n-timestamp"));                                          // 4
   if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > WINDOW_SECONDS) return unauthorized();
@@ -118,6 +118,22 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
 }
 
 const unauthorized = () => Response.json({ error: "unauthorized" }, { status: 401 });
+
+// Тіло як текст, але не більше limit байтів: req.text() прочитав би в пам'ять усе, скільки б не надіслали.
+async function readBodyLimited(req: Request, limit: number): Promise<string | null> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) { await reader.cancel(); return null; }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 // Сире тіло → типізований колбек або null (не JSON, не та форма). Жодних винятків назовні.
 function parseCallback(raw: string): Callback | null {

@@ -272,7 +272,8 @@ check("C9", "callback reads the raw body; no .json()/JSON.parse before the signa
   for (const f of callbackRoutes) {
     const code = f.lines.map(codeOnly);
     code.forEach((l, i) => { if (/\b(req|request)\s*\.\s*json\s*\(/.test(l)) fail(f, i + 1, "request.json() — read await req.text() and verify first"); });
-    if (!code.some((l) => /\.\s*text\s*\(\s*\)/.test(l))) fail(f, 0, "body is not read as raw text (await req.text())");
+    // raw bytes: req.text(), req.arrayBuffer() or a capped stream read via req.body.getReader()
+    if (!code.some((l) => /\.\s*(text|arrayBuffer)\s*\(\s*\)|\.getReader\s*\(/.test(l))) fail(f, 0, "body is not read raw (req.text() / arrayBuffer() / body.getReader())");
     const verifyLine = code.findIndex((l) => /timingSafeEqual|\bverify\w*\s*\(|\bcheckSignature\w*\s*\(|\bisValidSignature\w*\s*\(/i.test(l));
     code.forEach((l, i) => {
       if (/JSON\.parse\s*\(/.test(l) && (verifyLine === -1 || i < verifyLine)) fail(f, i + 1, "JSON.parse before the signature is verified");
