@@ -23,3 +23,13 @@ export function StatsCards({ stats }: { stats: LeadStats }) {
     </div>
   );
 }
+
+export function StatsCardsSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-5" aria-hidden="true">
+      {Array.from({ length: 5 }, (_, i) => (
+        <div key={i} className="h-[74px] animate-pulse rounded-lg border border-slate-200 bg-white" />
+      ))}
+    </div>
+  );
+}
