@@ -249,29 +249,37 @@ POST без заголовка `Origin`, до коду прогонів не с�
       подією (`.completed` зі `status: "failed"` раніше приймався, тепер 400); колбек з **чужим** `correlationId` раніше
       «завершував» запит, що ще чекає, і справжній колбек потім отримував 409 — тепер 409 отримує чужий.
     Ці ж діри виправлено в шаблоні скіла (`8b34b4f`, `4ac1c1c`).
+  - `73379ce` — клієнт n8n ішов за перенаправленнями: на 3xx `fetch` повторював запит **разом з `x-n8n-token`** на хост із
+    `Location`, а чужий 202 застосунок вважав успіхом. Перевірено двійником n8n, що відповідає 307 на інший хост: до
+    виправлення той хост отримав токен, після — запит зупиняється на 307 (одна спроба, без повторів), кошторис отримує
+    «Не вдалося підготувати», інший хост не отримує жодного запиту. Те саме — у шаблоні скіла (`e8c9f90`).
+  - `d4479fe` — сторінка статусу опитувала сервер кожні 5 с безкінечно, якщо колбек не приходив. Тепер через 5 хвилин
+    (воркфлоу триває 40–90 с) опитування зупиняється з поясненням. Перевірено в Chrome на запиті, що чекає колбека: зі
+    звичайним годинником — 3 оновлення за 17 с і «Сторінка оновлюється сама.»; з годинником сторінки, зсунутим на 6 хвилин
+    уперед, — 0 оновлень і «Кошторис готується довше, ніж зазвичай…».
 - **Ключі контракту в `.env.example`:** `N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook`,
   `N8N_WEBHOOK_TOKEN=change-me-webhook-token`, `N8N_CALLBACK_SECRET=change-me-callback-secret`,
   `APP_BASE_URL=http://127.0.0.1:3000`; жодного `/webhook-test/`. У `.env.local` — ті самі ключі, секрети згенеровано
   `crypto.randomBytes(32)` прямо у файл, ніде не друкувались. `git ls-files ".env*"` → лише `.env.example`.
-- **`npm run lint`, `npm run build` на гілці:** без помилок (lint — код виходу 0 на `37aac6c`) (`/api/n8n/[event]`, `/quotes/[id]`, `/quotes/new` у збірці).
+- **`npm run lint`, `npm run build` на гілці:** без помилок (lint — код виходу 0 на `e8c9f90`) (`/api/n8n/[event]`, `/quotes/[id]`, `/quotes/new` у збірці).
 - **`check-contract.mjs` на фінальному коді:** `15 PASS, 0 FAIL, 0 N/A`, `exit=0` (повний вивід — у `docs/verification.md`).
 - **Сценарій «форма → колбек → `/quotes/<id>`» на гілці** (фінальний код, мок `respond-202 --delay 5000` з
   `tools/mock-n8n.mjs`):
 
   ```text
-  POST /webhook/quote-request -> 202 in 1 ms auth=ok idempotency=new | headers: accept,accept-language,cache-control,content-type,idempotency-key,pragma,user-agent,x-correlation-id,x-n8n-token | body 355 B sha256=58705036…
-  workflow 35439eec-… running for 5000 ms, then callback event=quote-request.completed
-  callback POST http://127.0.0.1:3000/api/n8n/quote-request -> 202 in 257 ms (try 1/3) event=quote-request.completed body 382 B sha256=70912455…
+  POST /webhook/quote-request -> 202 in 2 ms auth=ok idempotency=new | headers: accept,accept-language,cache-control,content-type,idempotency-key,pragma,user-agent,x-correlation-id,x-n8n-token | body 355 B sha256=228e9b36…
+  workflow 9614a20a-… running for 5000 ms, then callback event=quote-request.completed
+  callback POST http://127.0.0.1:3000/api/n8n/quote-request -> 202 in 247 ms (try 1/3) event=quote-request.completed body 382 B sha256=9bdaa038…
   ```
 
-  Форма відповіла за 220 мс (посилання `/quotes/q_bd244048-…`); сторінка: «Готуємо кошторис» → «Готово. Кошторис
+  Прогін на `e8c9f90`. Форма відповіла за 225 мс (посилання `/quotes/q_c2a0cecb-…`); сторінка: «Готуємо кошторис» → «Готово. Кошторис
   підготовлено.» + «Завантажити PDF». Журнал сервера — лише `n8n.webhook { …, status: 202, attempt: 1, ms: 16 }` і
   `n8n.callback { …, status: 'completed', bytes: 382 }`; даних з форми в ньому немає.
 - **Те саме в браузері з JavaScript** (Chrome 153 headless):
   - невалідна відправка (email «not-an-email», опис «коротко», вибраний бюджет) → `role="alert"` «Перевірте поля: email,
     опис задачі», `aria-invalid="true"` на email і описі, `aria-describedby` email веде на «Перевірте email»; назва
     компанії, опис і вибраний бюджет лишились у полях;
-  - валідна відправка → посилання на статус за 203 мс → сторінка статусу сама (автооновлення, без перезавантаження тестом)
+  - валідна відправка → посилання на статус за 204 мс → сторінка статусу сама (автооновлення, без перезавантаження тестом)
     перейшла в «Готово» з посиланням на PDF; помилок у консолі — 0.
 - **Форма ліда на гілці** проти мока `last-node` (2 с): 158 / 141 / 135 мс, у мока `POST /webhook/lead-created -> 200 in
   2001–2002 ms auth=ok idempotency=new … body 112 B` (на `main` — 2451 / 2402 / 2399 мс і `body 1010 B` без токена).
@@ -306,8 +314,8 @@ POST без заголовка `Origin`, до коду прогонів не с�
   0 failed, 20 passed (20 cases)
   ```
 
-  Прогін на `37aac6c`. Після матриці сторінка запиту показала «Готово» і `files.example.test/n8n/38b2a7dd-….pdf` — PDF саме
-  від задачі `valid` (`jobId 38b2a7dd-…`): ні колбек з чужим `correlationId`, ні колбек іншої задачі його не перезаписали. Та сама матриця на роуті до `5be2f89`: `FAIL  status-event-mismatch   expected 400  got 202`; `FAIL  wrong-correlation       expected 409  got 202`; `FAIL  valid                   expected 202  got 409`; `FAIL  repeat                  expected 200  got 409  duplicate=false` —
+  Прогін на `e8c9f90`. Після матриці сторінка запиту показала «Готово» і `files.example.test/n8n/f51c8ad3-….pdf` — PDF саме
+  від задачі `valid` (`jobId f51c8ad3-…`): ні колбек з чужим `correlationId`, ні колбек іншої задачі його не перезаписали. Та сама матриця на роуті до `5be2f89`: `FAIL  status-event-mismatch   expected 400  got 202`; `FAIL  wrong-correlation       expected 409  got 202`; `FAIL  valid                   expected 202  got 409`; `FAIL  repeat                  expected 200  got 409  duplicate=false` —
   `4 failed, 16 passed`: колбек з чужим correlation id «завершив» запит, і справжній (`valid`, `repeat`) уже отримав 409. На
   роуті до `08f5334` (перша розширена версія матриці, 18 випадків): `json-lookalike-type expected 415 got 202`,
   `other-job-same-request expected 409 got 202`.
