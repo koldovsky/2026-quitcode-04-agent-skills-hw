@@ -19,7 +19,7 @@
 |---|---|---|
 | `vercel-react-best-practices` | Project (`.claude/skills/vercel-react-best-practices/`) | Сесія сама визначила його як «завендорений сторонній», не власний скіл проєкту — за коммітом `5a201d9 skills: vendor vercel-react-best-practices pinned to agent-skills-063bee9` |
 | `building-client-form` | Project (`.claude/skills/building-client-form/`) | Спрацював на звичайний запит без згадки скіла в Task B — див. розділ Task B нижче |
-| `integrating-n8n-webhooks` | — | ще не створено (Task C) |
+| `integrating-n8n-webhooks` | Project (`.claude/skills/integrating-n8n-webhooks/`) | Створено в Task C, комітом `b1d587c`; окрему перевірку видимості у свіжій сесії не робили тут — саме її спрацювання на звичайний запит без згадки скіла і є прогін B у Task D |
 
 - Особисті скіли, які теж видно (`~/.claude/skills/`…), і чи можуть вони вплинути на перевірки:
   не перевірялось окремо на цьому кроці — буде перевірено перед прогонами Task D
@@ -109,31 +109,83 @@ app/, components/, lib/ за скілом vercel-react-best-practices. Для к
 Тут скіл лише пакують. Застосовує його агент у прогоні **B** (Task D) — доказ спрацювання, журнал
 мока й час відповіді форми — у `docs/ab-validation.md`.
 
-- Що лишили в `SKILL.md`, а що винесли в `references/` (і чому): <…>
-- Правила зупинки — перелік: <…>
-- SHA коміту зі скілом (BASE для Task D): <…>
-- Що скіл змінив у собі після прогонів (коміти й чому): <… або «нічого»>
+- Що лишили в `SKILL.md`, а що винесли в `references/`: `SKILL.md` (126 рядків) має лише
+  стиснутий контракт (env vars за назвою й призначенням без прикладів; заголовки й
+  конверт виклику одним абзацом; повний нумерований порядок обробки колбеку — бо саме
+  порядок і є найважливішим і найлегше зламати); повний текст «чому саме так»
+  (пояснення для кожного рішення — таймаут 10с, вікно 300с, HMAC замість `===`,
+  запис-до-відповіді тощо), таблиці режимів відповіді, покрокове налаштування n8n
+  словами, і розділ «відомі пастки документації» — все це в 5 файлах `references/`, по
+  одному на тему, з прямими посиланнями з `SKILL.md` (без ланцюжків файл→файл).
+- Правила зупинки — перелік:
+  1. Тестовий URL (`/webhook-test/`) з'являється деінде, крім тимчасово в `.env.local`.
+  2. Секрет (`N8N_WEBHOOK_TOKEN`/`N8N_CALLBACK_SECRET`) опиняється там, де міг би
+     потрапити в клієнтський код, query string чи журнал.
+  3. Задача вимагає синхронно чекати відповідь воркфлоу довше кількох секунд.
+  4. Незрозуміло, який шлях/подія — production, а який — тестовий/випадковий.
+  5. Задача просить змінити порядок обробки колбеку.
+- SHA коміту зі скілом (**BASE для Task D**): `b1d587c` (`skills: add
+  integrating-n8n-webhooks (contract, references, scripts)`) — фіча «запит на
+  кошторис» у гілці ще відсутня.
+- Що скіл змінив у собі після прогонів Task D: заповнюється після Task D.
 
-**`check-contract.mjs` на коді `main`** (id + PASS/FAIL, код виходу):
+**`check-contract.mjs` на коді `main`** (свіжий `git archive main` в `../leaddesk-main`):
 
 ```
-<вивід>
+[C1] no test webhook URL (/webhook-test/) outside .env.local: FAIL
+  .env.example:6 — test webhook URL (/webhook-test/) outside .env.local
+[C2] no NEXT_PUBLIC_-prefixed N8N_* variable: PASS
+[C3] n8n calls confined to lib/n8n/: FAIL
+  app/actions.ts:54 — call to n8n outside lib/n8n/ (should live in one server-only module)
+[C4] lib/n8n module starts with import "server-only": PASS (nothing to check yet — no matching file in this root)
+[C5] fetch() to n8n has AbortSignal.timeout(...): FAIL
+  app/actions.ts:54 — fetch() to n8n without AbortSignal.timeout(...)
+[C6] callback route reads raw body before JSON-parsing it: PASS (nothing to check yet — no matching file in this root)
+[C7] callback signature compared via crypto.timingSafeEqual: PASS (nothing to check yet — no matching file in this root)
+[C8] no secret/signature values in console logs: PASS
+
+3 FAIL(s)
+exit=1
 ```
 
-**За бажанням: що скрипт побачив на навмисно поганому коді** (яку перевірку ламали, що вона
-сказала). До рубрики це не входить, але бали знімає скрипт, який завжди PASS:
+3 реальні порушення (C1, C3, C5) — саме ті, що вже описані в Task 0 (тестовий URL у
+`.env.example`, прямий `fetch` в `app/actions.ts` без таймауту, поза окремим модулем).
+
+**Що скрипт побачив на навмисно поганому коді** (C2/C4/C6/C7/C8 на `main` нічого не
+знаходять, бо відповідного коду ще нема — перевірено на тимчасовому знімку поза
+репозиторієм, видаленому після перевірки):
 
 ```
-<вивід>
+[C1] no test webhook URL (/webhook-test/) outside .env.local: PASS
+[C2] no NEXT_PUBLIC_-prefixed N8N_* variable: FAIL
+  .env.example:1 — N8N_* variable with NEXT_PUBLIC_ prefix (ships to the client bundle)
+[C3] n8n calls confined to lib/n8n/: PASS
+[C4] lib/n8n module starts with import "server-only": FAIL
+  lib/n8n/client.ts:1 — lib/n8n module missing `import "server-only";` as its first line
+[C5] fetch() to n8n has AbortSignal.timeout(...): FAIL
+  lib/n8n/client.ts:5 — fetch() to n8n without AbortSignal.timeout(...)
+[C6] callback route reads raw body before JSON-parsing it: FAIL
+  app/api/n8n/[event]/route.ts:4 — body parsed as JSON before the signature is verified (re-serialization breaks the HMAC)
+[C7] callback signature compared via crypto.timingSafeEqual: FAIL
+  app/api/n8n/[event]/route.ts:5 — signature compared without crypto.timingSafeEqual
+[C8] no secret/signature values in console logs: FAIL
+  lib/n8n/client.ts:4 — console.* call appears to log a secret/signature identifier
+
+6 FAIL(s)
+exit=1
 ```
 
-**`check-contract.mjs` на фінальному коді** (після перенесення прогону B — 0 FAIL):
+Усі 8 перевірок (C1–C8) підтверджено як такі, що справді щось знаходять — 3 на `main`,
+решта 5 на навмисно поганому знімку.
 
-```
-<вивід>
-```
+**`check-contract.mjs` на фінальному коді:** заповнюється після Task D (вимога — 0 FAIL
+без прапорця `--changed-since`, на всьому коді).
 
-**Додатково (за бажанням):** матриця колбеків (`send-signed-callback.mjs`): випадок → очікуваний код → отриманий код.
+**Бонус, реалізовано:** `--changed-since <git-ref>` — фільтрує файли на рівні файлів (не
+рядків) за `git diff --name-only` + `git ls-files --others --exclude-standard`; перевірено
+на `--changed-since HEAD~3` в цьому репозиторії — коректно звузило скан до змінених
+файлів. `send-signed-callback.mjs` (матриця колбеків) — не реалізовано, поза межами
+Task C.
 
 ## Task E3 (бонус) — ті самі скіли в Cursor
 
