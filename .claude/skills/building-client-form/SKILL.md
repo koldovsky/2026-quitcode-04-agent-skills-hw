@@ -43,12 +43,13 @@ metadata:
 ```ts
 "use server";
 export async function addNote(_prev: NoteFormState, formData: FormData): Promise<NoteFormState> {
+  const values = { text: String(formData.get("text") ?? "").slice(0, 2000) }; // повертаємо за будь-якої невдачі
   const user = await getSessionUser();                 // 1. сесія — ВСЕРЕДИНІ дії
-  if (!user) return { status: "unauthorized" };
+  if (!user) return { status: "unauthorized", values };
   const parsed = parseNoteForm(formData);              // 2. валідація на сервері (клієнту не довіряємо)
   if (!parsed.ok) return { status: "invalid", errors: parsed.errors, values: parsed.values };
   const lead = await db.getLead(parsed.data.leadId);   // 3. права: запис належить workspace користувача
-  if (!lead || lead.workspaceId !== user.workspaceId) return { status: "not_found" };
+  if (!lead || lead.workspaceId !== user.workspaceId) return { status: "not_found", values };
   await db.appendNote(lead.id, parsed.data.text);      // 4. критичний запис — ДО відповіді
   after(() => logAudit("note.added", lead.id));        // 5. повільне й необов'язкове — в after()
   revalidatePath(`/dashboard/leads/${lead.id}`);
@@ -64,7 +65,7 @@ export async function addNote(_prev: NoteFormState, formData: FormData): Promise
   Server Actions виконуються по одній на клієнта — довга дія блокує наступну дію того ж користувача.
 - Крок 6 — правило `server-serialization`: повертаємо `{ status, errors?, values?, id? }`, а **не**
   рядок з бази (там IP, user agent, внутрішні нотатки). Тип стану — дискримінований union за `status`.
-- Помилки інфраструктури ловимо й повертаємо `{ status: "error" }` без подробиць (стек, SQL, URL).
+- Помилки інфраструктури ловимо й повертаємо `{ status: "error", values }` без подробиць (стек, SQL, URL).
 
 ### 2. Клієнтська форма
 
@@ -72,7 +73,7 @@ export async function addNote(_prev: NoteFormState, formData: FormData): Promise
 "use client";
 const [state, formAction, pending] = useActionState(addNote, { status: "idle" });
 const errors = state.status === "invalid" ? state.errors : {};
-const values = state.status === "invalid" ? state.values : {};
+const values = "values" in state ? state.values : {};   // не лише для "invalid"
 // <form action={formAction} noValidate> — працює й без JavaScript (progressive enhancement)
 ```
 

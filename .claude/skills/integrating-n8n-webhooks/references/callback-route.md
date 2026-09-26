@@ -106,7 +106,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
       await releaseIdempotencyKey(key);
       return Response.json({ error: "conflict" }, { status: 409 });
     }
-    console.info("n8n.callback", { event: body.event, correlationId: body.data.correlationId, bytes: raw.length });
+    const { correlationId } = body.data;                                                          // лог — похідні значення (C14)
+    console.info("n8n.callback", { event: body.event, correlationId, bytes: raw.length });
     after(() => { /* листи, сповіщення */ });                                                     // 10
     return Response.json({ ok: true }, { status: 202 });                                          // 9
   } catch {
