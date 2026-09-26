@@ -130,10 +130,28 @@ for (const f of files) {
 }
 const n8nFiles = [...new Set(callSites.map((s) => s.file))];
 const callbackRoutes = files.filter(isCallbackRoute);
-// Helpers imported by callback routes from lib/n8n/* also count as callback code.
-const callbackHelpers = files.filter(
-  (f) => /(^|\/)lib\/n8n\//.test(f.path) && f !== clientFile && /timingSafeEqual|x-n8n-signature|createHmac/.test(f.text),
-);
+// Callback code also includes helpers: lib/n8n/* verification modules and any module a callback
+// route imports ("@/…" or relative) that does the crypto — agents often move it to lib/<something>.ts.
+const byPath = new Map(files.map((f) => [f.path, f]));
+function importedFiles(f) {
+  const out = [];
+  for (const m of f.text.matchAll(/from\s+["']([^"']+)["']/g)) {
+    const spec = m[1];
+    let base;
+    if (spec.startsWith("@/")) base = spec.slice(2);
+    else if (spec.startsWith(".")) base = path.posix.normalize(path.posix.join(path.posix.dirname(f.path), spec));
+    else continue;
+    for (const cand of [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.mjs`, `${base}/index.ts`, `src/${base}.ts`]) {
+      if (byPath.has(cand)) { out.push(byPath.get(cand)); break; }
+    }
+  }
+  return out;
+}
+const CRYPTO = /timingSafeEqual|x-n8n-signature|createHmac/;
+const callbackHelpers = [
+  ...files.filter((f) => /(^|\/)lib\/n8n\//.test(f.path) && f !== clientFile && CRYPTO.test(f.text)),
+  ...files.filter(isCallbackRoute).flatMap(importedFiles).filter((f) => f !== clientFile && CRYPTO.test(f.text)),
+];
 const callbackCode = [...new Set([...callbackRoutes, ...callbackHelpers])];
 
 // ---------------------------------------------------------------- checks

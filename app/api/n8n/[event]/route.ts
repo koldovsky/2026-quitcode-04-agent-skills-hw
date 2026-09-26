@@ -70,7 +70,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
     // Saved before responding: after a 2xx n8n will not retry.
     if ((await handler(body)) === "conflict") {
       await db.releaseCallbackKey(key);
-      console.warn("n8n.callback", { event: body.event, correlationId: body.data.correlationId, error: "conflict" });
+      const { correlationId } = body.data;
+      console.warn("n8n.callback", { event: body.event, correlationId, error: "conflict" });
       return Response.json({ error: "conflict" }, { status: 409 });
     }
     const { correlationId, status } = body.data;
