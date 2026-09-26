@@ -41,7 +41,7 @@ docs, google-workspace, import-memory, morning, skill-creator). Жоден не 
 | RSC-відповідь `/dashboard` | 315 197 Б | 31 933 Б | `server-serialization` |
 | Початковий JS `/dashboard` | 10 чанків, 1828 КБ / 526 КБ gzip | 9 чанків, 573 КБ / 178 КБ gzip | `bundle-conditional`, `bundle-dynamic-imports` |
 | Де exceljs і recharts | обидва в одному чанку на 1266 КБ, який HTML вантажить одразу | exceljs (909 КБ) і recharts (350 КБ) — окремі чанки, вантажаться лише за кліком | те саме |
-| Форма ліда проти мока n8n (`last-node`, воркфлоу 2 с), 3 відправки | 2451 / 2402 / 2399 мс | 158 / 141 / 135 мс | `server-after-nonblocking` |
+| Форма ліда проти мока n8n (`last-node`, воркфлоу 2 с), 3 відправки | 2451 / 2402 / 2399 мс | 158 / 141 / 135 мс | `server-after-nonblocking`: виклик n8n в `after()` — `54c14bc` (перенесено з прогону B1, ≈ 2 с), запис аудиту в `after()` — `a4d9712` (≈ 250 мс) |
 | `updateLeadStatus` напряму на лід чужого workspace: підроблена cookie / користувач іншого workspace | HTTP 200, статус змінено / HTTP 200, змінено | HTTP 500, не змінено / HTTP 500, не змінено | `server-auth-actions` |
 
 **Як міряли.** Один Node-скрипт на обох гілках (на `main` — `git checkout main`, та сама машина, одразу одне за одним):
@@ -178,6 +178,11 @@ Studio Nova; 175 — у прогоні, де перед тим у тому са�
 - `ec23819` — самотест `test-check-contract.mjs`: проти скрипта з BASE він падає рівно на трьох випадках, виправлених у
   `85bd2c8` (коментар у `.env.example`, вигадане ім'я `N8N_*`) і `1b6ae91` (перевірка в імпортованому модулі); проти
   поточного — 17/17.
+- `4e4fce5` — після рев'ю CodeRabbit кожна знахідка `check-contract.mjs` має `файл:рядок`: знахідки «на рівні файлу»
+  (немає заголовка, ключа в `.env.example`, перевірки часу) прив'язано до рядка, де треба правити (обробник `POST`,
+  `createHmac`, виклик `fetch`) або до рядка 1. Самотест тепер перевіряє саму вимогу — попередня версія скрипта падає на
+  ній у 5 випадках — і знаходить скрипт через `fileURLToPath` (працює на Windows і в шляхах із пробілами).
+- `70c0a30` — шаблон колбек-роуту відповідає 400 (а не 500) на тіло, що не є JSON, і на порожній `idempotency-key`.
 - `e8c9f90` — шаблон клієнта n8n не йде за перенаправленнями (`redirect: "manual"`): інакше `fetch` пересилає
   `x-n8n-token` на хост із `Location` (знайдено й перевірено на коді фічі, `73379ce`).
 - `37aac6c` — приклади коду в скілах приведено до тексту: дія у `building-client-form` повертає `values` за будь-якої
@@ -201,10 +206,10 @@ C5   FAIL  every fetch() to n8n has a timeout signal
       app/actions.ts:54  fetch() without signal: AbortSignal.timeout(10_000)
 C6   N/A   n8n client sends x-n8n-token, idempotency-key, x-correlation-id
 C7   FAIL  .env.example lists the contract keys with safe values
-      .env.example  missing N8N_WEBHOOK_BASE_URL
-      .env.example  missing N8N_WEBHOOK_TOKEN
-      .env.example  missing N8N_CALLBACK_SECRET
-      .env.example  missing APP_BASE_URL
+      .env.example:1  missing N8N_WEBHOOK_BASE_URL
+      .env.example:1  missing N8N_WEBHOOK_TOKEN
+      .env.example:1  missing N8N_CALLBACK_SECRET
+      .env.example:1  missing APP_BASE_URL
       .env.example:6  legacy N8N_WEBHOOK_URL — use N8N_WEBHOOK_BASE_URL + event path
 C8   FAIL  Server Actions do not wait for n8n (call runs inside after())
       app/actions.ts:54  Server Action reaches n8n without after(): the user waits for the webhook

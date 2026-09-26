@@ -91,20 +91,20 @@ C4   FAIL  lib/n8n/client.ts exists and starts with import "server-only"
 C5   PASS  every fetch() to n8n has a timeout signal
 C6   N/A   n8n client sends x-n8n-token, idempotency-key, x-correlation-id
 C7   FAIL  .env.example lists the contract keys with safe values
-      .env.example  missing N8N_WEBHOOK_BASE_URL
-      .env.example  missing N8N_WEBHOOK_TOKEN
-      .env.example  missing N8N_CALLBACK_SECRET
-      .env.example  missing APP_BASE_URL
+      .env.example:1  missing N8N_WEBHOOK_BASE_URL
+      .env.example:1  missing N8N_WEBHOOK_TOKEN
+      .env.example:1  missing N8N_CALLBACK_SECRET
+      .env.example:1  missing APP_BASE_URL
 C8   PASS  Server Actions do not wait for n8n (call runs inside after())
 C9   FAIL  callback reads the raw body; no .json()/JSON.parse before the signature check
       app/api/quotes/[id]/callback/route.ts:35  request.json() — read await req.text() and verify first
-      app/api/quotes/[id]/callback/route.ts  body is not read as raw text (await req.text())
+      app/api/quotes/[id]/callback/route.ts:28  body is not read as raw text (await req.text())
 C10  PASS  callback signature compared with crypto.timingSafeEqual, not ===
 C11  FAIL  callback rejects x-n8n-timestamp outside a 300 s window
-      app/api/quotes/[id]/callback/route.ts  x-n8n-timestamp is never read
+      app/api/quotes/[id]/callback/route.ts:28  x-n8n-timestamp is never read
 C12  FAIL  callback deduplicates by idempotency-key
-      app/api/quotes/[id]/callback/route.ts  idempotency-key header is never read
-      app/api/quotes/[id]/callback/route.ts  no {"duplicate": true} response for a repeated key
+      app/api/quotes/[id]/callback/route.ts:28  idempotency-key header is never read
+      app/api/quotes/[id]/callback/route.ts:28  no {"duplicate": true} response for a repeated key
 C13  PASS  no runtime = "edge"
 C14  PASS  n8n code does not log bodies, headers, secrets or personal data
 C15  FAIL  request body is the envelope {version, event, data}, not a whole DB row
@@ -148,8 +148,9 @@ A2 і A3 — ті самі id на своїх рядках (`app/quotes/new/acti
   дописали `docs/n8n-integrations.md` (реєстр інтеграцій зі скіла).
 - **Відмінності між B:** B1 і B2 переробили й старий `lead-created` на той самий клієнт (контракт вимагає одного модуля) і
   попередили у відповіді, що воркфлоу лідів клієнта треба оновити; B3 старий виклик не чіпав (його код чистий, але на всьому
-  проєкті лишились 6 FAIL базової лінії). B1 і B3 шлють у n8n мінімум без email; **B2 передає email** у `data` обох подій
-  (скіл каже «мінімум для воркфлоу», але не забороняє email явно — див. висновок). B2 **без JavaScript** не веде на сторінку
+  проєкті лишились 6 FAIL базової лінії). B1 і B3 шлють у n8n мінімум без контактів клієнта; **B2 передає контакти**: у `lead-created` —
+  `fullName`, `email`, `phone`, `website`, `message`, `consentMarketing` (плюс `company`, `budget`, `source`), у `quote-request` —
+  `email` і `description` (скіл казав «мінімум для воркфлоу», але не забороняв контакти явно — див. висновок). B2 **без JavaScript** не веде на сторінку
   статусу: після відправки — «Запит прийнято. Відкриваємо сторінку статусу…», а перехід робить лише `router.push` у
   `useEffect`; з JS — працює. У B1 і B3 відповідь форми містить посилання на статус.
 - **`npm run lint` / `npm run build`** на коді кожного прогону: зелені в усіх трьох.
@@ -221,7 +222,7 @@ POST без заголовка `Origin`, до коду прогонів не с�
 | Колбек | немає в жодному (воркфлоу не запустився); схема колбека несумісна з n8n команди | `202` з першої спроби в усіх |
 | Результат для користувача | «не вдалося» у всіх трьох | «Готово» + PDF у всіх трьох |
 | Час відповіді форми | 173 / 329 / 268 мс (A2 і A3 чекають вебхук у дії) | 233 / 235 / 222 мс |
-| Email клієнта в n8n | так / так / так | ні / так / ні |
+| Контакти клієнта в n8n | email / email / email (у `quote-request`) | ні / так (`lead-created`: ім'я, email, телефон, сайт, повідомлення, згода на розсилку; `quote-request`: email, опис) / ні |
 | Тіла чи персональні дані в журналі сервера | немає | немає |
 | Старий `lead-created` за контрактом | ні / ні / ні | так / так / ні |
 | Змінених файлів | 11 (+508/−1) / 11 (+561/−1) / 11 (+494/−1) | 13 (+699/−13) / 14 (+732/−12) / 13 (+729/−1) |
