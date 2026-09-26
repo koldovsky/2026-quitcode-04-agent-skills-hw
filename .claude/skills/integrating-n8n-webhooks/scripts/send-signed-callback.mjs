@@ -7,13 +7,15 @@ import crypto from "node:crypto";
 const HELP = `send-signed-callback.mjs — callback matrix against a running Next.js callback route
 
 Usage:
-  node --env-file=.env.local send-signed-callback.mjs --url <callback url> [--request-key <key>] [--job-id <id>] [--only <case>]
+  node --env-file=.env.local send-signed-callback.mjs --url <callback url> [--request-key <key> --correlation-id <id>] [--job-id <id>] [--only <case>]
 
   --url <url>           Callback route, e.g. http://127.0.0.1:3000/api/n8n/quote-request
   --request-key <key>   idempotency-key the app sent to n8n for a request that is still WAITING for
                         its callback (data.requestIdempotencyKey). With it, "valid" completes that
                         request and "other-job-same-request" is checked; without it they use a
                         random key (an unknown request) and "other-job-same-request" is skipped.
+  --correlation-id <id> x-correlation-id the app sent with that request (the workflow copies it into
+                        data.correlationId); needed together with --request-key.
   --job-id <id>         data.jobId (default: random UUID), e.g. the job id from the mock log.
   --only <case>         Run one case (names below).
   -h, --help            Show this help.
@@ -34,7 +36,9 @@ Cases (expected status per the contract), in this order:
   non-numeric-timestamp   x-n8n-timestamp is not unix seconds                 -> 401
   reformatted-body        signed compact JSON, sent pretty-printed            -> 401
   malformed-json          valid signature over a body that is not JSON        -> 400
+  status-event-mismatch   event ".completed" with data.status "failed"        -> 400
   unknown-event           valid signature, event the app does not handle      -> 404
+  wrong-correlation       waiting request, signed, another correlation id   -> 409 (needs --request-key)
   valid                   fresh, correctly signed callback                    -> 202
   repeat                  same bytes + same idempotency-key again             -> 200 {"duplicate":true}
   replay-new-key          bytes of "valid" replayed under a new key           -> 400
@@ -43,12 +47,13 @@ Exit code: 0 — every case matched, 1 — a mismatch, 2 — usage error.
 `;
 
 const args = process.argv.slice(2);
-let url = null, jobId = crypto.randomUUID(), requestKey = null, only = null;
+let url = null, jobId = crypto.randomUUID(), requestKey = null, corrArg = null, only = null;
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "-h" || args[i] === "--help") { process.stdout.write(HELP); process.exit(0); }
   else if (args[i] === "--url") url = args[++i];
   else if (args[i] === "--job-id") jobId = args[++i];
   else if (args[i] === "--request-key") requestKey = args[++i];
+  else if (args[i] === "--correlation-id") corrArg = args[++i];
   else if (args[i] === "--only") only = args[++i];
   else { console.error(`Unknown argument: ${args[i]}`); process.exit(2); }
 }
@@ -57,18 +62,18 @@ if (!url || !secret) { console.error(!url ? "--url is required" : "N8N_CALLBACK_
 
 const pathEvent = new URL(url).pathname.split("/").filter(Boolean).pop();
 const event = `${pathEvent}.completed`;
-const correlationId = crypto.randomUUID();
+const correlationId = corrArg ?? crypto.randomUUID();
 const now = () => Math.floor(Date.now() / 1000);
 const sign = (ts, raw, key = secret) => "sha256=" + crypto.createHmac("sha256", key).update(`${ts}.${raw}`).digest("hex");
 
-function makeBody({ job = jobId, reqKey = requestKey ?? crypto.randomUUID(), extra = {} } = {}) {
+function makeBody({ job = jobId, reqKey = requestKey ?? crypto.randomUUID(), corr = correlationId, status = "completed", extra = {} } = {}) {
   return JSON.stringify({
     version: 1,
     event,
     data: {
       jobId: job,
-      status: "completed",
-      correlationId,
+      status,
+      correlationId: corr,
       requestIdempotencyKey: reqKey,
       result: { documentUrl: `https://files.example.test/n8n/${job}.pdf` },
       completedAt: new Date().toISOString(),
@@ -120,7 +125,9 @@ const cases = [
   ["non-numeric-timestamp", 401, neg((ts, raw) => ({ "x-n8n-timestamp": "yesterday", "x-n8n-signature": sign("yesterday", raw) }))],
   ["reformatted-body", 401, () => { const job = crypto.randomUUID(); const raw = makeBody({ job, reqKey: crypto.randomUUID() }); const ts = now(); return send(url, JSON.stringify(JSON.parse(raw), null, 2), headersFor(ts, raw, {}, job)); }],
   ["malformed-json", 400, () => { const job = crypto.randomUUID(); const raw = "{not json"; const ts = now(); return send(url, raw, headersFor(ts, raw, {}, job)); }],
+  ["status-event-mismatch", 400, neg({}, { status: "failed" })],
   ["unknown-event", 404, () => { const raw = makeBody({ reqKey: crypto.randomUUID() }); const ts = now(); return send(url.replace(/[^/]+$/, "no-such-event"), raw, headersFor(ts, raw)); }],
+  ["wrong-correlation", 409, () => { const job = crypto.randomUUID(); const raw = makeBody({ job, corr: crypto.randomUUID() }); const ts = now(); return send(url, raw, headersFor(ts, raw, {}, job)); }, null, () => Boolean(requestKey)],
   ["valid", 202, () => send(url, validRaw, headersFor(validTs, validRaw))],
   ["repeat", 200, () => send(url, validRaw, headersFor(validTs, validRaw)), (r) => r.duplicate],
   ["replay-new-key", 400, () => send(url, validRaw, headersFor(validTs, validRaw, { "idempotency-key": `${crypto.randomUUID()}:${event}` }))],

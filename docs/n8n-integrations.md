@@ -5,8 +5,8 @@
 
 | event | напрям | шлях n8n | режим | власник |
 |---|---|---|---|---|
-| `lead-created` | Next.js → n8n | `/webhook/lead-created` | Immediately (подія «до відома») | _вказати_ |
-| `quote-request` | Next.js → n8n → колбек | `/webhook/quote-request` | Respond to Webhook 202 + колбек `/api/n8n/quote-request` | _вказати_ |
+| `lead-created` | Next.js → n8n | `/webhook/lead-created` | Immediately (подія «до відома») | Vitalii Semerenko (розробка Studio Nova) |
+| `quote-request` | Next.js → n8n → колбек | `/webhook/quote-request` | Respond to Webhook 202 + колбек `/api/n8n/quote-request` | Vitalii Semerenko (розробка Studio Nova) |
 
 ## Що передаємо
 
