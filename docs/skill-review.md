@@ -3,6 +3,9 @@
 > Рев'ю зроблено **до** встановлення (коміт з цим файлом іде раніше за коміт зі скілом — див. `git log`).
 > Файли скіла читали як дані: нічого з них не виконували, теку клону як проєкт в агенті не відкривали.
 
+> Рев'ю закомічено до встановлення (`3bf7c92` → `114c423`). Пізніші доповнення позначено в тексті: дати аудитів з API
+> (розділ 3), рядки про `lodash` і `async-suspense-boundaries` (розділ 5), рядок про запуск установки (розділ 6).
+
 **Дата, інструмент, ОС:** 26.09.2026 · Claude Code 2.1.283 (Opus 5.5) · macOS (Darwin 24.6) + zsh · Node 22.20.0
 
 ## Що рев'юємо
@@ -52,18 +55,30 @@
 
 | Аудит | Результат | Дата аналізу |
 |---|---|---|
-| Gen (Agent Trust Hub) | Pass | не вказана |
-| Socket | Pass | не вказана |
-| Snyk | Pass | не вказана |
+| Gen (Agent Trust Hub) | safe | 14.09.2026 |
+| Socket | safe, 0 alerts, score 90 | 14.09.2026 |
+| Snyk | low | 14.09.2026 |
+| ZeroLeaks (CLI його не показує) | safe, score 93 | 15.04.2026 |
 
-- Де взяли: сторінка <https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices> (26.09.2026). Там же:
-  744,7K встановлень, 31,5K зірок репозиторію, «First Seen: Jan 19, 2026».
-- Чому не з CLI: з `DISABLE_TELEMETRY=1` CLI аудитів не завантажує взагалі; а коли CLI запускає агентська
-  сесія, він сам вмикає `--yes` і встановлює, не чекаючи підтвердження, — блок аудитів уже нічого не
-  зупиняє. Тож у цій сесії CLI використовували лише для `--list` (нічого не встановлює), аудити читали на skills.sh.
-- До чого прив'язаний аудит: на сторінці немає ні тега, ні SHA — аудит прив'язаний до пари «репозиторій + назва
-  скіла», тобто, найімовірніше, до поточного `main`, а не до нашого тега. Тому аудит — додатковий сигнал, а
-  основна перевірка — власний розбір закріпленої версії (розділ 2).
+- Де взяли: сторінка <https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices> (там три «Pass»,
+  744,7K встановлень, 31,5K зірок, «First Seen: Jan 19, 2026») і те саме джерело, з якого їх бере CLI:
+  `GET https://add-skill.vercel.sh/audit?source=vercel-labs/agent-skills&skills=vercel-react-best-practices` —
+  звідти результати з датами в таблиці (запит до API зроблено вже після встановлення, щоб доповнити таблицю датами;
+  вердикт від цього не змінився). Відповідь API (26.09.2026):
+  ```json
+  {"vercel-react-best-practices":{"ath":{"risk":"safe","analyzedAt":"2026-09-14T22:49:16.273Z"},
+   "socket":{"risk":"safe","alerts":0,"score":90,"analyzedAt":"2026-09-14T22:49:08.557Z"},
+   "snyk":{"risk":"low","analyzedAt":"2026-09-14T22:48:36.079185+00:00"},
+   "zeroleaks":{"risk":"safe","score":93,"analyzedAt":"2026-04-15T21:06:36.168Z"}}}
+  ```
+- Чому CLI блок «Security Risk Assessments» не показав — видно в коді `skills@1.7.0` (`dist/cli.mjs`):
+  1. `fetchAuditData()` починається з `if (!isEnabled()) return null`, а `isEnabled()` — це
+     `!process.env.DISABLE_TELEMETRY && !process.env.DO_NOT_TRACK`: з `DISABLE_TELEMETRY=1` аудити не завантажуються;
+  2. якщо `detectAgent()` бачить агентську сесію (Claude Code, Cursor), CLI ставить `options.yes = true` і питання
+     «Proceed with installation?» не буде — навіть показаний блок нічого б не зупинив.
+- До чого прив'язаний аудит: ні в API, ні на сторінці немає тега чи SHA — лише пара «репозиторій + назва скіла»,
+  тобто це не аудит нашого тега. Тому він — додатковий сигнал, а основна перевірка — власний розбір закріпленої
+  версії (розділ 2).
 
 ## 4. Ліцензія й походження
 
@@ -79,12 +94,13 @@
 
 | Порада скіла (id) | Що каже скіл | Що каже документація нашої версії | Висновок |
 |---|---|---|---|
-| `async-parallel` | Незалежні `await` — через `Promise.all()` | `01-getting-started/06-fetching-data.md` → «Parallel data fetching»: саме `Promise.all`; примітка — одна помилка валить усе (`allSettled`) | ✅ Застосовуємо в `app/dashboard/page.tsx` |
+| `async-parallel` | Незалежні `await` — через `Promise.all()` | `01-getting-started/06-fetching-data.md` → «Parallel data fetching»: саме `Promise.all`; примітка — одна помилка валить усе (`allSettled`) | ✅ Застосовано в `app/dashboard/page.tsx` (`448bee5`); згодом `Promise.all` замінили сусідні межі `<Suspense>` (`872ddaa`) — запити так само стартують одночасно |
 | `server-cache-react` | `React.cache()` для дедуплікації запитів до БД/автентифікації в межах одного запиту; не передавати inline-об'єкти як аргументи | Той самий файл: `import { cache } from 'react'` + `getUser = cache(async (id) => …)` | ✅ Застосовуємо до `getCurrentUser`. Заразом бачимо, що наш `getWorkspace({ slug })` — рівно той антипатерн «inline object → завжди cache miss», про який попереджає правило |
 | `server-serialization` | У Client Component передавати лише потрібні поля | `02-guides/data-security.md` радить DTO — повертати клієнту мінімум | ✅ Застосовуємо до `LeadsTable` (отримує весь `Lead` з `rawPayload`, IP, user agent, нотатками) |
-| `bundle-barrel-imports` | Додати бібліотеки в `experimental.optimizePackageImports` | `03-api-reference/05-config/01-next-config-js/optimizePackageImports.md`: опція досі `experimental`, але `recharts` і `lodash-es` оптимізуються **за замовчуванням**, додавати їх не треба. Наш `lodash` (CommonJS, не `-es`) у списку немає | ⚠️ Для `recharts` порада зайва; для `lodash` — простіше імпортувати `lodash/debounce` або обійтись без lodash |
+| `bundle-barrel-imports` | Додати бібліотеки в `experimental.optimizePackageImports` | `03-api-reference/05-config/01-next-config-js/optimizePackageImports.md`: опція досі `experimental`, але `recharts` і `lodash-es` оптимізуються **за замовчуванням**, додавати їх не треба. Наш `lodash` (CommonJS, не `-es`) у списку немає | ⚠️ Для `recharts` порада зайва. Для `lodash` (доповнено після встановлення) перевірили збірку: чанк пошуку (`import { debounce } from "lodash"`) важить 12 КБ і містить лише `debounce`, маркерів повного lodash (`__lodash_hash_undefined__`, `templateSettings`) у початкових чанках немає — не застосовуємо |
 | `bundle-dynamic-imports` | `next/dynamic(..., { ssr: false })` | `02-guides/lazy-loading.md:94`: «`ssr: false` is not allowed with `next/dynamic` in Server Components» — помилка збірки | ⚠️ Лише в Client Component. Для exceljs на кліку простіше `await import('exceljs')` (`bundle-conditional`) |
-| `server-after-nonblocking` | `after()` для логування/аналітики | `03-api-reference/04-functions/after.md` — працює в Server Actions і Route Handlers | ✅ Використовуємо в скілах B і C; у фічі — через перенесення прогону B |
+| `async-suspense-boundaries` | Не чекати дані перед усією розміткою — обгорнути повільний компонент у `<Suspense>` і стрімити | `01-getting-started/06-fetching-data.md` → «With `<Suspense>`»: частини сторінки поза межею віддаються одразу, решта стрімиться; `loading.js` — те саме для сегмента | ✅ (доповнено після встановлення) Застосовано в `872ddaa`: статистика (1,2 с), тулбар і таблиця дашборду — кожна у своїй межі |
+| `server-after-nonblocking` | `after()` для логування/аналітики | `03-api-reference/04-functions/after.md` — працює в Server Actions і Route Handlers | ✅ Використовуємо в скілах B і C; у фічі — виклик n8n в `after()` з прогону B, запис аудиту `lead.created` перенесено в `after()` окремо (`a4d9712`) |
 
 Що саме застосували і з якими числами — `docs/verification.md`, розділ Task A.
 
@@ -95,7 +111,8 @@
   DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 \
     --skill vercel-react-best-practices -a claude-code --copy
   ```
-  (Project scope; без `cursor` в `-a`, бо Cursor і так читає `.claude/skills/`.)
+  (Project scope; без `cursor` в `-a`, бо Cursor і так читає `.claude/skills/`.) Запускав уже після коміту з цим
+  рев'ю; CLI відпрацював без питань (див. розділ 3 — `--yes`), тож аудити звірено окремо, не з його виводу.
 - Де лягли файли: `.claude/skills/vercel-react-best-practices/` — **справжні файли** (`--copy`), 75 штук, без `.agents/`.
 - Що потрапило в git: тека скіла + `skills-lock.json` (джерело, тег, хеш).
 - Як оновлювати: та сама команда з новим тегом → `git diff .claude/skills/vercel-react-best-practices` →

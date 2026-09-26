@@ -125,7 +125,7 @@ const unauthorized = () => Response.json({ error: "unauthorized" }, { status: 40
 
 ```bash
 node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-signed-callback.mjs \
-  --url http://127.0.0.1:3000/api/n8n/quote-request --job-id <jobId реального запиту>
+  --url http://127.0.0.1:3000/api/n8n/quote-request --request-key <idempotency-key запиту, що чекає колбека>
 ```
 
 `--request-key` — `idempotency-key`, з яким застосунок викликав n8n для запиту, що ще **чекає** колбека

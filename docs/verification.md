@@ -1,134 +1,174 @@
 # Перевірка (Task A–C)
 
-> Прогони A/B і фіча «запит на кошторис» — в окремому звіті [`docs/ab-validation.md`](ab-validation.md) (Task D).
+> Прогони A/B і фіча «запит на кошторис» — у [`docs/ab-validation.md`](ab-validation.md) (Task D).
+> Бонус E2 — у [`docs/trigger-evals.md`](trigger-evals.md).
 
-- **Інструмент і версія, модель:** Claude Code 2.1.283 · Opus 5.5 (`claude-opus-5-5[1m]`)
-- **ОС і термінал, Node:** macOS (Darwin 24.6) · zsh · Node 22.20.0
+- **Інструмент і модель:** Claude Code 2.1.283, `claude-opus-5-5`
+- **ОС, Node:** macOS (Darwin 24.6), zsh, Node 22.20.0; Next.js 16.3.5. Усі заміри — продакшн-збірка
+  (`npm run build && npm start`), браузер — Google Chrome 153 (headless, через DevTools-протокол).
 
 ## Скіли видно у свіжій сесії
 
-- Як перевіряли: `claude -p "/context"` з кореня репозиторію (нова сесія) → розділ Skills.
+`claude -p "/context"` з кореня репозиторію, розділ Skills:
 
-| Skill | Звідки (Project / Personal / вбудований) | Примітка |
+| Skill | Source | Токенів в описі |
 |---|---|---|
-| `vercel-react-best-practices` | Project | ~120 токенів опису; видно одразу після встановлення (коміт `6ed80cc`) |
-| `building-client-form` | Project | спрацював на звичайний запит (Task B нижче) |
-| `integrating-n8n-webhooks` | Project | у копії B (Task D) — єдиний проєктний скіл, ~300 токенів |
+| `building-client-form` | Project | ~300 |
+| `integrating-n8n-webhooks` | Project | ~300 |
+| `vercel-react-best-practices` | Project | ~120 |
 
-- Особисті скіли, які теж видно: `~/.claude/skills/synced/…` — синхронізовані з claude.ai (`docs`, `docx`,
-  `google-workspace`, `import-memory`, `morning`, `pdf`, `pptx`, `skill-creator`, `xlsx`) + вбудовані Claude Code
-  (`dataviz`, `code-review`, `simplify`, `run`…). Жоден не про n8n, форми чи продуктивність React; у прогонах A і B
-  вони однакові, тож на порівняння не впливають. Особистих копій наших трьох скілів у `~/.claude/skills`,
-  `~/.cursor/skills`, `~/.agents/skills`, `~/.codex/skills` немає.
+Решта — вбудовані скіли Claude Code і синхронізовані з claude.ai (`~/.claude/skills/synced/`: docx, pdf, pptx, xlsx,
+docs, google-workspace, import-memory, morning, skill-creator). Жоден не стосується форм, n8n чи продуктивності React.
+Особистих копій наших скілів у `~/.claude/skills`, `~/.cursor/skills`, `~/.agents/skills`, `~/.codex/skills` немає.
+
+**Відповідність специфікації** (name = тека, `description` ≤ 1024 символи з «що» + «коли», `SKILL.md` < 500 рядків):
+`building-client-form` — 875 символів, 141 рядок; `integrating-n8n-webhooks` — 857 символів, 131 рядок;
+`vercel-react-best-practices` — 329 символів, 149 рядків. Усі три — так.
 
 ## Task A — виправлення за скілом Vercel
 
-**Як міряли:** продакшн-збірка (`npm run build && npm start`), сервер перезапускали після кожного виправлення
-(перевіряли, що порт 3000 слухає процес саме з нової збірки). Cookie `leaddesk_session=demo-u_olena`,
-`U=http://localhost:3000/dashboard`. Один прогрівальний `curl`, далі 3 прогони
-`curl -w "TTFB %{time_starttransfer}s, total %{time_total}s"`; розмір — `curl -s … | wc -c` (HTML) і
-`curl -sL -H "RSC: 1" … | wc -c` (RSC); лічильники `db:<запит>` — приріст у журналі `npm start` за один
-запит; клієнтський JS — сума всіх `/_next/static/**.js`, на які посилається HTML `/dashboard` (сирі байти й gzip).
+Сім виправлень, кожне окремим комітом `fix(<rule-id>)`. Кожну пораду перед застосуванням звіряв з
+`node_modules/next/dist/docs/` (таблиця — `docs/skill-review.md`, розділ 5).
 
-| Правило (id) | Коміт | Файли | Що змінилось | Було (`main`) | Стало | Як міряли |
-|---|---|---|---|---|---|---|
-| `async-parallel` | `a8134ca` | `app/dashboard/page.tsx` | `getLeads`, `getLeadStats`, `getSourceBreakdown` — `Promise.all` замість трьох послідовних `await` | TTFB 2,253 / 2,245 / 2,243 с | TTFB 1,429 / 1,427 / 1,435 с | `curl` ×3, TTFB |
-| `server-cache-react` | `7e66882` | `lib/data.ts`, 4 виклики | `getCurrentUser` у `cache()`; `getWorkspace(slug)` з примітивом замість inline-об'єкта | 3× `db:getUserBySession`, 3× `db:getWorkspace` на запит | 1× і 1× | лічильники `db:` за один `curl` |
-| `server-serialization` | `9fcc046` | `app/dashboard/page.tsx`, `components/leads-table.tsx` | у Client Component `LeadsTable` — лише 5 полів (`LeadRow`) замість повного `Lead` | HTML 424 592 Б, RSC 315 197 Б; `rawPayload`/`ipAddress`/`internalNotes` у HTML — по 172 рази | HTML 111 377 Б, RSC 31 257 Б; 0 / 0 / 0 | `curl … \| wc -c`, `grep -o` |
-| `bundle-conditional` | `59e2374` | `components/leads-toolbar.tsx` | `exceljs` — `await import("exceljs")` у обробнику «Експорт» | початковий JS 1 871 692 Б (gzip 538 252) | 941 001 Б (gzip 282 762); exceljs — окремий чанк 930 904 Б, вантажиться на клік | сума JS з HTML |
-| `bundle-dynamic-imports` | `a73589a` | `components/leads-toolbar.tsx` | графік `recharts` — `next/dynamic(..., { ssr: false })` у Client Component | 941 001 Б (gzip 282 762) | 587 212 Б (gzip 181 721) | сума JS з HTML |
-| `server-auth-actions` | `8763b3a` | `app/actions.ts` | `updateLeadStatus`/`deleteLead` перевіряють сесію, workspace ліда і валідний статус | (без заміру продуктивності) | (без заміру) | — див. нижче |
+### До (`main`) і після (гілка) — один скрипт, однакові умови
 
-**Разом по `/dashboard`:** TTFB 2,25 → 1,42 с (−37 %), HTML 425 → 111 КБ, RSC 315 → 31 КБ, початковий JS
-1,87 МБ → 0,59 МБ (gzip 538 → 182 КБ), запитів до БД на сторінку 9 → 5.
+| Що | `main` (`01a7dd4`) | гілка | Правило |
+|---|---|---|---|
+| `/dashboard`, перший байт (3 прогони) | 2242 / 2241 / 2244 мс | 218 / 218 / 215 мс | `async-suspense-boundaries` |
+| `/dashboard`, уся сторінка (3 прогони) | 2251 / 2251 / 2252 мс | 1415 / 1416 / 1414 мс | `async-parallel` (`Promise.all` у `448bee5`; з `872ddaa` ті самі запити йдуть паралельно в сусідніх `<Suspense>`) |
+| Запитів до БД на один `/dashboard` | 9: `getUserBySession` 3, `getWorkspace` 3, `getLeads`, `getLeadStats`, `getSourceBreakdown` по 1 | 5: усі по 1 | `server-cache-react` |
+| HTML `/dashboard` | 424 592 Б; `rawPayload`, `ipAddress`, `internalNotes` — по 172 рази | 114 021 Б; 0 / 0 / 0 | `server-serialization` |
+| RSC-відповідь `/dashboard` | 315 197 Б | 31 933 Б | `server-serialization` |
+| Початковий JS `/dashboard` | 10 чанків, 1828 КБ / 526 КБ gzip | 9 чанків, 573 КБ / 178 КБ gzip | `bundle-conditional`, `bundle-dynamic-imports` |
+| Де exceljs і recharts | обидва в одному чанку на 1266 КБ, який HTML вантажить одразу | exceljs (909 КБ) і recharts (350 КБ) — окремі чанки, вантажаться лише за кліком | те саме |
+| Форма ліда проти мока n8n (`last-node`, воркфлоу 2 с), 3 відправки | 2451 / 2402 / 2399 мс | 158 / 141 / 135 мс | `server-after-nonblocking` |
+| `updateLeadStatus` напряму на лід чужого workspace: підроблена cookie / користувач іншого workspace | HTTP 200, статус змінено / HTTP 200, змінено | HTTP 500, не змінено / HTTP 500, не змінено | `server-auth-actions` |
 
-- **Чому для заміру обрали `async-parallel`:** найбільший і найпростіше відтворюваний ефект на скаргу клієнта
-  («дашборд > 2 с»). У `lib/db.ts` затримки детерміновані (100+100 → 400 → 1200 → 400 мс), тож очікування
-  «2,2 с → 1,4 с» (сесія + workspace + найдовший запит 1200 мс) збіглося з заміром до сотих.
-- **`server-cache-react` не змінив TTFB — і це очікувано:** layout, header і page Next.js рендерить паралельно,
-  тож три однакові запити йшли одночасно. Виграш — навантаження на БД (6 → 2 запити), не час.
-  Заразом знахідка: `getWorkspace` уже був у `cache()`, але приймав `{ slug }` — inline-об'єкт щоразу
-  новий, кеш ніколи не спрацьовував (саме цей антипатерн описує правило).
-- **`server-serialization`** — це ще й безпека: до браузера доходили IP, user agent, сирий payload форми й
-  внутрішні нотатки менеджерів для всіх 172 лідів.
-- **`server-auth-actions`** — як переконались: викликали дію напряму (`POST` з заголовком `Next-Action`,
-  id дії з `.next/server/server-reference-manifest.json`) на лід `lead_0007` іншого workspace.
-  До виправлення: з підробленою cookie `demo-intruder` → HTTP 200, статус чужого ліда змінився на «Новий».
-  Після: `demo-intruder` і `demo-u_olena` (чужий workspace) → HTTP 500, статус без змін; власник (`demo-u_marta`) → 200.
-  Причина: `proxy.ts` перевіряє лише **наявність** cookie, не її дійсність.
-- **Поради, звірені з документацією Next.js 16 і змінені/не застосовані:**
-  - `bundle-dynamic-imports` радить `next/dynamic(..., { ssr: false })` — у Next.js 16 це **помилка збірки**
-    у Server Component (`node_modules/next/dist/docs/01-app/02-guides/lazy-loading.md:94`). Застосували лише
-    всередині Client Component `LeadsToolbar`; для exceljs узяли простіший `await import()` на клік (`bundle-conditional`).
-  - `bundle-barrel-imports` радить додати бібліотеки в `experimental.optimizePackageImports` — `recharts`
-    Next.js 16 уже оптимізує за замовчуванням (`optimizePackageImports.md`), тож для нього порада зайва.
-    `lodash` (CJS) у списку немає; `lodash.debounce` у пошуку лишили як є — це клієнтський пошук поза
-    критичним шляхом, окремого заміру не робили.
-  - `async-suspense-boundaries` (стрімінг статистики через `<Suspense>`) — не застосовували: після
-    `Promise.all` найдовший запит (1200 мс) і так визначає TTFB, а стрімінг змінив би UX (скелетони) — це
-    рішення з клієнтом, а не механічне виправлення.
-- `npm run lint`, `npm run build` після кожного виправлення: без помилок.
+**Як міряли.** Один Node-скрипт на обох гілках (на `main` — `git checkout main`, та сама машина, одразу одне за одним):
+- `/dashboard` — cookie `leaddesk_session=demo-u_olena`, один прогрівальний запит і три виміри `fetch()`: «перший байт» —
+  коли прийшли заголовки (при стрімінгу вони приходять разом з оболонкою сторінки), «уся сторінка» — до кінця тіла;
+- запити до БД — приріст лічильників `console.count("db:<запит>")` у журналі `npm start` за один запит;
+- розміри — байти тіла `GET /dashboard` і того самого з заголовком `rsc: 1`; поля — підрахунок входжень у HTML;
+- JS — усі `/_next/static/**.js`, на які посилається HTML `/dashboard`, розміри файлів з `.next/static` (gzip — Node zlib);
+  бібліотеки шукали за характерними рядками (`xl/workbook.xml` — exceljs, `recharts-wrapper` — recharts) у кожному чанку;
+- форма ліда — POST форми як браузер без JS (з прихованими полями дії з HTML), мок `tools/mock-n8n.mjs --mode last-node`.
+  На `main` — `N8N_WEBHOOK_URL=http://127.0.0.1:5678/webhook/lead-created` (production-URL, щоб «воркфлоу» справді
+  працював 2 с; з тестовим URL із `.env.example` мок відповідає `404 in 2 ms`, і замір був би нечесним), у журналі мока —
+  `-> 200 in 2003 ms auth=none idempotency=absent … body 1010 B`. На гілці — ключі контракту з `.env.local`, мок з Header
+  Auth: `-> 200 in 2001–2002 ms auth=ok idempotency=new … body 112 B` (у n8n іде мінімум замість усього рядка ліда);
+- дія — `POST` з заголовком `next-action` = id `updateLeadStatus` з `.next/server/server-reference-manifest.json`,
+  тіло `["lead_0007", "<статус>"]`; лід `lead_0007` належить workspace `brightline`, статус читали під його власником.
+
+### Кожне виправлення окремо
+
+Заміри одразу після кожного коміту (прод-збірка, `curl`, 3 прогони; JS — сума чанків з HTML):
+
+| Правило (id) | Коміт | Файли | Що змінилось | Було | Стало |
+|---|---|---|---|---|---|
+| `async-parallel` | `448bee5` | `app/dashboard/page.tsx` | `getLeads`, `getLeadStats`, `getSourceBreakdown` — `Promise.all` замість трьох послідовних `await` | TTFB 2,253 / 2,245 / 2,243 с | 1,429 / 1,427 / 1,435 с |
+| `server-cache-react` | `6f5838e` | `lib/data.ts` + 4 виклики | `getCurrentUser` у `cache()`; `getWorkspace(slug)` з рядком замість `{ slug }` | 3× `getUserBySession`, 3× `getWorkspace` | 1× і 1× (TTFB без змін — див. нижче) |
+| `server-serialization` | `6aabe2b` | `app/dashboard/page.tsx`, `components/leads-table.tsx` | у Client Component `LeadsTable` — 5 полів (`LeadRow`) замість цілого `Lead` | HTML 424 592 Б, RSC 315 197 Б | HTML 111 377 Б, RSC 31 257 Б |
+| `bundle-conditional` | `f49d573` | `components/leads-toolbar.tsx` | `exceljs` — `await import("exceljs")` в обробнику «Експорт» | JS 1 871 692 Б (gzip 538 252) | 941 001 Б (gzip 282 762) |
+| `bundle-dynamic-imports` | `cc0a87b` | `components/leads-toolbar.tsx` | графік — `next/dynamic(..., { ssr: false })` усередині Client Component | 941 001 Б (gzip 282 762) | 587 212 Б (gzip 181 721) |
+| `server-auth-actions` | `df34d29` | `app/actions.ts` | `updateLeadStatus`/`deleteLead` перевіряють сесію, належність ліда до workspace і валідний статус | підроблена cookie змінила статус чужого ліда (HTTP 200) | HTTP 500, статус не змінено |
+| `async-suspense-boundaries` | `872ddaa` | `app/dashboard/page.tsx`, `components/stats-cards.tsx` | заголовок і пошук віддаються одразу; статистика, тулбар і таблиця — кожна у своєму `<Suspense>` зі скелетоном | перший байт 1423 / 1427 / 1420 мс | 221 / 216 / 211 мс, уся сторінка без змін (1419 / 1414 / 1412 мс) |
+
+Ще одне виправлення за тим самим скілом зроблено під час доведення фічі (Task D): `a4d9712`
+`fix(server-after-nonblocking)` — запис аудиту `lead.created` (250 мс) перенесено в `after()`.
+
+Нотатки до таблиці:
+- **Для заміру основним обрано `async-parallel`** — він прямо відповідає на скаргу клієнта («дашборд > 2 с»). Затримки в
+  `lib/db.ts` детерміновані (сесія 100 + workspace 100, далі 400 → 1200 → 400 мс), тож очікування «≈ 2,2 → ≈ 1,4 с»
+  (200 мс + найдовший запит 1200 мс) збіглося із заміром до сотих.
+- **`server-cache-react` не змінив час — і це очікувано:** layout, header і page Next.js рендерить паралельно, три однакові
+  запити йшли одночасно. Виграш — навантаження на БД (6 → 2 запити). Заразом знахідка: `getWorkspace` уже був у `cache()`,
+  але приймав `{ slug }` — щоразу новий об'єкт, тож кеш не спрацьовував ніколи; саме від цього застерігає правило.
+- **`server-serialization`** — ще й безпека: до браузера доходили IP, user agent, сирий payload форми й внутрішні нотатки
+  менеджерів для всіх 172 лідів.
+- **`server-auth-actions`:** `proxy.ts` перевіряє лише **наявність** cookie, а не її дійсність, тож будь-яке значення
+  cookie відкривало дії. Дія тепер кидає помилку — Next.js відповідає 500; статус не змінюється.
+- JS у зведеній таблиці — у КіБ (1828 КБ = 1 871 692 Б / 1024), по кроках — у байтах; це ті самі числа. HTML відрізняється
+  (111 377 Б одразу після `server-serialization` проти 114 021 Б на фіналі), бо пізніше в сторінку додались скелетони
+  `<Suspense>` і форма нотатки з Task B.
+
+**Браузер** (Chrome 153 headless, продакшн-збірка гілки, JS увімкнено): `/dashboard` — 175 рядків таблиці і картки
+статистики, браузер завантажив 8 скриптів (дев'ятий чанк з HTML — `noModule`-поліфіл, сучасний браузер його не бере); клік «Показати графік джерел» довантажив один чанк (`12u489g0chpbt.js`, recharts) і
+намалював 6 стовпців; клік «Експорт в Excel» довантажив чанк exceljs (`1dlbn3ojb2_sj.js`) і скачав `leads-2026-09-26.xlsx`
+(18 881 Б, zip-архів `PK…`). Помилок і винятків у консолі — 0.
+
+**Поради, звірені з документацією Next.js 16 і змінені або не застосовані:**
+- `bundle-dynamic-imports` радить `next/dynamic(..., { ssr: false })` — у Server Component це помилка збірки
+  (`node_modules/next/dist/docs/01-app/02-guides/lazy-loading.md:94`). Застосовано лише всередині Client Component
+  `LeadsToolbar`; для exceljs узято простіший `await import()` на клік (`bundle-conditional`).
+- `bundle-barrel-imports` радить `experimental.optimizePackageImports` — `recharts` Next.js 16 уже оптимізує за
+  замовчуванням (`optimizePackageImports.md`). Для `lodash` перевірили збірку: чанк пошуку з `import { debounce } from
+  "lodash"` важить 12 КБ і містить лише `debounce`, повного lodash у початкових чанках немає — не застосовували.
+
+`npm run lint` і `npm run build` — без помилок після кожного виправлення.
 
 ## Task B — `building-client-form`
 
-- Запит у свіжій сесії (скіл не названо), `claude -p --output-format stream-json --verbose --permission-mode acceptEdits`
-  з кореня репозиторію, Opus 5.5:
-  > На сторінці ліда в дашборді (/dashboard/leads/[id]) додай форму «Додати нотатку»: одне текстове поле до
-  > 500 символів; нотатка дописується до внутрішніх нотаток ліда.
-- **Чи спрацював скіл:** так, з першої спроби — у журналі сесії (`run.jsonl`) виклик інструмента `Skill` з
-  `"skill":"building-client-form"` (`grep -o '"skill":"[^"]*"'` → 2 збіги: виклик і результат). Фінальна
-  відповідь агента: «built with the project's `building-client-form` pattern». `description` не змінювали.
-- Що зроблено (коміт `c4b72cf`): `lib/note-form.ts` (чиста валідація: trim, не порожня, ≤ 500, повертає
-  `values`), `app/dashboard/leads/[id]/actions.ts` (Server Action `addNote`: сесія → валідація → лід належить
-  workspace → запис → `after(logAudit)` → `{ status }`), `components/note-form.tsx` (`useActionState`, label,
-  `aria-invalid`/`aria-describedby`, `role="alert"`, `defaultValue` з `values`, «Надсилаємо…»),
-  `lib/db.ts` (`appendLeadNote`), сторінка ліда (форма + `whitespace-pre-line` для нотаток).
-  Агент сам помітив, що `updateLeadStatus`/`deleteLead` без перевірки сесії, і запропонував виправити — це
-  стало виправленням `server-auth-actions` у Task A.
-- Пункти Verify (перевіряли самі, прод-збірка; форму відправляли **як браузер без JS** — multipart POST з
-  прихованими полями `$ACTION_REF_1`, `$ACTION_1:*`, `$ACTION_KEY` з HTML сторінки):
+**Звичайний запит у свіжій сесії** (скіл не названо), з кореня репозиторію:
+`claude -p --output-format stream-json --verbose --permission-mode acceptEdits` (модель у журналі сесії — `claude-opus-5-5[1m]`):
+
+> На сторінці ліда в дашборді (/dashboard/leads/[id]) додай форму «Додати нотатку»: одне текстове поле до 500 символів;
+> нотатка дописується до внутрішніх нотаток ліда.
+
+- **Скіл спрацював з першої спроби:** у журналі сесії є виклик інструмента `Skill` з `"skill":"building-client-form"`;
+  у фінальній відповіді — «built with the project's `building-client-form` pattern». `description` не змінював.
+- **Що зроблено** (коміт `0dabf4f`, код із цієї сесії без змін): `lib/note-form.ts` — чиста валідація (trim, не порожня,
+  ≤ 500 символів, повертає `values`); `app/dashboard/leads/[id]/actions.ts` — дія `addNote`: сесія → валідація → лід
+  належить workspace користувача → запис → `after(logAudit)` → лише `{ status }`; `components/note-form.tsx` —
+  `useActionState`, `label`, `aria-invalid`/`aria-describedby`, підсумок у `role="alert"`, `defaultValue` з `values`,
+  «Надсилаємо…»; `lib/db.ts` — `appendLeadNote`. Сесія ще й помітила, що `updateLeadStatus`/`deleteLead` не перевіряють
+  сесію, — з цього виросло виправлення `server-auth-actions`.
+- **Пункти Verify** (продакшн-збірка; «без JS» — multipart POST з прихованими полями `$ACTION_REF_1`, `$ACTION_1:*`,
+  `$ACTION_KEY` з HTML, як відправляє браузер без JavaScript; «з JS» — Chrome):
 
   | Пункт Verify | Результат |
   |---|---|
-  | `npm run lint`, `npm run build` | ✅ без помилок |
-  | Порожня відправка | ✅ 200; «Напишіть текст нотатки», `aria-invalid="true"`, `role="alert"` «Перевірте поле нотатки» |
-  | Помилка не стирає введене | ✅ 501 символ → «Не більше 500 символів (зараз 501)», текст лишився в `<textarea>` |
-  | Відправка без JS | ✅ валідна нотатка → 200 «Нотатку додано.», нотатка на сторінці ліда |
-  | Дія без сесії | ✅ без cookie — `proxy.ts` → 307; **з підробленою cookie** (`demo-intruder`, proxy її пропускає) дія відхилила, нотатка не збереглась |
-  | Чужий запис | ✅ `leadId=lead_0007` (workspace brightline) від Olena → «Лід не знайдено або він недоступний.», у лід не записано |
-  | Журнал сервера | ✅ лише `lead.note_added { leadId: 'lead_0002' }`; тексту нотатки, email, телефону — 0 збігів |
-  | Час відповіді | ✅ ~0,5 с (сесія 100 + лід 80 + запис 80 мс); аудит (250 мс) — в `after()` |
+  | `npm run lint`, `npm run build` | без помилок |
+  | Порожня відправка, без JS | HTTP 200; «Напишіть текст нотатки», `aria-invalid="true"`, `role="alert"` «Перевірте поле нотатки» |
+  | Порожня відправка, з JS | `aria-invalid="true"`, `aria-describedby` веде на «Напишіть текст нотатки», `role="alert"` «Перевірте поле нотатки» |
+  | Введене не зникає | 501 символ → «Не більше 500 символів (зараз 501)», текст лишився в `<textarea>` |
+  | Відправка без JS | валідна нотатка → HTTP 200 за 518 мс, «Нотатку додано.», нотатка на сторінці |
+  | Відправка з JS | «Нотатку додано.» і нотатка на сторінці |
+  | Дія без сесії | без cookie — `proxy.ts` відповідає 307 за 9 мс; з підробленою cookie `demo-intruder` (proxy її пропускає) — 307 → `/login` за 223 мс (дія перевірила сесію і нічого не записала, сторінка перенаправила), нотатку не збережено |
+  | Чужий запис | `leadId=lead_0007` (workspace `brightline`) від користувача Studio Nova → «Лід не знайдено або він недоступний.», у лід нічого не записано |
+  | Журнал сервера | лише `lead.note_added { leadId: 'lead_0002' }`; тексту нотатки, email, телефону — жодного збігу |
 
 ## Task C — `integrating-n8n-webhooks`
 
-Тут скіл лише пакують. Застосовує його агент у прогоні **B** (Task D) — доказ спрацювання, журнал мока й час
-відповіді форми — у [`docs/ab-validation.md`](ab-validation.md).
+Тут скіл лише пакується; фічу будує агент у прогонах Task D. Основний доказ спрацювання — прогони B
+(`docs/ab-validation.md`: скіл викликано першим кроком у 3 з 3).
 
-- **Що лишили в `SKILL.md`, а що винесли в `references/`:** у `SKILL.md` (131 рядок) — схема двох сторін,
-  контракт стисло (змінні, 5 правил виклику, режим, 10 кроків колбека одним абзацом, журнали), порядок роботи
-  агента, чекліст із прив'язкою до id перевірок C1–C15, правила зупинки, Verify. У `references/` — те, що
-  потрібно лише під час написання коду: `outbound-webhook.md` (таблиця змінних, заголовки, конверт, повтори,
-  **шаблони** `lib/n8n/client.ts` і Server Action), `callback-route.md` (таблиця 10 кроків з кодами відповідей
-  і «чому», шаблон роуту), `response-modes.md` (режими, 100 с, test vs prod URL, ліміти, журнали, пастки),
-  `n8n-setup.md` (налаштування вузлів текстом для клієнта, мок, реєстр). Посилання з `SKILL.md` — прямі, один рівень.
-  Правила Vercel `server-auth-actions` і `server-after-nonblocking` — посиланням за id, не копією.
-- **Правила зупинки:** тестовий URL або «поки без токена/підпису»; секрет у клієнтському коді / `NEXT_PUBLIC_*` /
-  query string / журналі / git; синхронне очікування довгого воркфлоу; зміна воркфлоу в n8n, JSON чи код для
-  вузла Code; випадок поза контрактом (інша схема підпису чи auth, колбек без підпису, файли замість посилань,
-  > 64 КБ); нова залежність. Без винятків «якщо задача цього потребує».
-- **Скрипти:** `check-contract.mjs` (15 перевірок C1–C15, `--root`, `--changed-since`, `--json`, `--help`,
-  коди виходу 0/1/2, лише `node:` модулі), `send-signed-callback.mjs` (матриця з 9 колбеків з очікуваними
-  кодами), `mock-n8n.mjs` (копія `tools/mock-n8n.mjs`).
-- Під час написання скрипт сам себе «зловив» на недоліках, виправлено до коміту: хибний FAIL на правильному
-  `signatureBuf.length !== expected.length` перед `timingSafeEqual`; C14 не бачив `console.log(process.env.N8N_WEBHOOK_TOKEN)`.
-  Одну деталь довідки перевірили й виправили: пакет `server-only` у Next.js 16 **не треба** встановлювати
-  (`05-server-and-client-components.md`: «optional»), Next.js аліасить його сам.
-- **SHA коміту зі скілом (BASE для Task D):** `e41feb5`
-- **Що скіл змінив у собі після прогонів:** коміт `8c9cb02` — `check-contract.mjs` (1) рахує будь-яку
-  `process.env.N8N_*` (крім секрету колбека) викликом n8n і будь-який route з `callback` у шляху чи згадкою n8n —
-  колбеком: без цього код прогону A (`N8N_QUOTE_WEBHOOK_URL`, `app/api/quotes/[id]/callback`) проходив C3–C15 порожньо;
-  (2) не рахує коментарі в C1 — хибний FAIL на коментарі `.env.example` прогону B; (3) C4 звітує по кожному файлу з
-  викликом n8n. Деталі — `docs/ab-validation.md`, «Що змінили в скілі».
+- **`SKILL.md`** (131 рядок): схема двох сторін, стислий контракт (змінні, 5 правил виклику, режим, 10 кроків колбека),
+  порядок роботи, чекліст з прив'язкою до перевірок C1–C15, правила зупинки, Verify. **`references/`** — те, що потрібно
+  під час написання коду: `outbound-webhook.md` (змінні, заголовки, конверт, повтори, шаблони `lib/n8n/client.ts` і Server
+  Action), `callback-route.md` (10 кроків з кодами відповідей і причинами, шаблон роуту, як запускати матрицю),
+  `response-modes.md` (режими, правило 100 с, тестовий і production URL, ліміти, журнали, пастки документації),
+  `n8n-setup.md` (налаштування вузлів n8n текстом для клієнта, мок, реєстр). Посилання з `SKILL.md` — прямі, один рівень.
+  Правила Vercel `server-auth-actions` і `server-after-nonblocking` — за id, без копії тексту.
+- **Правила зупинки:** тестовий URL або «поки без токена/підпису»; секрет у клієнтському коді, `NEXT_PUBLIC_*`, query
+  string, журналі чи git; синхронне очікування довгого воркфлоу; зміна воркфлоу в n8n, його JSON чи код для вузла Code;
+  випадок поза контрактом (інша схема підпису чи auth, колбек без підпису, файли замість посилань, > 64 КБ); нова залежність.
+  Без винятків «якщо задача цього потребує».
+- **`scripts/`:** `check-contract.mjs` (15 перевірок C1–C15, `--root`, `--changed-since`, `--json`, `--help`, коди виходу
+  0/1/2, лише `node:`-модулі), `test-check-contract.mjs` (самотест на 17 фікстурах), `send-signed-callback.mjs` (матриця
+  з 18 колбеків), `mock-n8n.mjs` (копія `tools/mock-n8n.mjs`).
+- **BASE для Task D:** коміт зі скілом `9f608e4`.
+
+**Що скіл змінив у собі після першого бою** (усе — окремими комітами після BASE):
+- `85bd2c8` — `check-contract.mjs` не бачив коду прогону A1 (агент назвав змінну `N8N_QUOTE_WEBHOOK_URL`, а колбек поклав у
+  `app/api/quotes/[id]/callback/route.ts`), і C3–C15 проходили «порожньо»; тепер будь-яка `process.env.N8N_*` (крім секрету
+  колбека) — це виклик n8n, а будь-який route з `callback` у шляху чи згадкою n8n — колбек. Там же: хибний C1 FAIL на
+  коментарі `.env.example` прогону B1 («never /webhook-test») — коментарі більше не рахуються.
+- `1b6ae91` — хибний C10 FAIL у прогонах A2 і A3: вони порівнюють свій Bearer-токен через `timingSafeEqual` у модулі, який
+  імпортує роут (`lib/quote-callback.ts`, `lib/quotes.ts`); тепер модулі, імпортовані колбек-роутом, теж рахуються.
+- `8b34b4f` — матриця колбеків 9 → 18 випадків знайшла дві діри в перенесеному роуті (див. `docs/ab-validation.md`):
+  `content-type` порівнювався через `startsWith`, і `application/jsonx` проходив; колбек іншої задачі перезаписував готовий
+  кошторис. Виправлено і роут (`08f5334`), і шаблон у `references/callback-route.md`.
+- `ec23819` — самотест `test-check-contract.mjs`: проти скрипта з BASE він падає рівно на трьох випадках вище, проти поточного — 17/17.
 
 **`check-contract.mjs` на коді `main`** (`git archive main | tar -x -C ../leaddesk-main`):
 
@@ -168,49 +208,48 @@ C15  FAIL  request body is the envelope {version, event, data}, not a whole DB r
 exit=1
 ```
 
-Це й пояснює «перша знахідка» з налаштування: форма шле в n8n весь рядок ліда (з IP, user agent, сирими даними
-форми) на тестовий URL без токена й таймауту, чекаючи відповідь синхронно, а помилку ковтає — тому мок пише
-`404`, а форма каже «Дякуємо».
+N/A замість PASS там, де нема на що дивитись (колбек-роуту на `main` немає): «усе зелене» не має означати «нікуди не
+дивились». Цей вивід пояснює й першу знахідку з налаштування: форма шле в n8n весь рядок ліда (з IP, user agent, сирими
+даними форми) на тестовий URL без токена й таймауту, чекає відповідь синхронно, а помилку ковтає — тому мок пише `404`,
+а форма каже «Дякуємо».
 
-**Що скрипт побачив на навмисно поганому коді** (тимчасова тека `../leaddesk-bad`: колбек-роут з `req.json()`,
-`!==` для підпису, `runtime = "edge"`, `console.log(body)`; клієнт без `server-only`, таймауту й заголовків;
-компонент з `NEXT_PUBLIC_N8N_WEBHOOK_URL` і `/webhook-test/`; `.env.example` зі справжнім на вигляд токеном):
-
-```
-C1   FAIL  … components/quote.tsx:2  const url = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL ?? "http://127.0.0.1:5678/webhook-test/quote-request";
-C2   FAIL  … components/quote.tsx:2
-C3   FAIL  … components/quote.tsx:2
-C4   FAIL  … lib/n8n/client.ts:1  first statement is not import "server-only"
-C5   FAIL  … lib/n8n/client.ts:2  fetch() without signal: AbortSignal.timeout(10_000)
-C6   FAIL  … lib/n8n/client.ts  header "x-n8n-token" / "idempotency-key" / "x-correlation-id" is never set
-C7   FAIL  … .env.example:2  N8N_WEBHOOK_TOKEN must be a change-me-… placeholder
-C8   N/A
-C9   FAIL  … app/api/n8n/[event]/route.ts:4  request.json() — read await req.text() and verify first
-C10  FAIL  … route.ts  no crypto.timingSafeEqual in callback code
-           … route.ts:8  if (signature !== `sha256=${expected}`) return new Response("bad", { status: 401 });
-C11  FAIL  … route.ts  x-n8n-timestamp is never read
-C12  FAIL  … route.ts  idempotency-key header is never read / no {"duplicate": true} response
-C13  FAIL  … route.ts:2  export const runtime = "edge";
-C14  FAIL  … route.ts:9  console.log("n8n callback", body);
-C15  FAIL  … lib/n8n/client.ts:2  body is JSON.stringify(data) — send { version, event, data } with minimal data
-0 PASS, 14 FAIL, 1 N/A   exit=1
-```
-
-Друга версія поганого коду (роут з `req.text()`, `timingSafeEqual`, вікном 300 с і `duplicate`, але
-`JSON.parse` **до** перевірки підпису; Server Action, що `await`-ить клієнт без `after()`):
+**Самотест скрипта** — `node .claude/skills/integrating-n8n-webhooks/scripts/test-check-contract.mjs`: кожен випадок —
+маленький проєкт у тимчасовій теці й очікуваний статус для конкретних перевірок (порушення й коректний код, на якому
+перевірки не повинні спрацьовувати):
 
 ```
-C8   FAIL  app/quotes/actions.ts:2  Server Action reaches n8n without after(): the user waits for the webhook
-C9   FAIL  app/api/n8n/[event]/route.ts:4  JSON.parse before the signature is verified
-C10  PASS  (a.length !== b.length || !crypto.timingSafeEqual(a, b) — порівняння довжин не вважається помилкою)
-C11  PASS · C12 PASS
+PASS  contract-compliant project
+PASS  no n8n code at all
+PASS  legacy call like main (test URL, whole row, awaited)
+PASS  comment explaining the rule is not a test URL
+PASS  NEXT_PUBLIC_ n8n variable
+PASS  agent-invented env name outside the client
+PASS  client without server-only and headers
+PASS  real-looking token in .env.example
+PASS  Server Action awaits n8n without after()
+PASS  callback reads req.json()
+PASS  JSON.parse before the signature check
+PASS  signature compared with !==
+PASS  verification in an imported helper (lib/quote-callback.ts)
+PASS  runtime = "edge"
+PASS  logging the raw body and a token
+PASS  --changed-since keeps the new line 7, drops the old line 4 (C3 whole: 4,7; changed: 7; C5 changed: 7)
+PASS  unknown git ref -> exit 2 (got 2)
+
+0 failed, 17 passed (17 cases)
+exit=0
 ```
 
-`--changed-since base` на тій самій теці після двох змін (рядок у `lib/n8n/client.ts`, новий `lib/new-file.ts`)
-показав лише FAIL на нових рядках (C3 `lib/new-file.ts:1`, C5 `lib/n8n/client.ts:10`, C6, C14), а старі FAIL
-(C4 на рядку 1, що не змінювався) — відсік. Неіснуючий ref → `exit=2` з поясненням.
+Той самий тест проти `check-contract.mjs` з BASE (`9f608e4`):
 
-**`check-contract.mjs` на фінальному коді** (після перенесення прогону B — 0 FAIL):
+```
+FAIL  comment explaining the rule is not a test URL  — C1 expected PASS, got FAIL
+FAIL  agent-invented env name outside the client  — C3 expected FAIL, got PASS
+FAIL  verification in an imported helper (lib/quote-callback.ts)  — C10 expected PASS, got FAIL
+3 failed, 14 passed (17 cases)
+```
+
+**`check-contract.mjs` на фінальному коді гілки:**
 
 ```
 $ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs; echo "exit=$?"
@@ -237,21 +276,4 @@ C15  PASS  request body is the envelope {version, event, data}, not a whole DB r
 exit=0
 ```
 
-**Матриця колбеків** (`send-signed-callback.mjs` проти `app/api/n8n/[event]/route.ts` на гілці, прод-збірка):
-
-| Випадок | Очікуваний код | Отриманий |
-|---|---|---|
-| valid | 202 | 202 |
-| repeat (ті самі байти й ключ) | 200 `{"duplicate":true}` | 200, duplicate=true |
-| bad-signature | 401 | 401 |
-| stale-timestamp (−600 с) | 401 | 401 |
-| reformatted-body (переформатоване після підпису) | 401 | 401 |
-| key-mismatch (ключ ≠ `jobId:event`) | 400 | 400 |
-| wrong-type (`text/plain`) | 415 | 415 |
-| unknown-event | 404 | 404 |
-| too-large (> 64 КБ) | 413 | 413 |
-
-## Task E2 (бонус) — тест спрацювання
-
-Обрано E2 для `integrating-n8n-webhooks`: 10 запитів, кожен у новій сесії, **10/10** за очікуванням (5 мають
-спрацювати, 5 схожих — ні). Таблиця й висновки — [`docs/trigger-evals.md`](trigger-evals.md).
+Матриця колбеків на фінальному коді (18/18) — у `docs/ab-validation.md`, розділ про перенесення.
