@@ -12,7 +12,7 @@ import {
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const workspace = await getWorkspace({ slug: user.workspaceSlug });
+  const workspace = await getWorkspace(user.workspaceSlug);
   const leads = await getLeads(workspace.id);
   const stats = await getLeadStats(workspace.id);
   const sources = await getSourceBreakdown(workspace.id);
