@@ -44,6 +44,8 @@ export async function triggerN8nWebhook(options: {
         body,
         signal: AbortSignal.timeout(10_000),
         cache: "no-store",
+        // A 3xx must not be followed: fetch would resend x-n8n-token to whatever host the Location names.
+        redirect: "manual",
       });
       status = res.status;
       await res.body?.cancel(); // only the status matters, the text is not parsed
