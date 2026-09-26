@@ -98,7 +98,7 @@ C7   FAIL  .env.example lists the contract keys with safe values
 C8   PASS  Server Actions do not wait for n8n (call runs inside after())
 C9   FAIL  callback reads the raw body; no .json()/JSON.parse before the signature check
       app/api/quotes/[id]/callback/route.ts:35  request.json() — read await req.text() and verify first
-      app/api/quotes/[id]/callback/route.ts:28  body is not read as raw text (await req.text())
+      app/api/quotes/[id]/callback/route.ts:28  body is not read raw (req.text() / arrayBuffer() / body.getReader())
 C10  PASS  callback signature compared with crypto.timingSafeEqual, not ===
 C11  FAIL  callback rejects x-n8n-timestamp outside a 300 s window
       app/api/quotes/[id]/callback/route.ts:28  x-n8n-timestamp is never read

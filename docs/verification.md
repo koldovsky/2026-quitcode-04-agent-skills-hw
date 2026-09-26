@@ -158,7 +158,7 @@ Studio Nova; 175 — у прогоні, де перед тим у тому са�
   випадок поза контрактом (інша схема підпису чи auth, колбек без підпису, файли замість посилань, > 64 КБ); нова залежність.
   Без винятків «якщо задача цього потребує».
 - **`scripts/`:** `check-contract.mjs` (15 перевірок C1–C15, `--root`, `--changed-since`, `--json`, `--help`, коди виходу
-  0/1/2, лише `node:`-модулі), `test-check-contract.mjs` (самотест на 17 фікстурах), `send-signed-callback.mjs` (матриця
+  0/1/2, лише `node:`-модулі), `test-check-contract.mjs` (самотест на 18 фікстурах), `send-signed-callback.mjs` (матриця
   з 20 колбеків), `mock-n8n.mjs` (копія `tools/mock-n8n.mjs`).
 - **BASE для Task D:** коміт зі скілом `9f608e4`.
 
@@ -175,9 +175,12 @@ Studio Nova; 175 — у прогоні, де перед тим у тому са�
 - `4ac1c1c` — ще дві діри з матриці 18 → 20 (`.completed` зі `status: "failed"`; колбек з чужим `correlationId`) і
   `Content-Length` до читання тіла — у шаблон роуту; уроки прогонів B1/B2 — у тексти скілів (контакти в n8n лише за
   потреби; посилання або `redirect()` на статус без JS; `values` за будь-якої невдачі дії, `key` для `<select>`).
-- `ec23819` — самотест `test-check-contract.mjs`: проти скрипта з BASE він падає рівно на трьох випадках, виправлених у
-  `85bd2c8` (коментар у `.env.example`, вигадане ім'я `N8N_*`) і `1b6ae91` (перевірка в імпортованому модулі); проти
-  поточного — 17/17.
+- `ec23819` — самотест `test-check-contract.mjs` (тепер 18 випадків): проти скрипта з BASE він падає у 8 — три хибні
+  результати з A/B, виправлені в `85bd2c8` (коментар у `.env.example`, вигадане ім'я `N8N_*`) і `1b6ae91` (перевірка в
+  імпортованому модулі), відсутній номер рядка у FAIL (`4e4fce5`) і потокове читання тіла (`85e2b83`); проти поточного — 18/18.
+- `b540c6d` / `85e2b83` — після другого рев'ю CodeRabbit: chunked-запит без `Content-Length` обходив ранню перевірку
+  розміру, і `req.text()` читав усе тіло до перевірки підпису. Тепер тіло читається потоком з обривом на 64 КБ (роут і
+  шаблон); 128 КБ і пауза 3 с раніше отримували 413 через 3008 мс, тепер — через 38 мс. C9 визнає таке читання сирим.
 - `4e4fce5` — після рев'ю CodeRabbit кожна знахідка `check-contract.mjs` має `файл:рядок`: знахідки «на рівні файлу»
   (немає заголовка, ключа в `.env.example`, перевірки часу) прив'язано до рядка, де треба правити (обробник `POST`,
   `createHmac`, виклик `fetch`) або до рядка 1. Самотест тепер перевіряє саму вимогу — попередня версія скрипта падає на
@@ -246,6 +249,7 @@ PASS  client without server-only and headers
 PASS  real-looking token in .env.example
 PASS  Server Action awaits n8n without after()
 PASS  callback reads req.json()
+PASS  capped stream read counts as raw body
 PASS  JSON.parse before the signature check
 PASS  signature compared with !==
 PASS  verification in an imported helper (lib/quote-callback.ts)
@@ -254,17 +258,22 @@ PASS  logging the raw body and a token
 PASS  --changed-since keeps the new line 7, drops the old line 4 (C3 whole: 4,7; changed: 7; C5 changed: 7)
 PASS  unknown git ref -> exit 2 (got 2)
 
-0 failed, 17 passed (17 cases)
+0 failed, 18 passed (18 cases)
 exit=0
 ```
 
-Той самий тест проти `check-contract.mjs` з BASE (`9f608e4`):
+Той самий тест проти `check-contract.mjs` з BASE (`9f608e4`) — падає там, де BASE помилявся або не виконував вимог:
 
 ```
+FAIL  legacy call like main (test URL, whole row, awaited)  — finding without file:line: C7 .env.example, C7 .env.example, C7 .env.example, C7 .env.example
 FAIL  comment explaining the rule is not a test URL  — C1 expected PASS, got FAIL
 FAIL  agent-invented env name outside the client  — C3 expected FAIL, got PASS
-FAIL  verification in an imported helper (lib/quote-callback.ts)  — C10 expected PASS, got FAIL
-3 failed, 14 passed (17 cases)
+FAIL  client without server-only and headers  — finding without file:line: C6 lib/n8n/client.ts, C6 lib/n8n/client.ts, C6 lib/n8n/client.ts, C6 lib/n8n/client.ts
+FAIL  callback reads req.json()  — finding without file:line: C9 app/api/n8n/[event]/route.ts
+FAIL  capped stream read counts as raw body  — C9 expected PASS, got FAIL; finding without file:line: C9 app/api/n8n/[event]/route.ts
+FAIL  signature compared with !==  — finding without file:line: C10 app/api/n8n/[event]/route.ts
+FAIL  verification in an imported helper (lib/quote-callback.ts)  — C10 expected PASS, got FAIL; finding without file:line: C10 app/api/n8n/[event]/route.ts, C11 app/api/n8n/[event]/route.ts, C12 app/api/n8n/[event]/route.ts, C12 app/api/n8n/[event]/route.ts
+8 failed, 10 passed (18 cases)
 ```
 
 **`check-contract.mjs` на фінальному коді гілки:**
