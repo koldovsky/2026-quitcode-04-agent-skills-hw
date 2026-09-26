@@ -126,5 +126,6 @@ Webhook 202 + колбек. Синхронно чекати не можна. Д�
   production URL, ліміти, журнали, відомі пастки документації.
 - [references/n8n-setup.md](references/n8n-setup.md) — налаштування вузлів n8n текстом для клієнта, мок, реєстр інтеграцій.
 - `scripts/check-contract.mjs` — статична перевірка C1–C15; `--root <тека>`, `--changed-since <ref>`, `--json`, `--help`.
+- `scripts/test-check-contract.mjs` — самотест перевірки на 17 фікстурах (порушення й коректний код); запускати після кожної зміни `check-contract.mjs`.
 - `scripts/mock-n8n.mjs` — офлайн-мок n8n (копія `tools/mock-n8n.mjs`); `--help`.
 - `scripts/send-signed-callback.mjs` — матриця підписаних/зіпсованих колбеків проти роуту; `--help`.
