@@ -65,7 +65,7 @@ export async function submitLead(
     }),
   );
 
-  await logAudit("lead.created", lead.id);
+  after(() => logAudit("lead.created", lead.id));
 
   return { status: "ok" };
 }
