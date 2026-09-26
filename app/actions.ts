@@ -2,9 +2,11 @@
 
 import { cookies, headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
+import { triggerN8nWebhook } from "@/lib/n8n/client";
 import { SESSION_COOKIE } from "@/lib/session";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
@@ -51,15 +53,17 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
+  // Notification-only event: the visitor does not wait for n8n. Only the minimum
+  // leaves LeadDesk — no contacts, IP, user agent or raw form payload.
+  const idempotencyKey = crypto.randomUUID();
+  after(() =>
+    triggerN8nWebhook({
+      event: "lead-created",
+      data: { leadId: lead.id, company: lead.company, source: lead.source, budget: lead.budget },
+      idempotencyKey,
+      correlationId: crypto.randomUUID(),
+    }),
+  );
 
   await logAudit("lead.created", lead.id);
 

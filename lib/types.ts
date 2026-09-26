@@ -93,6 +93,29 @@ export type SourceCount = {
   count: number;
 };
 
+// queued: saved, n8n not called yet; processing: n8n accepted the job (202);
+// ready / failed: final state from the n8n callback (or failed to start the workflow).
+export const QUOTE_STATUSES = ["queued", "processing", "ready", "failed"] as const;
+
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
+export type Quote = {
+  id: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  idempotencyKey: string;
+  correlationId: string;
+  documentUrl: string | null;
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Pick<Quote, "company" | "email" | "description" | "budget">;
+
 export type AuditEntry = {
   action: string;
   leadId: string;

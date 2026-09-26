@@ -5,6 +5,9 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
+  QuoteStatus,
   SourceCount,
   User,
   Workspace,
@@ -22,6 +25,12 @@ type Store = {
   nextLeadNumber: number;
 };
 
+type QuoteStore = {
+  quotes: Quote[];
+  // Callback idempotency keys already processed. Production: a table with a unique constraint.
+  callbackKeys: Set<string>;
+};
+
 const LATENCY_MS = {
   getUserBySession: 100,
   getWorkspace: 100,
@@ -36,6 +45,12 @@ const LATENCY_MS = {
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuote: 120,
+  getQuote: 80,
+  getQuoteByIdempotencyKey: 80,
+  updateQuote: 80,
+  claimCallbackKey: 50,
+  releaseCallbackKey: 50,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -266,8 +281,9 @@ function createStore(): Store {
 }
 
 // One store per server process (also survives module reloads in `next dev`).
-const globalForStore = globalThis as unknown as { leadDeskStore?: Store };
+const globalForStore = globalThis as unknown as { leadDeskStore?: Store; leadDeskQuoteStore?: QuoteStore };
 const store = (globalForStore.leadDeskStore ??= createStore());
+const quoteStore = (globalForStore.leadDeskQuoteStore ??= { quotes: [], callbackKeys: new Set() });
 
 const SESSION_PREFIX = "demo-";
 
@@ -392,6 +408,69 @@ export const db = {
   insertAuditEntry(entry: AuditEntry) {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
+    });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        // The status page is public, so the id must not be guessable.
+        id: `q_${crypto.randomUUID()}`,
+        status: "queued",
+        idempotencyKey: crypto.randomUUID(),
+        correlationId: crypto.randomUUID(),
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      quoteStore.quotes.push(quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = quoteStore.quotes.find((q) => q.id === id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  getQuoteByIdempotencyKey(idempotencyKey: string) {
+    return query("getQuoteByIdempotencyKey", () => {
+      const quote = quoteStore.quotes.find((q) => q.idempotencyKey === idempotencyKey);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  // `onlyFrom` guards against races: the n8n callback can arrive before the
+  // trigger result is written, and must not be overwritten by "processing".
+  updateQuote(
+    id: string,
+    patch: Partial<Pick<Quote, "status" | "documentUrl" | "errorCode">>,
+    onlyFrom?: QuoteStatus,
+  ) {
+    return query("updateQuote", () => {
+      const quote = quoteStore.quotes.find((q) => q.id === id);
+      if (!quote || (onlyFrom && quote.status !== onlyFrom)) return false;
+      Object.assign(quote, patch, { updatedAt: new Date().toISOString() });
+      return true;
+    });
+  },
+
+  claimCallbackKey(key: string) {
+    return query("claimCallbackKey", () => {
+      if (quoteStore.callbackKeys.has(key)) return false;
+      quoteStore.callbackKeys.add(key);
+      return true;
+    });
+  },
+
+  releaseCallbackKey(key: string) {
+    return query("releaseCallbackKey", () => {
+      quoteStore.callbackKeys.delete(key);
     });
   },
 };
