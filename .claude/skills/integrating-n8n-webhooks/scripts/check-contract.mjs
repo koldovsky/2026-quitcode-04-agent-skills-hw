@@ -154,11 +154,32 @@ const callbackHelpers = [
 ];
 const callbackCode = [...new Set([...callbackRoutes, ...callbackHelpers])];
 
+// Line to anchor a file-level finding to: the thing a reader has to change, or the first line.
+function anchorLine(file) {
+  if (!file?.lines) return 1;
+  const anchors = [
+    /export\s+(async\s+)?function\s+POST\b|export\s+const\s+POST\b/,
+    /createHmac\s*\(/,
+    /\bfetch\s*\(/,
+  ];
+  for (const re of anchors) {
+    const i = file.lines.findIndex((l) => re.test(l));
+    if (i >= 0) return i + 1;
+  }
+  return 1;
+}
+
 // ---------------------------------------------------------------- checks
 const results = [];
 function check(id, title, fn) {
   const r = { id, title, status: "PASS", findings: [] };
-  const fail = (file, line, msg) => r.findings.push({ file: file?.path ?? file ?? "", line: line ?? 0, msg });
+  // Every finding gets file:line. A finding about the file as a whole ("header is never set") is anchored to the
+  // line where the fix belongs (the POST handler, the fetch call, createHmac) and marked fileLevel, so that
+  // --changed-since keeps it whenever the file changed at all.
+  const fail = (file, line, msg) => {
+    const fileLevel = !line;
+    r.findings.push({ file: file?.path ?? file ?? "", line: line || anchorLine(file), msg, fileLevel });
+  };
   const outcome = fn(fail);
   if (outcome === "N/A") r.status = "N/A";
   results.push(r);
@@ -357,7 +378,7 @@ if (changedSince) {
     r.findings = r.findings.filter((f) => {
       const c = changed.get(f.file);
       if (!c) return false;
-      if (c === "all" || f.line === 0) return true;
+      if (c === "all" || f.fileLevel) return true;
       return c.has(f.line);
     });
   }
@@ -377,7 +398,7 @@ if (asJson) {
   console.log(`scope: ${scope}\n`);
   for (const r of results) {
     console.log(`${r.id.padEnd(4)} ${r.status.padEnd(4)}  ${r.title}`);
-    for (const f of r.findings) console.log(`      ${f.file}${f.line ? ":" + f.line : ""}  ${f.msg}`);
+    for (const f of r.findings) console.log(`      ${f.file}:${f.line}  ${f.msg}`);
   }
   console.log(`\n${counts.PASS} PASS, ${counts.FAIL} FAIL, ${counts["N/A"]} N/A`);
 }

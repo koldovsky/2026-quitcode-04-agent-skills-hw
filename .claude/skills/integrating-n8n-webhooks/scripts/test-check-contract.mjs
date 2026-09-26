@@ -7,8 +7,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const CHECKER = path.join(path.dirname(new URL(import.meta.url).pathname), "check-contract.mjs");
+const CHECKER = path.join(path.dirname(fileURLToPath(import.meta.url)), "check-contract.mjs");
 const keep = process.argv.includes("--keep");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "check-contract-"));
 
@@ -121,6 +122,8 @@ cases.forEach(([name, files, expected], i) => {
   const bad = Object.entries(expected).filter(([id, st]) => got[id] !== st).map(([id, st]) => `${id} expected ${st}, got ${got[id]}`);
   const anyFail = json.results.some((r) => r.status === "FAIL");
   if (anyFail !== (code === 1)) bad.push(`exit code ${code} does not match FAIL presence`);
+  const noLine = json.results.flatMap((r) => r.findings.filter((f) => !(f.line >= 1)).map((f) => `${r.id} ${f.file}`));
+  if (noLine.length) bad.push(`finding without file:line: ${noLine.join(", ")}`);
   if (bad.length) failed++;
   console.log(`${bad.length ? "FAIL" : "PASS"}  ${name}${bad.length ? "  — " + bad.join("; ") : ""}`);
 });
