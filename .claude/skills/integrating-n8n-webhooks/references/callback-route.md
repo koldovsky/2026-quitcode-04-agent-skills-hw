@@ -39,14 +39,14 @@ Route Handler — публічний HTTP-ендпоінт, тож довіря�
 
 | # | Крок | Відповідь |
 |---|---|---|
-| 1 | Подія зі шляху невідома → 404; `content-type` не `application/json` → 415. **До** читання тіла | 404 / 415 |
+| 1 | Подія зі шляху невідома → 404; **медіатип** (без параметрів) не `application/json` → 415. `application/json; charset=utf-8` — так, `application/jsonx` — ні (не `startsWith`!). **До** читання тіла | 404 / 415 |
 | 2 | `const raw = await req.text()` — тіло як сирий текст. Ні `req.json()`, ні `JSON.parse` до підпису: повторна серіалізація міняє байти | — |
 | 3 | `raw` > 64 КБ → 413 (колбек несе посилання, не файли) | 413 |
 | 4 | `x-n8n-timestamp` відрізняється від «зараз» більш ніж на **300 с** у будь-який бік → 401 (захист від replay) | 401 |
 | 5 | HMAC від `` `${timestamp}.${raw}` ``; порівняння: спершу довжини, потім `crypto.timingSafeEqual` (кидає на різних довжинах). **Не** `===`. Не збігається → 401 **без подробиць** | 401 |
 | 6 | «Застовпити» `idempotency-key` (унікальний запис). Уже був → 200 `{"duplicate": true}` | 200 |
 | 7 | Тепер `JSON.parse(raw)` + перевірка форми. Не та форма, `event` у тілі ≠ `<event зі шляху>.completed`/`.failed`, або `idempotency-key` ≠ `` `${data.jobId}:${body.event}` `` → 400 | 400 |
-| 8 | Зберегти мінімальний стан (`status = ready`, посилання) **до** відповіді. Якщо після кроку 6 обробка впала (кроки 7–8) — **звільнити** ключ, інакше повтор n8n отримає `duplicate` і результат загубиться | — |
+| 8 | Зберегти мінімальний стан (`status = ready`, посилання) **до** відповіді. Завершений запис (`ready`/`failed`) **не перезаписуємо**: колбек іншої задачі для того самого запиту → 409 (другий чи застарілий запуск воркфлоу). Якщо після кроку 6 обробка не застосувалась (кроки 7–8: 400, 409, 5xx) — **звільнити** ключ, інакше повтор n8n отримає `duplicate` і результат загубиться | 409 |
 | 9 | Відповісти **202** `{"ok": true}` | 202 |
 | 10 | Повільне (листи, сповіщення) — в `after()` | — |
 
@@ -68,13 +68,15 @@ import { after } from "next/server";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const WINDOW_SECONDS = 300;
-const HANDLERS = { "quote-request": handleQuoteCallback } as const;   // відомі події
+// відомі події; обробник повертає "applied" або "conflict" (завершений запис не чіпаємо)
+const HANDLERS: Record<string, (body: Callback) => Promise<"applied" | "conflict">> = { "quote-request": handleQuoteCallback };
 
 export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) {
   const { event } = await ctx.params;
-  const handler = HANDLERS[event as keyof typeof HANDLERS];
+  const handler = Object.hasOwn(HANDLERS, event) ? HANDLERS[event] : undefined;   // не з прототипу (/api/n8n/toString)
   if (!handler) return Response.json({ error: "not_found" }, { status: 404 });                  // 1
-  if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json"))
+  const mediaType = req.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+  if (mediaType !== "application/json")                          // не startsWith: application/jsonx — 415
     return Response.json({ error: "unsupported_media_type" }, { status: 415 });
 
   const raw = await req.text();                                                                   // 2
@@ -98,7 +100,10 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
       await releaseIdempotencyKey(key);
       return Response.json({ error: "bad_request" }, { status: 400 });
     }
-    await handler(body);                                                                          // 8
+    if ((await handler(body)) === "conflict") {                                                   // 8
+      await releaseIdempotencyKey(key);
+      return Response.json({ error: "conflict" }, { status: 409 });
+    }
     console.info("n8n.callback", { event: body.event, correlationId: body.data.correlationId, bytes: raw.length });
     after(() => { /* листи, сповіщення */ });                                                     // 10
     return Response.json({ ok: true }, { status: 202 });                                          // 9
@@ -123,5 +128,9 @@ node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-
   --url http://127.0.0.1:3000/api/n8n/quote-request --job-id <jobId реального запиту>
 ```
 
-Очікування: valid 202, repeat 200 duplicate, bad-signature 401, stale-timestamp 401, reformatted-body 401,
-key-mismatch 400, wrong-type 415, unknown-event 404, too-large 413.
+`--request-key` — `idempotency-key`, з яким застосунок викликав n8n для запиту, що ще **чекає** колбека
+(без нього `valid` іде на невідомий запит, а `other-job-same-request` пропускається). 18 випадків: 415 ×2
+(`text/plain`, `application/jsonx`), 401 ×9 (без підпису, чужий/короткий/випадковий підпис, інший секрет,
+час −10 хв / +10 хв / не число, переформатоване тіло, `charset` з поганим підписом), 413, 400 (не JSON),
+404, `valid` 202, `repeat` 200 `duplicate`, `replay-new-key` 400, `other-job-same-request` 409. Має бути
+`0 failed`.

@@ -55,7 +55,7 @@ Webhook 202 + колбек. Синхронно чекати не можна. Д�
 невідома подія 404 / не JSON 415 → `await req.text()` → > 64 КБ 413 → `x-n8n-timestamp` поза ±300 с
 401 → HMAC-SHA256(`N8N_CALLBACK_SECRET`, `${ts}.${raw}`) = `x-n8n-signature` (`sha256=…`), порівняння
 довжин + `crypto.timingSafeEqual` 401 → застовпити `idempotency-key`, повтор → 200 `{"duplicate":true}`
-→ `JSON.parse` + форма + ключ = `${data.jobId}:${event}` інакше 400 (і звільнити ключ) → зберегти стан
+→ `JSON.parse` + форма + ключ = `${data.jobId}:${event}` інакше 400 (і звільнити ключ) → зберегти стан (завершений запис не перезаписуємо — 409)
 **до** відповіді → 202 `{"ok":true}` → повільне в `after()`. Шаблон і «чому» —
 [references/callback-route.md](references/callback-route.md).
 
@@ -113,7 +113,7 @@ Webhook 202 + колбек. Синхронно чекати не можна. Д�
 - [ ] Мок у режимі клієнта: `node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/mock-n8n.mjs --mode respond-202 --delay 5000`;
       у журналі мока `POST /webhook/<event> -> 202`, `auth=ok`, `idempotency=new`, далі колбек `-> 202`.
 - [ ] Форма відповідає за < 1 с (n8n — в `after()`), сторінка статусу після колбека показує «готово».
-- [ ] Матриця колбеків: `node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-signed-callback.mjs --url http://127.0.0.1:3000/api/n8n/<event> --job-id <jobId>` — усі випадки OK.
+- [ ] Матриця колбеків (18 випадків) на запиті, що ще чекає колбека: `node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-signed-callback.mjs --url http://127.0.0.1:3000/api/n8n/<event> --request-key <idempotency-key запиту>` → `0 failed`.
 - [ ] У журналі сервера немає тіл, email, телефонів, токенів, підписів.
 
 ## Файли скіла
