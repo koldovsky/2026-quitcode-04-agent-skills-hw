@@ -450,11 +450,12 @@ export const db = {
   updateQuote(
     id: string,
     patch: Partial<Pick<Quote, "status" | "documentUrl" | "errorCode">>,
-    onlyFrom?: QuoteStatus,
+    onlyFrom?: QuoteStatus | QuoteStatus[],
   ) {
     return query("updateQuote", () => {
       const quote = quoteStore.quotes.find((q) => q.id === id);
-      if (!quote || (onlyFrom && quote.status !== onlyFrom)) return false;
+      const allowed = onlyFrom === undefined ? null : ([] as QuoteStatus[]).concat(onlyFrom);
+      if (!quote || (allowed && !allowed.includes(quote.status))) return false;
       Object.assign(quote, patch, { updatedAt: new Date().toISOString() });
       return true;
     });

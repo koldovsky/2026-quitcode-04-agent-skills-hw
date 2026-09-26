@@ -21,7 +21,10 @@ type CallbackBody = {
   };
 };
 
-const HANDLERS: Record<string, (body: CallbackBody) => Promise<void>> = {
+// "conflict": authentic callback that must not change the record (e.g. another job for a finished quote).
+type HandlerResult = "applied" | "conflict";
+
+const HANDLERS: Record<string, (body: CallbackBody) => Promise<HandlerResult>> = {
   "quote-request": handleQuoteCallback,
 };
 
@@ -29,7 +32,9 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   const { event } = await ctx.params;
   const handler = Object.hasOwn(HANDLERS, event) ? HANDLERS[event] : undefined;
   if (!handler) return Response.json({ error: "not_found" }, { status: 404 });
-  if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+  // Compare the media type itself: "application/json; charset=utf-8" is fine, "application/jsonx" is not.
+  const mediaType = req.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+  if (mediaType !== "application/json") {
     return Response.json({ error: "unsupported_media_type" }, { status: 415 });
   }
 
@@ -63,7 +68,11 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
     }
 
     // Saved before responding: after a 2xx n8n will not retry.
-    await handler(body);
+    if ((await handler(body)) === "conflict") {
+      await db.releaseCallbackKey(key);
+      console.warn("n8n.callback", { event: body.event, correlationId: body.data.correlationId, error: "conflict" });
+      return Response.json({ error: "conflict" }, { status: 409 });
+    }
     const { correlationId, status } = body.data;
     console.info("n8n.callback", { event: body.event, correlationId, status, bytes: raw.length });
     return Response.json({ ok: true }, { status: 202 });
@@ -74,20 +83,22 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   }
 }
 
-async function handleQuoteCallback(body: CallbackBody) {
+async function handleQuoteCallback(body: CallbackBody): Promise<HandlerResult> {
   const quote = await db.getQuoteByIdempotencyKey(body.data.requestIdempotencyKey);
   if (!quote) {
     // Authentic, but not ours (or already deleted): acknowledge so n8n stops retrying.
     const { correlationId } = body.data;
     console.warn("n8n.callback", { event: body.event, correlationId, error: "quote_not_found" });
-    return;
+    return "applied";
   }
 
-  if (body.data.status === "completed" && body.data.documentUrl) {
-    await db.updateQuote(quote.id, { status: "ready", documentUrl: body.data.documentUrl, errorCode: null });
-  } else {
-    await db.updateQuote(quote.id, { status: "failed", errorCode: body.data.errorCode ?? "workflow_failed" });
-  }
+  // A finished quote is never overwritten: a second or stale workflow run gets 409.
+  const patch =
+    body.data.status === "completed" && body.data.documentUrl
+      ? { status: "ready" as const, documentUrl: body.data.documentUrl, errorCode: null }
+      : { status: "failed" as const, errorCode: body.data.errorCode ?? "workflow_failed" };
+  const updated = await db.updateQuote(quote.id, patch, ["queued", "processing"]);
+  return updated ? "applied" : "conflict";
 }
 
 function parseCallback(raw: string): CallbackBody | null {
