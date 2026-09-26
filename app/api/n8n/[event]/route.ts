@@ -45,8 +45,9 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   }
 
   // Raw text: the signature covers the exact bytes, JSON re-serialization would change them.
-  const raw = await req.text();
-  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return Response.json({ error: "too_large" }, { status: 413 });
+  // Read with a cap: a chunked body has no Content-Length, and req.text() would buffer all of it.
+  const raw = await readBodyLimited(req, MAX_BODY_BYTES);
+  if (raw === null) return Response.json({ error: "too_large" }, { status: 413 });
 
   const ts = Number(req.headers.get("x-n8n-timestamp"));
   if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > WINDOW_SECONDS) return unauthorized();
@@ -165,6 +166,25 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+// Reads the request body as UTF-8 text, giving up (null) as soon as it exceeds `limit` bytes.
+async function readBodyLimited(req: Request, limit: number): Promise<string | null> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 const unauthorized = () => Response.json({ error: "unauthorized" }, { status: 401 });
