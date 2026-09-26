@@ -112,11 +112,14 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
 // ---------------------------------------------------------------- facts
 const CLIENT = "lib/n8n/client.ts";
 const clientFile = files.find((f) => f.path === CLIENT || f.path === "src/" + CLIENT);
-const N8N_ENV_USE = /process\.env\.(N8N_WEBHOOK[A-Z_]*|N8N_BASE_URL|N8N_URL)\b|process\.env\[\s*["'`]N8N_WEBHOOK/;
+// Any N8N_* variable except the callback secret means "this code talks to n8n" — agents invent
+// names like N8N_QUOTE_WEBHOOK_URL, so matching only the contract's names would miss them.
+const N8N_ENV_USE = /process\.env\.N8N_(?!CALLBACK_SECRET\b)[A-Z0-9_]+|process\.env\[\s*["'`]N8N_(?!CALLBACK_SECRET)/;
 const N8N_URL_LITERAL = /["'`][^"'`]*(\/webhook(-test)?\/|:5678)[^"'`]*["'`]/;
+// A route that n8n calls back: the contract path, any "callback" route, or a route that mentions n8n.
 const isCallbackRoute = (f) =>
   /(^|\/)route\.(ts|js|tsx|jsx)$/.test(f.path) &&
-  (/x-n8n-signature/i.test(f.text) || /\/api\/n8n\//.test(f.path));
+  (/x-n8n-/i.test(f.text) || /\/api\/n8n\/|callback/i.test(f.path) || /\bn8n\b|N8N_/i.test(f.text));
 
 // Sites that talk to n8n: env var use or a webhook URL literal.
 const callSites = [];
@@ -144,8 +147,10 @@ function check(id, title, fn) {
 }
 
 check("C1", "no test webhook URL (/webhook-test/) in code or .env.example", (fail) => {
-  for (const f of files) f.lines.forEach((l, i) => { if (l.includes("/webhook-test")) fail(f, i + 1, l.trim()); });
-  envExample?.lines.forEach((l, i) => { if (l.includes("/webhook-test")) fail(envExample, i + 1, l.trim()); });
+  // comments may explain the rule ("never /webhook-test") — only code and values count
+  const isComment = (l) => /^\s*(\/\/|\*|\/\*|#)/.test(l);
+  for (const f of files) f.lines.forEach((l, i) => { if (!isComment(l) && l.replace(/\/\/.*$/, "").includes("/webhook-test")) fail(f, i + 1, l.trim()); });
+  envExample?.lines.forEach((l, i) => { if (!isComment(l) && l.includes("/webhook-test")) fail(envExample, i + 1, l.trim()); });
 });
 
 check("C2", "no N8N_* variable with NEXT_PUBLIC_ prefix", (fail) => {
@@ -161,8 +166,12 @@ check("C3", `n8n is called only from ${CLIENT}`, (fail) => {
 check("C4", `${CLIENT} exists and starts with import "server-only"`, (fail) => {
   if (callSites.length === 0 && !clientFile) return "N/A";
   if (!clientFile) {
-    const s = callSites[0];
-    return fail(s.file, s.line, `n8n is called here, but ${CLIENT} does not exist`);
+    // one finding per file that talks to n8n, so --changed-since still sees it in new files
+    for (const f of n8nFiles) {
+      const s = callSites.find((c) => c.file === f);
+      fail(s.file, s.line, `n8n is called here, but ${CLIENT} does not exist`);
+    }
+    return;
   }
   const first = clientFile.lines.findIndex((l) => l.trim() && !/^\s*(\/\/|\/\*|\*)/.test(l));
   if (!/^\s*import\s+["']server-only["']/.test(clientFile.lines[first] ?? "")) {
