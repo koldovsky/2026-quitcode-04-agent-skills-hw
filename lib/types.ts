@@ -51,6 +51,8 @@ export type Lead = {
   updatedAt: string;
 };
 
+export type LeadSummary = Pick<Lead, "id" | "fullName" | "company" | "status" | "createdAt">;
+
 export type NewLead = Omit<
   Lead,
   | "id"
