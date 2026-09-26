@@ -1,11 +1,12 @@
 "use server";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import type { LeadStatus } from "@/lib/types";
+import { SESSION_COOKIE } from "@/lib/session";
+import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -65,13 +66,27 @@ export async function submitLead(
   return { status: "ok" };
 }
 
+// Server Actions are public POST endpoints: proxy.ts only checks that a cookie exists,
+// so every dashboard action verifies the session and the lead's workspace itself.
+async function assertLeadAccess(id: string) {
+  const sessionId = (await cookies()).get(SESSION_COOKIE)?.value;
+  const user = sessionId ? await db.getUserBySession(sessionId) : null;
+  if (!user) throw new Error("Unauthorized");
+
+  const [workspace, lead] = await Promise.all([db.getWorkspace(user.workspaceSlug), db.getLead(id)]);
+  if (!workspace || !lead || lead.workspaceId !== workspace.id) throw new Error("Lead not found");
+}
+
 export async function updateLeadStatus(id: string, status: LeadStatus) {
+  if (!LEAD_STATUSES.includes(status)) throw new Error("Invalid status");
+  await assertLeadAccess(id);
   await db.updateLeadStatus(id, status);
   revalidatePath("/dashboard");
   revalidatePath(`/dashboard/leads/${id}`);
 }
 
 export async function deleteLead(id: string) {
+  await assertLeadAccess(id);
   await db.deleteLead(id);
   revalidatePath("/dashboard");
 }
