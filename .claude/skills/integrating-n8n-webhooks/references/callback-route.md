@@ -94,10 +94,11 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
   if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return unauthorized();
 
   const key = req.headers.get("idempotency-key") ?? "";                                           // 6
+  if (!key) return Response.json({ error: "bad_request" }, { status: 400 });
   if (!(await claimIdempotencyKey(key))) return Response.json({ duplicate: true }, { status: 200 });
 
   try {
-    const body = parseCallback(JSON.parse(raw));                                                  // 7
+    const body = parseCallback(raw);   // 7: JSON.parse усередині, у try/catch — не JSON → null → 400, а не 500
     if (!body || body.event !== `${event}.${body.data.status}` || key !== `${body.data.jobId}:${body.event}`) {
       await releaseIdempotencyKey(key);
       return Response.json({ error: "bad_request" }, { status: 400 });
@@ -117,6 +118,18 @@ export async function POST(req: Request, ctx: RouteContext<"/api/n8n/[event]">) 
 }
 
 const unauthorized = () => Response.json({ error: "unauthorized" }, { status: 401 });
+
+// Сире тіло → типізований колбек або null (не JSON, не та форма). Жодних винятків назовні.
+function parseCallback(raw: string): Callback | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  // …перевірка version, event, data.jobId, data.status, data.requestIdempotencyKey, data.correlationId…
+  return isCallback(value) ? value : null;
+}
 ```
 
 `RouteContext<"/api/n8n/[event]">` — глобальний тип Next.js 16 (генерується при `next build`/`next dev`);
