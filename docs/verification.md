@@ -1,7 +1,7 @@
 # Перевірка (Task A–C)
 
 > Прогони A/B і фіча «запит на кошторис» — у [`docs/ab-validation.md`](ab-validation.md) (Task D).
-> Бонус E2 — у [`docs/trigger-evals.md`](trigger-evals.md).
+> Бонус: E2 — [`docs/trigger-evals.md`](trigger-evals.md), E1 — [`docs/skill-review-n8n.md`](skill-review-n8n.md).
 
 - **Інструмент і модель:** Claude Code 2.1.283, `claude-opus-5-5`
 - **ОС, Node:** macOS (Darwin 24.6), zsh, Node 22.20.0; Next.js 16.3.5. Усі заміри — продакшн-збірка
@@ -22,7 +22,7 @@ docs, google-workspace, import-memory, morning, skill-creator). Жоден не 
 Особистих копій наших скілів у `~/.claude/skills`, `~/.cursor/skills`, `~/.agents/skills`, `~/.codex/skills` немає.
 
 **Відповідність специфікації** (name = тека, `description` ≤ 1024 символи з «що» + «коли», `SKILL.md` < 500 рядків):
-`building-client-form` — 875 символів, 141 рядок; `integrating-n8n-webhooks` — 857 символів, 131 рядок;
+`building-client-form` — 875 символів, 145 рядків; `integrating-n8n-webhooks` — 857 символів, 134 рядки;
 `vercel-react-best-practices` — 329 символів, 149 рядків. Усі три — так.
 
 ## Task A — виправлення за скілом Vercel
@@ -91,10 +91,10 @@ docs, google-workspace, import-memory, morning, skill-creator). Жоден не 
   (111 377 Б одразу після `server-serialization` проти 114 021 Б на фіналі), бо пізніше в сторінку додались скелетони
   `<Suspense>` і форма нотатки з Task B.
 
-**Браузер** (Chrome 153 headless, продакшн-збірка гілки, JS увімкнено): `/dashboard` — 175 рядків таблиці і картки
-статистики, браузер завантажив 8 скриптів (дев'ятий чанк з HTML — `noModule`-поліфіл, сучасний браузер його не бере); клік «Показати графік джерел» довантажив один чанк (`12u489g0chpbt.js`, recharts) і
+**Браузер** (Chrome 153 headless, продакшн-збірка гілки, JS увімкнено): `/dashboard` — таблиця лідів (172 засіяні ліди
+Studio Nova; 175 — у прогоні, де перед тим у тому самому процесі тричі відправляли форму ліда) і картки статистики, браузер завантажив 8 скриптів (дев'ятий чанк з HTML — `noModule`-поліфіл, сучасний браузер його не бере); клік «Показати графік джерел» довантажив один чанк (`12u489g0chpbt.js`, recharts) і
 намалював 6 стовпців; клік «Експорт в Excel» довантажив чанк exceljs (`1dlbn3ojb2_sj.js`) і скачав `leads-2026-09-26.xlsx`
-(18 881 Б, zip-архів `PK…`). Помилок і винятків у консолі — 0.
+(18 704 Б, zip-архів `PK…`; прогін на `37aac6c`). Помилок і винятків у консолі — 0.
 
 **Поради, звірені з документацією Next.js 16 і змінені або не застосовані:**
 - `bundle-dynamic-imports` радить `next/dynamic(..., { ssr: false })` — у Server Component це помилка збірки
@@ -118,7 +118,8 @@ docs, google-workspace, import-memory, morning, skill-creator). Жоден не 
   у фінальній відповіді — «built with the project's `building-client-form` pattern». `description` не змінював.
 - **Що зроблено** (коміт `0dabf4f`, код із цієї сесії без змін): `lib/note-form.ts` — чиста валідація (trim, не порожня,
   ≤ 500 символів, повертає `values`); `app/dashboard/leads/[id]/actions.ts` — дія `addNote`: сесія → валідація → лід
-  належить workspace користувача → запис → `after(logAudit)` → лише `{ status }`; `components/note-form.tsx` —
+  належить workspace користувача → запис → `after(logAudit)` → `{ status }` (при помилці валідації — ще `errors`
+  і `values`), без жодного рядка з бази; `components/note-form.tsx` —
   `useActionState`, `label`, `aria-invalid`/`aria-describedby`, підсумок у `role="alert"`, `defaultValue` з `values`,
   «Надсилаємо…»; `lib/db.ts` — `appendLeadNote`. Сесія ще й помітила, що `updateLeadStatus`/`deleteLead` не перевіряють
   сесію, — з цього виросло виправлення `server-auth-actions`.
@@ -137,12 +138,15 @@ docs, google-workspace, import-memory, morning, skill-creator). Жоден не 
   | Чужий запис | `leadId=lead_0007` (workspace `brightline`) від користувача Studio Nova → «Лід не знайдено або він недоступний.», у лід нічого не записано |
   | Журнал сервера | лише `lead.note_added { leadId: 'lead_0002' }`; тексту нотатки, email, телефону — жодного збігу |
 
+  Пізніше (`d3142ad`) текст нотатки зберігається й тоді, коли дія повертає `unauthorized`, `not_found` чи `error`, —
+  раніше `values` поверталися лише при помилці валідації. Звідси й правка в скілі (`4ac1c1c`).
+
 ## Task C — `integrating-n8n-webhooks`
 
 Тут скіл лише пакується; фічу будує агент у прогонах Task D. Основний доказ спрацювання — прогони B
 (`docs/ab-validation.md`: скіл викликано першим кроком у 3 з 3).
 
-- **`SKILL.md`** (131 рядок): схема двох сторін, стислий контракт (змінні, 5 правил виклику, режим, 10 кроків колбека),
+- **`SKILL.md`** (134 рядки): схема двох сторін, стислий контракт (змінні, 5 правил виклику, режим, 10 кроків колбека),
   порядок роботи, чекліст з прив'язкою до перевірок C1–C15, правила зупинки, Verify. **`references/`** — те, що потрібно
   під час написання коду: `outbound-webhook.md` (змінні, заголовки, конверт, повтори, шаблони `lib/n8n/client.ts` і Server
   Action), `callback-route.md` (10 кроків з кодами відповідей і причинами, шаблон роуту, як запускати матрицю),
@@ -155,7 +159,7 @@ docs, google-workspace, import-memory, morning, skill-creator). Жоден не 
   Без винятків «якщо задача цього потребує».
 - **`scripts/`:** `check-contract.mjs` (15 перевірок C1–C15, `--root`, `--changed-since`, `--json`, `--help`, коди виходу
   0/1/2, лише `node:`-модулі), `test-check-contract.mjs` (самотест на 17 фікстурах), `send-signed-callback.mjs` (матриця
-  з 18 колбеків), `mock-n8n.mjs` (копія `tools/mock-n8n.mjs`).
+  з 20 колбеків), `mock-n8n.mjs` (копія `tools/mock-n8n.mjs`).
 - **BASE для Task D:** коміт зі скілом `9f608e4`.
 
 **Що скіл змінив у собі після першого бою** (усе — окремими комітами після BASE):
@@ -168,7 +172,14 @@ docs, google-workspace, import-memory, morning, skill-creator). Жоден не 
 - `8b34b4f` — матриця колбеків 9 → 18 випадків знайшла дві діри в перенесеному роуті (див. `docs/ab-validation.md`):
   `content-type` порівнювався через `startsWith`, і `application/jsonx` проходив; колбек іншої задачі перезаписував готовий
   кошторис. Виправлено і роут (`08f5334`), і шаблон у `references/callback-route.md`.
-- `ec23819` — самотест `test-check-contract.mjs`: проти скрипта з BASE він падає рівно на трьох випадках вище, проти поточного — 17/17.
+- `4ac1c1c` — ще дві діри з матриці 18 → 20 (`.completed` зі `status: "failed"`; колбек з чужим `correlationId`) і
+  `Content-Length` до читання тіла — у шаблон роуту; уроки прогонів B1/B2 — у тексти скілів (контакти в n8n лише за
+  потреби; посилання або `redirect()` на статус без JS; `values` за будь-якої невдачі дії, `key` для `<select>`).
+- `ec23819` — самотест `test-check-contract.mjs`: проти скрипта з BASE він падає рівно на трьох випадках, виправлених у
+  `85bd2c8` (коментар у `.env.example`, вигадане ім'я `N8N_*`) і `1b6ae91` (перевірка в імпортованому модулі); проти
+  поточного — 17/17.
+- `37aac6c` — приклади коду в скілах приведено до тексту: дія у `building-client-form` повертає `values` за будь-якої
+  невдачі, шаблон колбека логує деструктуризований `correlationId`; шаблонний роут проходить C9–C14 `check-contract.mjs`.
 
 **`check-contract.mjs` на коді `main`** (`git archive main | tar -x -C ../leaddesk-main`):
 
@@ -276,4 +287,4 @@ C15  PASS  request body is the envelope {version, event, data}, not a whole DB r
 exit=0
 ```
 
-Матриця колбеків на фінальному коді (18/18) — у `docs/ab-validation.md`, розділ про перенесення.
+Матриця колбеків на фінальному коді (20/20) — у `docs/ab-validation.md`, розділ про перенесення.

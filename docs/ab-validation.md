@@ -236,41 +236,52 @@ POST без заголовка `Origin`, до коду прогонів не с�
   - `9896c7b` — коментар у `.env.example` містив рядок «never /webhook-test»; переписано без цього літерала.
   - `a4d9712` `fix(server-after-nonblocking)` — у старому `submitLead` агент переніс n8n в `after()`, але лишив
     `await logAudit("lead.created")` (250 мс) перед відповіддю. Скіл n8n цього не дав: аудит — не n8n.
-  - `08f5334` — розширена матриця колбеків (18 випадків) знайшла в роуті B1 дві діри, яких не ловила перша матриця (9):
-    `content-type` перевірявся через `startsWith("application/json")`, тож `application/jsonx` з правильним підписом
-    проходив (202 замість 415); а правильно підписаний колбек **іншої** задачі для того самого запиту повторно «завершував»
-    готовий кошторис і міняв посилання на PDF (202 замість 409). Тепер медіатип розбирається без параметрів, а завершений
-    запис не перезаписується (409, ключ звільняється). Та сама діра була в шаблоні скіла — виправлено й там (`8b34b4f`).
-    Супутньо `1b6ae91`: новий рядок журналу 409 спершу передавав у `console` `body.data.correlationId` — C14 це зловив,
-    тепер логується деструктуризоване значення.
+  - `a341d25` — у формі кошторису B1 помилки полів були звичайним текстом: без `aria-invalid`, `aria-describedby` і підсумку
+    `role="alert"`; бюджет-`<select>` після помилки скидався б (React 19 скидає форму після дії). У копії B не було скіла
+    форм — це наслідок протоколу A/B, а не межа n8n-скіла. Доведено за патерном `building-client-form`.
+  - Колбек-роут — у два заходи; обидва знайшла розширена матриця (перша, на 9 випадків, їх не бачила):
+    - `08f5334`: `content-type` перевірявся через `startsWith("application/json")`, тож `application/jsonx` з правильним
+      підписом проходив (202 замість 415); правильно підписаний колбек **іншої** задачі повторно «завершував» готовий
+      кошторис і міняв посилання на PDF (202 замість 409). Медіатип тепер розбирається без параметрів, завершений запис не
+      перезаписується (409, ключ звільняється). Супутньо `1b6ae91`: новий рядок журналу 409 спершу передавав у `console`
+      `body.data.correlationId` — C14 це зловив, тепер логується деструктуризоване значення.
+    - `5be2f89`: `Content-Length` понад 64 КБ відхиляється (413) **до** читання тіла; `data.status` мусить збігатися з
+      подією (`.completed` зі `status: "failed"` раніше приймався, тепер 400); колбек з **чужим** `correlationId` раніше
+      «завершував» запит, що ще чекає, і справжній колбек потім отримував 409 — тепер 409 отримує чужий.
+    Ці ж діри виправлено в шаблоні скіла (`8b34b4f`, `4ac1c1c`).
 - **Ключі контракту в `.env.example`:** `N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook`,
   `N8N_WEBHOOK_TOKEN=change-me-webhook-token`, `N8N_CALLBACK_SECRET=change-me-callback-secret`,
   `APP_BASE_URL=http://127.0.0.1:3000`; жодного `/webhook-test/`. У `.env.local` — ті самі ключі, секрети згенеровано
   `crypto.randomBytes(32)` прямо у файл, ніде не друкувались. `git ls-files ".env*"` → лише `.env.example`.
-- **`npm run lint`, `npm run build` на гілці:** без помилок (`/api/n8n/[event]`, `/quotes/[id]`, `/quotes/new` у збірці).
+- **`npm run lint`, `npm run build` на гілці:** без помилок (lint — код виходу 0 на `37aac6c`) (`/api/n8n/[event]`, `/quotes/[id]`, `/quotes/new` у збірці).
 - **`check-contract.mjs` на фінальному коді:** `15 PASS, 0 FAIL, 0 N/A`, `exit=0` (повний вивід — у `docs/verification.md`).
 - **Сценарій «форма → колбек → `/quotes/<id>`» на гілці** (фінальний код, мок `respond-202 --delay 5000` з
   `tools/mock-n8n.mjs`):
 
-  ```
-  POST /webhook/quote-request -> 202 in 1 ms auth=ok idempotency=new | headers: accept,accept-language,cache-control,content-type,idempotency-key,pragma,user-agent,x-correlation-id,x-n8n-token | body 355 B sha256=d8b0d439…
-  workflow 9192691a-… running for 5000 ms, then callback event=quote-request.completed
-  callback POST http://127.0.0.1:3000/api/n8n/quote-request -> 202 in 263 ms (try 1/3) event=quote-request.completed body 382 B sha256=3b09e2ad…
+  ```text
+  POST /webhook/quote-request -> 202 in 1 ms auth=ok idempotency=new | headers: accept,accept-language,cache-control,content-type,idempotency-key,pragma,user-agent,x-correlation-id,x-n8n-token | body 355 B sha256=58705036…
+  workflow 35439eec-… running for 5000 ms, then callback event=quote-request.completed
+  callback POST http://127.0.0.1:3000/api/n8n/quote-request -> 202 in 257 ms (try 1/3) event=quote-request.completed body 382 B sha256=70912455…
   ```
 
-  Форма відповіла за 238 мс (посилання `/quotes/q_5e915ee4-…`); сторінка: «Готуємо кошторис» → «Готово. Кошторис
-  підготовлено.» + «Завантажити PDF». Журнал сервера — лише `n8n.webhook { …, status: 202, attempt: 1, ms: 18 }` і
-  `n8n.callback { …, status: 'completed', bytes: 382 }`.
-- **Те саме в браузері з JavaScript** (Chrome 153 headless): відправка форми → посилання на статус за 204 мс → сторінка
-  статусу сама (автооновлення, без перезавантаження тестом) перейшла в «Готово» з посиланням на PDF; помилок у консолі — 0.
+  Форма відповіла за 220 мс (посилання `/quotes/q_bd244048-…`); сторінка: «Готуємо кошторис» → «Готово. Кошторис
+  підготовлено.» + «Завантажити PDF». Журнал сервера — лише `n8n.webhook { …, status: 202, attempt: 1, ms: 16 }` і
+  `n8n.callback { …, status: 'completed', bytes: 382 }`; даних з форми в ньому немає.
+- **Те саме в браузері з JavaScript** (Chrome 153 headless):
+  - невалідна відправка (email «not-an-email», опис «коротко», вибраний бюджет) → `role="alert"` «Перевірте поля: email,
+    опис задачі», `aria-invalid="true"` на email і описі, `aria-describedby` email веде на «Перевірте email»; назва
+    компанії, опис і вибраний бюджет лишились у полях;
+  - валідна відправка → посилання на статус за 203 мс → сторінка статусу сама (автооновлення, без перезавантаження тестом)
+    перейшла в «Готово» з посиланням на PDF; помилок у консолі — 0.
 - **Форма ліда на гілці** проти мока `last-node` (2 с): 158 / 141 / 135 мс, у мока `POST /webhook/lead-created -> 200 in
   2001–2002 ms auth=ok idempotency=new … body 112 B` (на `main` — 2451 / 2402 / 2399 мс і `body 1010 B` без токена).
 - **Матриця колбеків** проти `app/api/n8n/[event]/route.ts` на гілці — для запиту, який ще **чекає** колбека (тестовий
-  приймач на :5678 відповідає 202 і не шле колбек; `--request-key` — `idempotency-key`, з яким застосунок викликав n8n):
+  приймач на :5678 відповідає 202 і не шле колбек; `--request-key` і `--correlation-id` — заголовки, з якими застосунок
+  викликав n8n):
 
-  ```
+  ```text
   $ node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/send-signed-callback.mjs \
-      --url http://127.0.0.1:3000/api/n8n/quote-request --request-key <key>
+      --url http://127.0.0.1:3000/api/n8n/quote-request --request-key <key> --correlation-id <id>
   PASS  wrong-content-type      expected 415  got 415
   PASS  json-lookalike-type     expected 415  got 415
   PASS  json-with-charset       expected 401  got 401
@@ -284,20 +295,24 @@ POST без заголовка `Origin`, до коду прогонів не с�
   PASS  non-numeric-timestamp   expected 401  got 401
   PASS  reformatted-body        expected 401  got 401
   PASS  malformed-json          expected 400  got 400
+  PASS  status-event-mismatch   expected 400  got 400
   PASS  unknown-event           expected 404  got 404
+  PASS  wrong-correlation       expected 409  got 409
   PASS  valid                   expected 202  got 202
   PASS  repeat                  expected 200  got 200  duplicate=true
   PASS  replay-new-key          expected 400  got 400
   PASS  other-job-same-request  expected 409  got 409
 
-  0 failed, 18 passed (18 cases)
+  0 failed, 20 passed (20 cases)
   ```
 
-  Після матриці сторінка запиту показує PDF саме від задачі `valid` — колбек іншої задачі його не перезаписав. Та сама
-  матриця на роуті до `08f5334`: `json-lookalike-type expected 415 got 202`, `other-job-same-request expected 409 got 202`
-  — `2 failed, 16 passed`.
+  Прогін на `37aac6c`. Після матриці сторінка запиту показала «Готово» і `files.example.test/n8n/38b2a7dd-….pdf` — PDF саме
+  від задачі `valid` (`jobId 38b2a7dd-…`): ні колбек з чужим `correlationId`, ні колбек іншої задачі його не перезаписали. Та сама матриця на роуті до `5be2f89`: `FAIL  status-event-mismatch   expected 400  got 202`; `FAIL  wrong-correlation       expected 409  got 202`; `FAIL  valid                   expected 202  got 409`; `FAIL  repeat                  expected 200  got 409  duplicate=false` —
+  `4 failed, 16 passed`: колбек з чужим correlation id «завершив» запит, і справжній (`valid`, `repeat`) уже отримав 409. На
+  роуті до `08f5334` (перша розширена версія матриці, 18 випадків): `json-lookalike-type expected 415 got 202`,
+  `other-job-same-request expected 409 got 202`.
 - **`docs/n8n-integrations.md`:** є — створив агент у прогоні B1 (рядки `lead-created` і `quote-request`, текст
-  налаштувань n8n для клієнта); поле «власник» лишається заповнити команді.
+  налаштувань n8n для клієнта); власника вписано вручну (у коміті `4ac1c1c`).
 
 ## Висновок
 
@@ -307,6 +322,7 @@ URL), і жоден із трьох не зміг поговорити з n8n, �
 у 3 з 3, `202 auth=ok idempotency=new`, колбек прийнято, «Готово» з PDF у всіх трьох. Загальні знання дали агентам без
 скіла те, що є в документації (`after()`, таймаут, `timingSafeEqual`, непередбачуваний id), а командні рішення — ні.
 Межу скіла теж видно: він не вберіг від речей поза n8n (B2 без JS не веде на статус; аудит у `after()` довелось доробити) і
-в двох місцях його шаблон колбека був недостатньо суворим — це знайшла розширена матриця, і скіл виправлено разом із
-кодом. Що ще варто додати в скіл: пункт «email і контакти — лише якщо воркфлоу їх справді використовує» (B2) і вимогу
-посилання на статус у відповіді форми без JS.
+в кількох місцях його шаблон колбека був недостатньо суворим — це знайшла розширена матриця, і скіл виправлено разом із
+кодом. Після прогонів у скіли додано й решту уроків (`4ac1c1c`): «email і контакти в n8n — лише якщо воркфлоу їх справді
+використовує» (B2), посилання або `redirect()` на сторінку статусу у відповіді форми без JS (B2), `values` за будь-якої
+невдачі дії й `key` для `<select>` (форма B1).
