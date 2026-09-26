@@ -43,7 +43,7 @@ Next.js                                              n8n
    `x-correlation-id`.
 3. Тіло — конверт `{ version: 1, event, data, callbackUrl? }`; `data` — мінімум, не рядок з бази; email, телефон та інші
    контакти — лише якщо воркфлоу їх справді використовує (PDF-кошторису email не потрібен).
-4. `signal: AbortSignal.timeout(10_000)`; повтори ≤ 2 (1 с, 3 с) лише на мережу/таймаут/5xx/524,
+4. `signal: AbortSignal.timeout(10_000)`, `redirect: "manual"` (токен не йде за 3xx на чужий хост); повтори ≤ 2 (1 с, 3 с) лише на мережу/таймаут/5xx/524,
    з тим самим `idempotency-key`; 4xx не повторюємо; текст відповіді не парсимо — лише статус.
 5. Server Action: сесія/права/валідація всередині (`server-auth-actions`), запис зі статусом
    `queued` → відповідь `{ status, id }` → виклик n8n в `after()` (`server-after-nonblocking`);

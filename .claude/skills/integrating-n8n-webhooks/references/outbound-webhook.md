@@ -63,6 +63,8 @@
 - Повтори: не більше **двох** (разом 3 спроби), паузи 1 с, потім 3 с, **лише** для мережевої помилки,
   `TimeoutError`, 5xx і 524. Завжди з тим самим `idempotency-key`.
 - 4xx не повторюємо: 403 — неправильний токен; 404 — воркфлоу не опубліковано або це тестовий URL.
+- Перенаправлення не виконуємо (`redirect: "manual"`): за замовчуванням `fetch` повторив би запит разом з
+  `x-n8n-token` на будь-який хост із `Location`, і чужий 202 виглядав би як успіх. 3xx = помилка конфігурації, не повтор.
 - Відповідь n8n: дивимось лише на **код статусу**. Текст не парсимо (документація пише «Workflow got
   started», а код n8n повертає `Workflow was started`).
 
@@ -122,6 +124,7 @@ export async function triggerN8nWebhook(options: {
         body,
         signal: AbortSignal.timeout(10_000),
         cache: "no-store",
+        redirect: "manual",            // за 3xx fetch переслав би x-n8n-token на хост із Location
       });
       status = res.status;
       await res.body?.cancel();          // текст відповіді не парсимо
