@@ -32,9 +32,12 @@ export async function submitLead(
   const ipAddress = requestHeaders.get("x-forwarded-for")?.split(",")[0].trim() ?? "127.0.0.1";
   const userAgent = requestHeaders.get("user-agent") ?? "";
 
+  // One idempotency-key per lead, saved with the record (contract): a later re-send reuses it.
+  const idempotencyKey = randomUUID();
   const lead = await db.insertLead({
     ...parsed.data,
     workspaceId: PUBLIC_FORM_WORKSPACE_ID,
+    idempotencyKey,
     jobTitle: "",
     city: "",
     country: "",
@@ -57,8 +60,7 @@ export async function submitLead(
 
   // lead-created is an event "for information" (Webhook in Immediately mode): the visitor does not
   // wait for n8n, and n8n gets only what the workflow needs — not the row with IP, user agent and
-  // the raw form. The key is created once per lead and reused by the client's retries.
-  const idempotencyKey = randomUUID();
+  // the raw form. The client's retries reuse the lead's key.
   after(async () => {
     try {
       await triggerWorkflow(

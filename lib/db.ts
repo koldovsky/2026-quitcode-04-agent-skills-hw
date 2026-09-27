@@ -252,6 +252,7 @@ function seedLeads(count: number, workspaces: Workspace[], users: User[]): Lead[
           receivedAt: createdAt.toISOString(),
         },
       },
+      idempotencyKey: null,
       internalNotes: status === "new" ? "" : pick(INTERNAL_NOTES),
       createdAt: createdAt.toISOString(),
       updatedAt: updatedAt.toISOString(),

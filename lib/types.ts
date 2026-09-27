@@ -46,6 +46,9 @@ export type Lead = {
   ipAddress: string;
   userAgent: string;
   rawPayload: Record<string, unknown>;
+  // Sent to n8n with lead-created as idempotency-key; the same value in every retry of this lead.
+  // null for seed leads, which were never sent.
+  idempotencyKey: string | null;
   internalNotes: string;
   createdAt: string;
   updatedAt: string;
