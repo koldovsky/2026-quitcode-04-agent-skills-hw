@@ -73,9 +73,15 @@ export async function submitLead(
 
   // The visitor never waits for n8n or the audit log (server-after-nonblocking).
   after(async () => {
-    const result = await triggerWorkflow("lead-created", data, options);
-    if (!result.ok) console.error(`[n8n] lead-created failed lead=${lead.id} status=${result.status ?? "network"}`);
-    await logAudit("lead.created", lead.id);
+    try {
+      const result = await triggerWorkflow("lead-created", data, options);
+      if (!result.ok) console.error(`[n8n] lead-created failed lead=${lead.id} status=${result.status ?? "network"}`);
+    } catch (error) {
+      // Configuration error (missing N8N_*): log the kind only, and still write the audit entry.
+      console.error(`[n8n] lead-created failed lead=${lead.id} error=${error instanceof Error ? error.name : "unknown"}`);
+    } finally {
+      await logAudit("lead.created", lead.id);
+    }
   });
 
   return { status: "ok" };

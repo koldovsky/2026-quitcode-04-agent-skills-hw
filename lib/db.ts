@@ -455,6 +455,8 @@ export const db = {
     return query("updateQuote", () => {
       const quote = [...quotes.values()].find((q) => q.idempotencyKey === requestIdempotencyKey);
       if (!quote) return false;
+      // The job n8n answered with (202 {job_id}) must be the one calling back.
+      if (quote.jobId && quote.jobId !== jobId) return false;
       // A finished quote is not overwritten; the callback is still acknowledged.
       if (quote.status === "ready") return true;
       quote.jobId = jobId;
