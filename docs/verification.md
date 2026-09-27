@@ -2,6 +2,20 @@
 
 Прогони A/B і фіча «запит на кошторис» — в окремому звіті `docs/ab-validation.md` (Task D).
 
+> **Коротко.**
+> - **Task A:** рев'ю до встановлення (`7b49586`; аудити внесено вже після — хронологія в розділі 3
+>   `docs/skill-review.md`), тег + `--copy`, 75 файлів і `skills-lock.json` (`8bc9f78`). П'ять
+>   виправлень з id правила, кожне окремим комітом: `async-parallel` (TTFB 2,28 → 1,48 с),
+>   `server-serialization` (HTML −74 %, RSC −90 %), `server-auth-actions`, `server-cache-react`
+>   (запитів сесії й воркспейсу на сторінку 3 → 1), `server-after-nonblocking` (форма заявки
+>   408 → 150 мс).
+> - **Task B:** `building-client-form` спрацював з першої спроби (виклик `Skill`), усі пункти Verify
+>   пройдено й записано.
+> - **Task C:** 13 перевірок C1–C13; на `main` — 6 FAIL, на навмисно поганому коді — 13 FAIL, на
+>   фінальному коді — 0 FAIL; `scripts/self-test.mjs` — 10 з 10 випадків.
+> - Остання перевірка гілки (27.09.2026, після рев'ю): `npm run lint`, `npm run build` — без
+>   помилок; `check-contract.mjs` — 13 PASS / 0 FAIL; `self-test.mjs` — усі випадки як очікувалось.
+
 - **Інструмент і версія, модель:** Claude Code 2.1.283 (розширення VS Code) · Opus 5.5
 - **ОС і термінал, Node:** Windows 11 Home · Git Bash · Node 24.12.0
 
@@ -24,6 +38,9 @@
 Рев'ю зроблено в новій сесії запитом «Зроби рев'ю app/, components/, lib/ за скілом
 vercel-react-best-practices… Файли не змінюй»: 17 знахідок. Застосовано 3: два — з числами
 продуктивності, третє (`server-auth-actions`) — безпека, з вимірюваним «було/стало» за журналом `db:*`.
+Після рев'ю домашки — ще два (`server-cache-react` — знахідка того самого рев'ю, яку спершу
+відклали; `server-after-nonblocking` — аудит у публічній формі), обидва з числами; «було» для них —
+коміт `91f6305`.
 
 **Як міряли:** продакшн-збірка (`npm run build`, потім `npx next start -p 3001` — на `:3000` працював
 `npm run dev`); cookie `leaddesk_session=demo-u_olena`; `curl` на `/dashboard`: 1 прогрів + 5 прогонів
@@ -39,6 +56,8 @@ vercel-react-best-practices… Файли не змінюй»: 17 знахідо
 | `async-parallel` | `a829fe1` | `app/dashboard/page.tsx` | `getLeads` (400 мс), `getLeadStats` (1200 мс), `getSourceBreakdown` (400 мс) — через `Promise.all` замість трьох послідовних `await` | TTFB 2.279 / 2.281 / 2.298 / 2.304 / 2.274 с (медіана **2.28 с**) | TTFB 1.511 / 1.502 / 1.468 / 1.452 / 1.475 с (медіана **1.48 с**) | `curl` TTFB, 5 прогонів |
 | `server-serialization` | `08725c4` | `app/dashboard/page.tsx`, `components/leads-table.tsx` | у клієнтський `LeadsTable` передаються лише 5 полів (`LeadRow = Pick<Lead, "id" \| "fullName" \| "company" \| "status" \| "createdAt">`) замість усього `Lead` | HTML **424 592 Б**, RSC **315 197 Б**; `rawPayload`/`ipAddress`/`internalNotes` у HTML — по 172, `userAgent` — 344 | HTML **111 377 Б** (−74 %), RSC **31 257 Б** (−90 %); усі чотири поля — 0 | `curl … \| wc -c`, `grep -o … \| wc -l` |
 | `server-auth-actions` | `8fe89ee` | `app/actions.ts` | `updateLeadStatus` і `deleteLead` перевіряють сесію, належність ліда до воркспейсу користувача й значення статусу (`LEAD_STATUSES`) і повертають лише `{ status }`; `addLeadNote` — та сама перевірка (`authorizeLead`) | cookie `bogus` → `db:updateLeadStatus` / `db:deleteLead` **виконано**; `demo-u_marta` (brightline) на лід studio-nova — теж; статус `"hacked"` — записано | `{"status":"unauthorized"}` лише з `db:getUserBySession`; `{"status":"forbidden"}` без запису; `"hacked"` → `{"status":"invalid"}`; коректний виклик → `ok` і `db:updateLeadStatus: 1` | виклик дії напряму (POST із заголовком `Next-Action`, id з `server-reference-manifest.json`), приріст `db:*` у журналі `next start` |
+| `server-cache-react` | `880f193` | `lib/data.ts`, `app/dashboard/layout.tsx`, `app/dashboard/page.tsx`, `app/dashboard/leads/[id]/page.tsx`, `components/dashboard-header.tsx` | `getWorkspace` — ключ `cache()` рядок `slug`, а не inline-об'єкт `{ slug }` (новий ключ на кожен виклик: `Object.is`); `getSessionUser` — теж у `cache()` | на один `/dashboard`: `db:getWorkspace` **×3**, `db:getUserBySession` **×3** | `db:getWorkspace` **×1**, `db:getUserBySession` **×1**; TTFB без змін (1,45–1,50 с): дублікати й так ішли паралельно в layout, header і page | приріст лічильників `db:*` у журналі `next start` після одного запиту сторінки; TTFB — `curl`, 5 прогонів |
+| `server-after-nonblocking` | `4c34842` | `app/actions.ts` | `submitLead` (публічна форма) чекав `logAudit` (`insertAuditEntry` — 250 мс) до відповіді; тепер — в `after()`, як виклик n8n | 408 / 413 / 401 / 505 / 398 мс (медіана **408 мс**) | 170 / 152 / 143 / 149 / 150 мс (медіана **150 мс**); записів аудиту — 6 з 6 відправок, після відповіді | виклик дії так, як її робить гідрована форма (`Next-Action`, аргументи `[prevState, FormData]`), 1 прогрів + 5 прогонів; `next start`, мок `--mode respond-202` |
 
 Запити до БД на один запит сторінки не змінились (9: `getUserBySession` ×3, `getWorkspace` ×3,
 `getLeads`, `getLeadStats`, `getSourceBreakdown`) — змінився лише порядок: після `async-parallel`
@@ -71,8 +90,13 @@ vercel-react-best-practices… Файли не змінюй»: 17 знахідо
     списку автоматичного `optimizePackageImports`
     (`docs/01-app/03-api-reference/05-config/01-next-config-js/optimizePackageImports.md`).
   - `server-cache-react` для `getWorkspace` — порада рев'ю правильна (`cache()` з inline-об'єктом
-    `{ slug }` порівнює аргументи через `Object.is`, тож кеш не спрацьовує, і `getWorkspace` іде 3 рази),
-    але в цій домашці не застосовано: досить двох виправлень.
+    `{ slug }` порівнює аргументи через `Object.is`, тож кеш не спрацьовує, і `getWorkspace` іде 3 рази).
+    Спершу відклали (досить двох виправлень), після рев'ю домашки застосовано — `880f193` (рядок у
+    таблиці). Звірено з `01-app/01-getting-started/06-fetching-data.md:546-604` («Reusing data with
+    `React.cache`»: запит до бази без `fetch` загортати в `React.cache`; кеш — у межах одного
+    запиту); `"use cache"`, який ізолює `React.cache`, у проєкті не використовується. Права не
+    змінились: після зміни `addLeadNote` дає `ok` на свій лід, `unauthorized` з cookie `bogus`,
+    `forbidden` для користувача іншого воркспейсу.
   - `rendering-hydration-suppress-warning` для дат у `LeadsTable` — рев'ю саме пропонує не глушити
     попередження, а прибрати розбіжність (`timeZone`); погоджуємось: за
     `02-guides/preventing-flash-before-hydration.md:109-113` атрибут лишає в DOM серверне значення
@@ -80,7 +104,8 @@ vercel-react-best-practices… Файли не змінюй»: 17 знахідо
     немає, тож `suppressHydrationWarning` не застосовуємо.
 - Якщо виміряне виправлення не змінило чисел — чому: змінило (див. таблицю).
 - `npm run lint`, `npm run build` після виправлень: після кожного з трьох комітів — без помилок і
-  попереджень.
+  попереджень; для `4c34842` і `880f193` — `tsc --noEmit` на проміжному коді, `npm run lint` і
+  `npm run build` — на коді з усіма виправленнями після рев'ю, без помилок.
 
 ## Task B — `building-client-form`
 
@@ -207,6 +232,12 @@ vercel-react-best-practices… Файли не змінюй»: 17 знахідо
 нотатки (зараз — будь-хто з воркспейсу ліда), формат нотатки (без автора й дати), аудит (не
 пишеться, як і для зміни статусу/видалення). Для домашки лишили як є.
 
+**Після рев'ю домашки** (коміт `f5f1d40`, версія 0.3.0): патерн призначений для будь-якого проєкту
+агенції, а кроки називали хелпери LeadDesk (`getSessionUser()` у `lib/data.ts`, `parseLeadForm`) і
+відтворення `.bind()`, специфічне для LeadDesk. Кроки тепер загальні, а відповідність LeadDesk і
+відтворення — окремим розділом «У LeadDesk» наприкінці. `description` не змінювався, тож результат
+перевірки спрацювання вище лишається чинним.
+
 ## Task C — `integrating-n8n-webhooks`
 
 Тут скіл лише пакують. Застосовує його агент у прогоні **B** (Task D) — доказ спрацювання, журнал
@@ -267,6 +298,13 @@ vercel-react-best-practices… Файли не змінюй»: 17 знахідо
     модулів на один рівень;
   - `816b79f` — `send-signed-callback.mjs` після 11/11 падав на Windows з `Assertion failed … async.c`
     (код виходу 127): `process.exit()` при відкритих keep-alive-з'єднаннях → `process.exitCode`.
+- Що змінено в скілі після рев'ю домашки:
+  - `fbfebf8` — шаблон колбек-роуту в `references/code-templates.md` журналював невідомий `[event]`
+    зі шляху (у роуті застосунку вже було `unknown`) і `x-correlation-id` як є — обидва від ще не
+    перевіреного запиту. Тепер невідома подія — `unknown`, `x-correlation-id` — лише у формі UUID
+    (інакше `invalid`); пояснення — у `references/callback.md`. Те саме в роуті застосунку — `ed774dc`.
+  - `dfbef51` — `scripts/self-test.mjs`: ручні перевірки скрипта з цього розділу (код `main`,
+    навмисно поганий код, шаблони, CRLF, `--changed-since`) тепер ідуть разом зі скілом (вивід нижче).
 
 **Як перевіряли сам скрипт.** Спершу на `main` — там порушення є. Потім на навмисно поганому коді,
 де кожна з 13 перевірок має що знайти. Далі на «обхідному» коді, який попередня версія скрипта
@@ -424,8 +462,35 @@ C13  PASS  Server Action не чекає на n8n: виклик лише в afte
 exit=1
 ```
 
-**`check-contract.mjs` на фінальному коді** — гілка після перенесення прогону B і доведення (`5679c83`),
-увесь проєкт, без `--changed-since`:
+**`scripts/self-test.mjs`** (`dfbef51`) — ті самі випадки автоматично: проєкти-фікстури в тимчасовій
+теці (видаляється після запуску), вердикт кожної з C1–C13 і код виходу порівнюються з очікуваними.
+Шаблони беруться просто з `references/code-templates.md`, тож шаблон, що розійшовся з контрактом,
+теж дає FAIL. Сам тест перевірено мутаціями в копії скіла поза репозиторієм: C8, що мовчки не
+повертає знахідок, → FAIL на «deliberately bad code»; шаблон клієнта без `AbortSignal.timeout` →
+C5 FAIL на всіх трьох варіантах шаблонів.
+
+```
+$ node .claude/skills/integrating-n8n-webhooks/scripts/self-test.mjs; echo "exit=$?"
+check-contract self-test · <repo>\.claude\skills\integrating-n8n-webhooks\scripts\check-contract.mjs
+
+ok    main-like (LeadDesk main)          7 PASS, 6 FAIL, exit 1
+ok    deliberately bad code              0 PASS, 13 FAIL, exit 1
+ok    templates (LF)                     13 PASS, 0 FAIL, exit 0
+ok    templates (CRLF)                   13 PASS, 0 FAIL, exit 0
+ok    templates (src/ layout)            13 PASS, 0 FAIL, exit 0
+ok    --changed-since base               10 PASS, 3 FAIL, exit 1
+ok    --changed-since <unknown ref>      exit 2
+ok    --help                             exit 0
+ok    unknown option                     exit 2
+ok    --root that does not exist         exit 2
+
+all cases as expected
+exit=0
+```
+
+**`check-contract.mjs` на фінальному коді** — гілка після перенесення прогону B, доведення (`5679c83`)
+і виправлень після рев'ю (повторено на останньому коміті — вивід той самий), увесь проєкт, без
+`--changed-since`:
 
 ```
 $ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs; echo "exit=$?"
