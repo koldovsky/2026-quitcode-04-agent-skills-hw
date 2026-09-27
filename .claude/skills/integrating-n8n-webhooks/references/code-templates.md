@@ -138,12 +138,12 @@ const HANDLERS: Record<string, (data: CallbackBody["data"]) => Promise<void>> = 
 
 export async function POST(request: Request, context: { params: Promise<{ event: string }> }) {
   const { event } = await context.params;
-  const correlationId = request.headers.get("x-correlation-id") ?? "none";
+  const correlationId = readCorrelationId(request);
 
   // 1. Known event and JSON content type — before reading the body.
   // Object.hasOwn: "constructor", "toString" or "__proto__" in the path must be 404 too.
   const handle = Object.hasOwn(HANDLERS, event) ? HANDLERS[event] : undefined;
-  if (!handle) return reply(404, event, correlationId);
+  if (!handle) return reply(404, "unknown", correlationId); // the path is attacker-controlled: not logged
   if (!request.headers.get("content-type")?.startsWith("application/json")) return reply(415, event, correlationId);
 
   // 2–3. Raw body, read once, size-limited.
@@ -210,6 +210,16 @@ export async function POST(request: Request, context: { params: Promise<{ event:
   // 9.
   log(202, event, correlationId, raw);
   return Response.json({ ok: true }, { status: 202 });
+}
+
+// The header arrives before anything is verified: log it only in the UUID shape the contract
+// promises, so a forged request cannot write arbitrary text into the logs.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readCorrelationId(request: Request) {
+  const value = request.headers.get("x-correlation-id");
+  if (value === null) return "none";
+  return UUID_RE.test(value) ? value : "invalid";
 }
 
 function reply(status: number, event: string, correlationId: string) {
