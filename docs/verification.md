@@ -127,7 +127,9 @@ app/, components/, lib/ за скілом vercel-react-best-practices. Для к
 - SHA коміту зі скілом (**BASE для Task D**): `b1d587c` (`skills: add
   integrating-n8n-webhooks (contract, references, scripts)`) — фіча «запит на
   кошторис» у гілці ще відсутня.
-- Що скіл змінив у собі після прогонів Task D: заповнюється після Task D.
+- Що скіл змінив у собі після прогонів Task D: **нічого** — прогін B (Task D) відтворив контракт
+  практично точно (7/8 перевірок `check-contract.mjs` PASS одразу, 1 FAIL — передіснуючий, не новий);
+  скіл не редагувався. Повний розбір прогонів A/B — `docs/ab-validation.md`.
 
 **`check-contract.mjs` на коді `main`** (свіжий `git archive main` в `../leaddesk-main`):
 
@@ -178,8 +180,22 @@ exit=1
 Усі 8 перевірок (C1–C8) підтверджено як такі, що справді щось знаходять — 3 на `main`,
 решта 5 на навмисно поганому знімку.
 
-**`check-contract.mjs` на фінальному коді:** заповнюється після Task D (вимога — 0 FAIL
-без прапорця `--changed-since`, на всьому коді).
+**`check-contract.mjs` на фінальному коді (після Task D, 0 FAIL, увесь код, без прапорця):**
+
+```
+[C1] no test webhook URL (/webhook-test/) outside .env.local: PASS
+[C2] no NEXT_PUBLIC_-prefixed N8N_* variable: PASS
+[C3] n8n calls confined to lib/n8n/: PASS
+[C4] lib/n8n module starts with import "server-only": PASS
+[C5] fetch() to n8n has AbortSignal.timeout(...): PASS
+[C6] callback route reads raw body before JSON-parsing it: PASS
+[C7] callback signature compared via crypto.timingSafeEqual: PASS
+[C8] no secret/signature values in console logs: PASS
+
+0 FAIL
+```
+
+Деталі прогонів A/B і що довелось доробити руками — `docs/ab-validation.md`.
 
 **Бонус, реалізовано:** `--changed-since <git-ref>` — фільтрує файли на рівні файлів (не
 рядків) за `git diff --name-only` + `git ls-files --others --exclude-standard`; перевірено
