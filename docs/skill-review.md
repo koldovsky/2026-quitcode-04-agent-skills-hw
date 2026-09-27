@@ -1,0 +1,91 @@
+# Рев'ю стороннього скіла: `vercel-react-best-practices`
+
+> Рев'ю зроблено **до** встановлення. Файли скіла читались як дані в неглибокому клоні тега поза
+> репозиторієм (`../review-agent-skills`); нічого з них не виконувалось.
+
+**Дата, інструмент, ОС:** 27.09.2026 · Claude Code (desktop, Opus 5.5) · Windows 11 Pro + Git Bash · Node 23.4.0
+
+## Що рев'юємо
+
+| | |
+|---|---|
+| Репозиторій | <https://github.com/vercel-labs/agent-skills> |
+| Тека в репозиторії → `name` | `skills/react-best-practices` → `name: vercel-react-best-practices` |
+| Версія | тег `agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278` (коміт `063bee94c3f4df8453406c830b0a7df0f2860278`, 28.08.2026) |
+| Навіщо нам | клієнт скаржиться, що `/dashboard` відкривається > 2 с, а форма «думає»; експерта з продуктивності React у команді немає — беремо 70 правил Vercel як чекліст для рев'ю й виправлень |
+
+## 1. Подивитись, не встановлюючи
+
+- Як дивились:
+  - `DISABLE_TELEMETRY=1 npx skills@1.7.0 add "vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278" --list` — 9 скілів у паку, серед них `vercel-react-best-practices`; `git status` після цього — чисто, у репозиторій нічого не записано;
+  - `git clone --depth 1 --branch agent-skills-063bee9… https://github.com/vercel-labs/agent-skills.git ../review-agent-skills` — пошук командами з шаблону.
+- Склад скіла (76 файлів, 418 KB; CLI скопіює 75 — без `metadata.json`):
+
+  | Файл / тека | Розмір | Що це |
+  |---|---|---|
+  | `SKILL.md` | 7,4 KB | frontmatter + індекс 70 правил за 8 категоріями й пріоритетом |
+  | `AGENTS.md` | 112 KB | усі правила, зібрані в один документ |
+  | `README.md` | 3,5 KB | опис для людей, як збирати `AGENTS.md` |
+  | `rules/*.md` | 72 файли | 70 правил (`async-*`, `bundle-*`, `server-*`, `client-*`, `rerender-*`, `rendering-*`, `js-*`, `advanced-*`) + `_sections.md`, `_template.md` |
+  | `metadata.json` | 0,9 KB | версія 1.0.0, автор, список посилань; у встановлення не потрапляє |
+
+- Frontmatter `SKILL.md`: `name`, `description`, `license: MIT`, `metadata` (`author: vercel`, `version: "1.0.0"`). Полів `allowed-tools`, `hooks`, `context`, `model` **немає**.
+
+## 2. Що скіл може виконати, завантажити чи змінити
+
+| Перевірка | Результат | Як перевіряли |
+|---|---|---|
+| `scripts/` та інші виконувані файли | Немає. Єдиний не-markdown файл — `metadata.json` (дані) | `find "$S" -type f ! -name "*.md"` |
+| `allowed-tools` | Немає — скіл не отримує попередніх дозволів на інструменти | frontmatter через `awk` |
+| Команди під час рендеру `` !`cmd` `` | Немає | `grep -rn '!\`' "$S"` — 0 збігів |
+| Хуки, MCP-сервери, `plugin.json`, API-ключі | Немає | `find` за `*hooks*.json`, `*mcp*.json`, `plugin.json`, `settings*.json` — 0 |
+| Інструкції агенту щось завантажити чи виконати | Лише приклад `npx svgo --precision=1 --multipass icon.svg` у правилі `rendering-svg-precision` (і його копія в `AGENTS.md`) — порада розробнику, як оптимізувати SVG, а не команда агенту виконати її зараз. `curl`/`wget`/`WebFetch` — немає | `grep -rnE "npx \|curl \|wget \|Invoke-WebRequest\|WebFetch"` |
+| Посилання | 35 унікальних URL: react.dev, nextjs.org, vercel.com (блог, docs), MDN, swr.vercel.app, GitHub (`isaacs/node-lru-cache`, `shuding/better-all`), esbuild/vite/webpack docs, `example.com` у прикладах коду. Жодного «прочитай/завантаж інструкції звідси» | `grep -rhoE "https?://…" \| sort -u` |
+| Приховані інструкції | HTML-коментарів, «ignore previous», «system prompt» — немає; файлів із zero-width символами — 0; довгих base64-рядків — немає | `grep -rniE`, node-скрипт з шаблону, `grep -rnoE "[A-Za-z0-9+/]{80,}"` |
+
+**Підсумок:** скіл — лише текст (markdown). Виконуваного коду, дозволів, хуків і мережевих дій немає.
+Ризик — у змісті порад (див. пункт 5), а не у виконанні.
+
+## 3. Аудити
+
+| Аудит | Результат | Дата аналізу |
+|---|---|---|
+| Gen (Agent Trust Hub) | PASS · Risk Level SAFE (позначка `INDIRECT_PROMPT_INJECTION` — лише як «поверхня»: скіл читає код користувача) | 14.09.2026 |
+| Socket | PASS · malicious behavior / security concerns / obfuscation / suspicious patterns — чисто | 14.09.2026 |
+| Snyk | PASS · Risk Level LOW, «No issues detected» | 14.09.2026 |
+
+- Де взяли: [skills.sh](https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices) → сторінки `/security/agent-trust-hub`, `/security/socket`, `/security/snyk`.
+- Чому CLI не показав блок: команду `--list` запускали з `DISABLE_TELEMETRY=1` — з нею CLI аудити не завантажує. Крім того, у сесії агента CLI сам вмикає `--yes`, тому встановлення запускаємо самі у звичайному терміналі.
+- До чого прив'язаний аудит: до **«репозиторій + назва скіла»** (поточний стан `main`), а не до нашого тега — Socket вказує хеш вмісту `@ca7b0c0c…`, а не коміт `063bee9`. Щоб зрозуміти, чи аудит стосується нашої версії, перевірили історію теки: останній коміт у `skills/react-best-practices` — `dc8367e` від 14.04.2026, тобто задовго до тега (28.08.2026) і аудиту (14.09.2026). Отже вміст тега = вміст, який аудитували. При оновленні тега цей висновок треба перевіряти заново.
+
+## 4. Ліцензія й походження
+
+- Ліцензія: **MIT**, заявлена лише у frontmatter `SKILL.md` (`license: MIT`). Файлу `LICENSE` у корені репозиторію немає (GitHub API: `license: null`, `/contents/LICENSE` → 404). Для внутрішнього використання в клієнтському проєкті прийнятно, але варто знати: юридично ліцензія задекларована лише в одному полі.
+- Видавець і активність: організація `vercel-labs` (офіційна лабораторна організація Vercel), `metadata.author: vercel`. Репозиторій створено 08.12.2025, ~31,6K зірок, останній push — 28.08.2026. На skills.sh — 747,5K встановлень, first seen 19.01.2026.
+
+## 5. Чи правдивий зміст для нашого стеку
+
+_Допишемо після кроку 5 Task A (рев'ю застосунку й звірка з `node_modules/next/dist/docs/`)._
+
+| Порада скіла (id) | Що каже скіл | Що каже документація нашої версії | Висновок |
+|---|---|---|---|
+| | | | |
+
+## 6. Закріплення версії й коміт
+
+- Команда встановлення (запускаємо самі, у звичайному терміналі, scope → Project):
+  ```bash
+  DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 \
+    --skill vercel-react-best-practices -a claude-code --copy
+  ```
+- Де лягли файли; справжні файли чи посилання: `.claude/skills/vercel-react-best-practices/` — справжні файли (`--copy`), без `.agents/skills/` і без junction.
+- Що потрапило в git: тека скіла (75 файлів) і `skills-lock.json` (джерело, тег, хеш).
+- Як оновлювати: та сама команда з новим тегом → `git diff .claude/skills/vercel-react-best-practices` → рев'ю змін за цим чеклістом (і перевірка, до якої версії прив'язаний аудит) → окремий коміт.
+
+## Вердикт
+
+**Встановити з умовами.** Скіл — лише markdown без скриптів, `allowed-tools`, хуків і мережевих
+дій, три аудити — PASS, видавець — Vercel. Ризик низький і полягає в змісті: правила не прив'язані
+до версії Next.js, тож кожну пораду перед застосуванням звіряємо з `node_modules/next/dist/docs/`
+(Next.js 16.3.5). Умови: лише закріплений тег і `--copy`; оновлення — тільки через повторне рев'ю;
+команди з прикладів (`npx svgo …`) агент без запиту не виконує.
