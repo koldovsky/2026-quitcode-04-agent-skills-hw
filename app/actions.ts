@@ -6,8 +6,10 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { triggerWorkflow } from "@/lib/n8n/client";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
+import { parseNoteForm, type NoteFormField } from "@/lib/note-form";
 import type { LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
@@ -74,6 +76,51 @@ export async function submitLead(
     if (!result.ok) console.error(`n8n lead-created failed lead=${lead.id} reason=${result.reason}`);
     await logAudit("lead.created", lead.id);
   });
+
+  return { status: "ok" };
+}
+
+export type AddNoteState =
+  | { status: "idle" }
+  | {
+      status: "invalid";
+      errors: Partial<Record<NoteFormField, string>>;
+      values: Partial<Record<NoteFormField, string>>;
+    }
+  | { status: "ok" }
+  | { status: "error"; message: string };
+
+export async function addLeadNote(
+  _prevState: AddNoteState,
+  formData: FormData,
+): Promise<AddNoteState> {
+  // A Server Action is a public endpoint: authenticate and check the record
+  // belongs to this user's workspace before trusting the id from the form.
+  const user = await getCurrentUser();
+  const workspace = await getWorkspace(user.workspaceSlug);
+
+  const leadId = formData.get("leadId");
+  if (typeof leadId !== "string" || !leadId) {
+    return { status: "error", message: "Не вдалося зберегти нотатку" };
+  }
+
+  const lead = await getLead(leadId);
+  if (!lead || lead.workspaceId !== workspace.id) {
+    return { status: "error", message: "Лід не знайдено" };
+  }
+
+  const parsed = parseNoteForm(formData);
+  if (!parsed.ok) {
+    return { status: "invalid", errors: parsed.errors, values: parsed.values };
+  }
+
+  const ok = await db.appendLeadNote(leadId, parsed.data.note, user.name);
+  if (!ok) {
+    return { status: "error", message: "Не вдалося зберегти нотатку" };
+  }
+
+  after(() => logAudit("lead.note_added", leadId));
+  revalidatePath(`/dashboard/leads/${leadId}`);
 
   return { status: "ok" };
 }

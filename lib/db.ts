@@ -37,6 +37,7 @@ const LATENCY_MS = {
   getSourceBreakdown: 400,
   getLead: 80,
   insertLead: 120,
+  appendLeadNote: 80,
   updateLeadStatus: 80,
   deleteLead: 80,
   insertAuditEntry: 250,
@@ -379,6 +380,18 @@ export const db = {
       };
       store.leads.push(lead);
       return structuredClone(lead);
+    });
+  },
+
+  appendLeadNote(id: string, note: string, author: string) {
+    return query("appendLeadNote", () => {
+      const lead = store.leads.find((l) => l.id === id);
+      if (!lead) return false;
+      const stamp = new Date().toISOString();
+      const entry = `[${stamp}] ${author}: ${note}`;
+      lead.internalNotes = lead.internalNotes ? `${lead.internalNotes}\n${entry}` : entry;
+      lead.updatedAt = stamp;
+      return true;
     });
   },
 
