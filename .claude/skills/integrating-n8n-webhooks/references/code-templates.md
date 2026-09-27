@@ -144,11 +144,12 @@ export async function POST(request: Request, context: { params: Promise<{ event:
   // Object.hasOwn: "constructor", "toString" or "__proto__" in the path must be 404 too.
   const handle = Object.hasOwn(HANDLERS, event) ? HANDLERS[event] : undefined;
   if (!handle) return reply(404, "unknown", correlationId); // the path is attacker-controlled: not logged
-  if (!request.headers.get("content-type")?.startsWith("application/json")) return reply(415, event, correlationId);
+  if (mediaType(request) !== "application/json") return reply(415, event, correlationId);
 
-  // 2–3. Raw body, read once, size-limited.
-  const raw = await request.text();
-  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return reply(413, event, correlationId);
+  // 2–3. Raw body, read once and capped while it arrives: a forged request cannot make the route
+  // buffer more than 64 KB before the signature is checked.
+  const raw = await readRawBody(request, MAX_BODY_BYTES);
+  if (raw === null) return reply(413, event, correlationId);
 
   // 4. Timestamp window against replays.
   const timestamp = Number(request.headers.get("x-n8n-timestamp"));
@@ -210,6 +211,40 @@ export async function POST(request: Request, context: { params: Promise<{ event:
   // 9.
   log(202, event, correlationId, raw);
   return Response.json({ ok: true }, { status: 202 });
+}
+
+// The media type without parameters, case-insensitive: "application/json; charset=utf-8" is JSON,
+// "application/jsonp" is not.
+function mediaType(request: Request) {
+  return request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() ?? "";
+}
+
+// The raw body as text, or null once it exceeds `limit` bytes: by content-length before reading,
+// otherwise while the chunks arrive (the stream is cancelled, the rest is never read).
+async function readRawBody(request: Request, limit: number): Promise<string | null> {
+  if (Number(request.headers.get("content-length")) > limit) return null;
+  if (!request.body) return "";
+  let size = 0;
+  let tooLarge = false;
+  const capped = request.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        size += chunk.byteLength;
+        if (size > limit) {
+          tooLarge = true;
+          controller.error(new Error("body too large"));
+        } else {
+          controller.enqueue(chunk);
+        }
+      },
+    }),
+  );
+  try {
+    return await new Response(capped).text();
+  } catch (error) {
+    if (tooLarge) return null;
+    throw error;
+  }
 }
 
 // The header arrives before anything is verified: log it only in the UUID shape the contract

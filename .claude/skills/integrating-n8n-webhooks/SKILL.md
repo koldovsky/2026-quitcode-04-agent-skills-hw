@@ -60,7 +60,8 @@ metadata:
    `queued` і повертає `{ status, id }`; виклик n8n з повторами — в `after()`
    (`server-after-nonblocking`). Користувач на n8n не чекає.
 4. **Колбек** — строго в порядку з [callback.md](references/callback.md): подія зі шляху → 404,
-   `content-type` → 415, `await request.text()` (не `.json()`), > 64 КБ → 413, час поза ±300 с →
+   тип медіа не рівно `application/json` → 415, сире тіло з лімітом 64 КБ ще під час читання
+   (`readRawBody` → `.text()`, не `.json()`) → 413, час поза ±300 с →
    401, HMAC + `timingSafeEqual` (спершу довжини) → 401, «застовпити» ключ (дубль → 200
    `{"duplicate":true}`), лише тоді `JSON.parse` і звірка тіла з шляхом і ключем → 400, зберегти
    стан, 202. Впало після «застовпити» — ключ звільнити. Повільне — в `after()`.
@@ -79,7 +80,7 @@ metadata:
 - [ ] 4. Заголовки x-n8n-token, idempotency-key (той самий у повторах), x-correlation-id.
 - [ ] 5. data — мінімум для воркфлоу, не рядок з бази (без IP, user agent, нотаток, сирої форми).
 - [ ] 6. Server Action не чекає на n8n: запис queued → { status, id } → after().
-- [ ] 7. Колбек: request.text() до підпису; JSON.parse лише після timingSafeEqual; вікно 300 с.
+- [ ] 7. Колбек: сире тіло (.text()) з лімітом під час читання; JSON.parse лише після timingSafeEqual; вікно 300 с.
 - [ ] 8. Колбек: idempotency-key застовплено, звірено з тілом, звільнено при збої; 202 після запису.
 - [ ] 9. Журнали без тіл, персональних даних і секретів.
 - [ ] 10. node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs (з кореня проєкту) — 0 FAIL.
