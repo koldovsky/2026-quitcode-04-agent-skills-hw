@@ -5,7 +5,8 @@ import { QuoteStatusRefresh } from "@/components/quote-status-refresh";
 import { QUOTE_EXPECTED_MS, getQuote } from "@/lib/quotes";
 import type { QuoteStatus } from "@/lib/types";
 
-// Anyone with the link sees this page (the id is a random UUID), so it shows no email and isn't indexed.
+// Anyone with the link sees this page (the id is a random UUID), so it shows neither the email nor the
+// task description, and isn't indexed.
 export const metadata: Metadata = {
   title: "Статус кошторису · Studio Nova",
   robots: { index: false, follow: false },
@@ -117,10 +118,6 @@ export default async function QuotePage({ params }: PageProps<"/quotes/[id]">) {
             <dd className="font-medium">{dateTimeFormat.format(new Date(quote.createdAt))}</dd>
           </div>
         </dl>
-        <div>
-          <h3 className="text-slate-500">Опис задачі</h3>
-          <p className="mt-1 whitespace-pre-line break-words text-slate-700">{quote.description}</p>
-        </div>
       </section>
     </div>
   );
