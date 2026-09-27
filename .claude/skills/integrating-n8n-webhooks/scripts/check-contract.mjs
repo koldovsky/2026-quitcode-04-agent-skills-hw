@@ -4,7 +4,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join, posix, relative, resolve, sep } from "node:path";
 
 const HELP = `check-contract.mjs — static check of the Next.js <-> n8n contract (skill integrating-n8n-webhooks)
 
@@ -21,8 +21,8 @@ Options:
 Checks (each prints PASS or FAIL; FAIL lists file:line):
   C1  No test webhook URL (/webhook-test/) in code or .env.example
   C2  No N8N_* variable with the NEXT_PUBLIC_ prefix
-  C3  n8n is called only from lib/n8n/ (fetch to n8n, process.env.N8N_*)
-  C4  lib/n8n/ modules with runtime code start with import "server-only"
+  C3  n8n is called only from lib/n8n/ (fetch to n8n, process.env.N8N_*), wherever the code lives
+  C4  Modules that call n8n (lib/n8n/ and any other) start with import "server-only"
   C5  Every fetch to n8n has a timeout: signal: AbortSignal.timeout(...)
   C6  Requests to n8n set the headers x-n8n-token, idempotency-key and x-correlation-id
   C7  Callback route reads the raw body (request.text()); no .json(), no JSON.parse
@@ -40,7 +40,10 @@ Checks (each prints PASS or FAIL; FAIL lists file:line):
 Scanned: *.ts, *.tsx, *.js, *.jsx, *.mjs, *.cjs and .env.example under --root, except
 node_modules, .next, .git, .claude, .agents, .cursor, .codex, tools, docs, materials.
 Both app/ + lib/ and src/app/ + src/lib/ layouts. A callback route is app/api/n8n/**/route.*
-or any route.* that mentions x-n8n-signature. Secret values are never printed.
+or any route.* that mentions x-n8n-signature, or a POST route that mentions n8n and does not call it.
+A fetch is a call to n8n when its URL mentions n8n or is a variable named or assigned like a
+webhook URL. Helpers imported from local modules are followed one level. Secret values are
+never printed.
 
 Exit code: 0 — no FAIL, 1 — at least one FAIL, 2 — usage error.`;
 
@@ -220,8 +223,8 @@ function changedLines(root, ref) {
 const N8N_TARGET = /N8N_|n8n|:5678|\/webhook(-test)?\//i;
 const N8N_LIB = /^(src\/)?lib\/n8n\//;
 const inN8nLib = (rel) => N8N_LIB.test(rel);
-const isCallbackRoute = (f) =>
-  /(^|\/)route\.(ts|js|mjs)$/.test(f.rel) && (/^(src\/)?app\/api\/n8n\//.test(f.rel) || /x-n8n-signature/i.test(f.code));
+const isRoute = (f) => /(^|\/)route\.(ts|js|mjs)$/.test(f.rel);
+const hasPostHandler = (f) => /export\s+(?:async\s+)?function\s+(?:POST|PUT|PATCH)\b|export\s+const\s+(?:POST|PUT|PATCH)\s*=/.test(f.bare);
 const isServerActionFile = (f) => /^\s*["']use server["']/.test(f.code);
 const SECRET_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE/i;
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?/;
@@ -234,52 +237,62 @@ function envText(line) {
   return m && SECRET_NAME.test(m[1]) ? `${m[1]}=<значення приховано>` : line.trim();
 }
 
+// A fetch counts as a call to n8n when it is in lib/n8n/, its arguments mention n8n (N8N_* env,
+// :5678, /webhook/), or its URL is a variable named like a webhook or assigned from such a value —
+// so code outside the agreed files (e.g. fetch(webhookUrl, …) in lib/quotes.ts) is checked too.
 function n8nFetches(file) {
   const found = [];
   for (const m of file.bare.matchAll(/\bfetch\s*\(/g)) {
     const open = m.index + m[0].length - 1;
     const args = callArgs(file, open);
-    if (inN8nLib(file.rel) || N8N_TARGET.test(args)) found.push({ index: m.index, args });
+    const target = /^\s*([\w$.]+)/.exec(args)?.[1] ?? "";
+    const declared = target
+      ? new RegExp(`(?:const|let|var)\\s+${escapeRe(target.split(".")[0])}\\s*(?::[^=]+)?=([^;\\n]+)`).exec(file.code)?.[1]
+      : null;
+    if (inN8nLib(file.rel) || N8N_TARGET.test(args) || /n8n|webhook/i.test(target) || (declared && N8N_TARGET.test(declared)))
+      found.push({ index: m.index, args });
   }
   return found;
 }
 
-// Local names imported from lib/n8n/* (value imports only).
-function n8nImports(file) {
-  const names = [];
-  // The clause has no quotes or semicolons, so a match never spans two import statements.
-  const re = /import\s+(type\s+)?([\w$\s{},*]+?)\s+from\s+["'](?:@\/|(?:\.\.?\/)+)(?:src\/)?lib\/n8n(?:\/[\w.-]+)*["']/g;
-  for (const m of file.code.matchAll(re)) {
+// Value imports of a file: [{ local, imported, spec }]. The clause has no quotes or semicolons,
+// so a match never spans two import statements.
+function importsOf(file) {
+  const out = [];
+  for (const m of file.code.matchAll(/import\s+(type\s+)?([\w$\s{},*]+?)\s+from\s+["']([^"']+)["']/g)) {
     if (m[1]) continue;
     const clause = m[2].trim();
+    const spec = m[3];
     const named = /\{([^}]*)\}/.exec(clause);
     if (named)
       for (const part of named[1].split(",")) {
         const p = part.trim();
         if (!p || p.startsWith("type ")) continue;
-        names.push(/\bas\s+([\w$]+)$/.exec(p)?.[1] ?? p);
+        const alias = /^([\w$]+)\s+as\s+([\w$]+)$/.exec(p);
+        out.push(alias ? { imported: alias[1], local: alias[2], spec } : { imported: p, local: p, spec });
       }
     const ns = /\*\s+as\s+([\w$]+)/.exec(clause);
-    if (ns) names.push(ns[1]);
+    if (ns) out.push({ imported: "*", local: ns[1], spec });
     const def = /^([\w$]+)\s*(,|$)/.exec(clause);
-    if (def) names.push(def[1]);
+    if (def) out.push({ imported: "default", local: def[1], spec });
   }
-  return names;
+  return out;
 }
 
-// Positions where a file calls n8n: fetch to n8n or a function imported from lib/n8n.
-function n8nCalls(file, fetches) {
-  const calls = fetches.map((c) => c.index);
-  for (const name of n8nImports(file)) {
-    const re = new RegExp(`(?<![\\w$.])${escapeRe(name)}(?:\\.[\\w$]+)?\\s*\\(`, "g");
-    for (const m of file.bare.matchAll(re)) calls.push(m.index);
-  }
-  return calls;
+// "@/lib/x" or "./x" -> the scanned file it points to (app/ + lib/ or src/ layout).
+function resolveSpec(fromRel, spec, byRel) {
+  let bases;
+  if (spec.startsWith("@/")) bases = [spec.slice(2), `src/${spec.slice(2)}`];
+  else if (spec.startsWith(".")) bases = [posix.normalize(posix.join(posix.dirname(fromRel), spec))];
+  else return null;
+  for (const b of bases)
+    for (const ext of ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", "/index.ts", "/index.tsx", "/index.js"]) if (byRel.has(b + ext)) return b + ext;
+  return null;
 }
 
-// Names of functions in the file whose body calls timingSafeEqual (e.g. a safeEqual helper).
-function verifierNames(file) {
-  const names = new Set();
+// Function declarations and function-valued consts, with the span of their body.
+function functionSpans(file) {
+  const spans = [];
   const re = /function\s+([\w$]+)\s*(?:<[^>]*>)?\s*\(|(?:const|let|var)\s+([\w$]+)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:function\b[^(]*)?\(/g;
   for (const m of file.bare.matchAll(re)) {
     const paramsOpen = m.index + m[0].length - 1;
@@ -288,21 +301,59 @@ function verifierNames(file) {
     const statementEnd = file.bare.indexOf(";", paramsEnd);
     const blockBody = bodyOpen !== -1 && /^\s*(?::[^=;{]*)?(?:=>)?\s*$/.test(file.bare.slice(paramsEnd + 1, bodyOpen));
     const end = blockBody ? closing(file, bodyOpen) : statementEnd === -1 ? file.bare.length : statementEnd;
-    if (/timingSafeEqual\s*\(/.test(file.bare.slice(paramsEnd, end))) names.add(m[1] ?? m[2]);
+    spans.push({ name: m[1] ?? m[2], start: m.index, end });
   }
-  return names;
+  return spans;
 }
 
-// Where the signature is verified inside the request handler (first call of timingSafeEqual
-// or of a helper that calls it), and where the handler starts.
-function verification(file) {
+// What the checks need to know about the project as a whole: which files and functions call
+// n8n, which functions verify a signature, what each file imports, which routes are callbacks.
+function buildModel(files) {
+  const byRel = new Map(files.map((f) => [f.rel, f]));
+  const fetches = new Map(files.map((f) => [f.rel, n8nFetches(f)]));
+  const spans = new Map(files.map((f) => [f.rel, functionSpans(f)]));
+  const names = (rel, test) => new Set(spans.get(rel).filter(test).map((s) => s.name));
+  const n8nFns = new Map(files.map((f) => [f.rel, names(f.rel, (s) => fetches.get(f.rel).some((c) => c.index > s.start && c.index < s.end))]));
+  const verifyFns = new Map(files.map((f) => [f.rel, names(f.rel, (s) => /timingSafeEqual\s*\(/.test(f.bare.slice(s.start, s.end)))]));
+  const imports = new Map(files.map((f) => [f.rel, importsOf(f).map((i) => ({ ...i, rel: resolveSpec(f.rel, i.spec, byRel) }))]));
+  // Local names through which a file reaches n8n: anything from lib/n8n/*, or a function of
+  // another module that itself calls n8n.
+  const n8nImportNames = (f) =>
+    imports
+      .get(f.rel)
+      .filter((i) => (i.rel ? inN8nLib(i.rel) || (i.imported === "*" ? n8nFns.get(i.rel).size > 0 : n8nFns.get(i.rel).has(i.imported)) : /(^|\/)lib\/n8n(\/|$)/.test(i.spec)))
+      .map((i) => i.local);
+  // A callback route is where n8n reports back: app/api/n8n/**, a route reading x-n8n-signature,
+  // or a POST route that mentions n8n (code or comments) and does not call n8n itself.
+  const callbacks = files.filter(
+    (f) => isRoute(f) && (/^(src\/)?app\/api\/n8n\//.test(f.rel) || /x-n8n-signature/i.test(f.code) || (/n8n/i.test(f.src) && hasPostHandler(f) && !fetches.get(f.rel).length)),
+  );
+  // The file plus the local modules it imports directly (helpers for signatures, keys, time).
+  const related = (f) => [...new Set([f, ...imports.get(f.rel).map((i) => i.rel && byRel.get(i.rel)).filter(Boolean)])];
+  return { fetches, n8nFns, verifyFns, imports, n8nImportNames, callbacks, related };
+}
+
+// Positions where a file calls n8n: fetch to n8n or a function that reaches n8n.
+function n8nCalls(file, m) {
+  const calls = m.fetches.get(file.rel).map((c) => c.index);
+  for (const name of m.n8nImportNames(file)) {
+    const re = new RegExp(`(?<![\\w$.])${escapeRe(name)}(?:\\.[\\w$]+)?\\s*\\(`, "g");
+    for (const mm of file.bare.matchAll(re)) calls.push(mm.index);
+  }
+  return calls;
+}
+
+// Where the signature is verified inside the request handler (first call of timingSafeEqual or
+// of a local or imported helper that calls it), and where the handler starts.
+function verification(file, m) {
   const handler = /export\s+(?:async\s+)?function\s+(?:POST|PUT|PATCH)\b|export\s+const\s+(?:POST|PUT|PATCH)\s*=/.exec(file.bare);
   const start = handler ? handler.index : 0;
+  const names = new Set(["timingSafeEqual", ...m.verifyFns.get(file.rel)]);
+  for (const i of m.imports.get(file.rel)) if (i.rel && m.verifyFns.get(i.rel).has(i.imported)) names.add(i.local);
   let first = Infinity;
-  const names = ["timingSafeEqual", ...verifierNames(file)];
   for (const name of names)
-    for (const m of file.bare.matchAll(new RegExp(`(?<![\\w$.])${escapeRe(name)}\\s*\\(`, "g")))
-      if (m.index >= start && !/function\s+$/.test(file.bare.slice(Math.max(0, m.index - 20), m.index))) first = Math.min(first, m.index);
+    for (const mm of file.bare.matchAll(new RegExp(`(?<![\\w$.])${escapeRe(name)}\\s*\\(`, "g")))
+      if (mm.index >= start && !/function\s+$/.test(file.bare.slice(Math.max(0, mm.index - 20), mm.index))) first = Math.min(first, mm.index);
   return { start, first };
 }
 
@@ -349,10 +400,12 @@ function runChecks(files, envExample) {
   const at = (file, index, fileLevel = false) => ({ file: file.rel, line: file.line(index), text: file.snippet(file.line(index)), fileLevel });
   const whole = (file, text) => ({ file: file.rel, line: 1, text, fileLevel: true });
 
-  const fetchesByFile = new Map(files.map((f) => [f.rel, n8nFetches(f)]));
+  const model = buildModel(files);
+  const fetchesByFile = model.fetches;
   const n8nFiles = files.filter((f) => fetchesByFile.get(f.rel).length || inN8nLib(f.rel));
-  const callbacks = files.filter(isCallbackRoute);
-  const callers = files.filter((f) => n8nImports(f).length);
+  const callbacks = model.callbacks;
+  const isCallback = (f) => callbacks.includes(f);
+  const callers = files.filter((f) => model.n8nImportNames(f).length);
 
   // C1
   {
@@ -381,7 +434,7 @@ function runChecks(files, envExample) {
       if (inN8nLib(f.rel)) continue;
       for (const call of fetchesByFile.get(f.rel)) findings.push(at(f, call.index));
       for (const m of f.code.matchAll(/process\.env(?:\.|\[\s*["'])(N8N_\w+)/g)) {
-        const allowedInCallback = m[1] === "N8N_CALLBACK_SECRET" && isCallbackRoute(f);
+        const allowedInCallback = m[1] === "N8N_CALLBACK_SECRET" && isCallback(f);
         if (!allowedInCallback) findings.push(at(f, m.index));
       }
     }
@@ -391,12 +444,16 @@ function runChecks(files, envExample) {
   {
     const findings = [];
     const runtime = /\bexport\s+(?:default\b|(?:async\s+)?function\b|const\b|let\b|class\b)|\bfetch\s*\(|process\.env|node:crypto/;
-    const targets = files.filter((f) => inN8nLib(f.rel) && runtime.test(f.bare));
+    // lib/n8n/ modules with runtime code, and any other module that calls n8n (routes and
+    // "use server" files are server-only by themselves).
+    const targets = files.filter(
+      (f) => (inN8nLib(f.rel) && runtime.test(f.bare)) || (fetchesByFile.get(f.rel).length && !isRoute(f) && !isServerActionFile(f)),
+    );
     for (const f of targets) {
       const first = f.code.search(/\S/);
       if (!/^import\s+["']server-only["']/.test(f.code.slice(first))) findings.push({ ...at(f, Math.max(first, 0), true), text: 'перший рядок не import "server-only"' });
     }
-    add("C4", 'Модулі lib/n8n/ починаються з import "server-only"', findings, targets.length ? null : "немає модулів у lib/n8n/");
+    add("C4", 'Модулі, що викликають n8n, починаються з import "server-only"', findings, targets.length ? null : "немає модулів n8n");
   }
   // C5
   {
@@ -430,7 +487,7 @@ function runChecks(files, envExample) {
   {
     const findings = [];
     for (const f of callbacks) {
-      const { start, first } = verification(f);
+      const { start, first } = verification(f, model);
       for (const m of f.bare.matchAll(/\.json\s*\(\s*\)/g)) findings.push({ ...at(f, m.index), text: `${f.snippet(f.line(m.index))}  ← .json() замість request.text()` });
       for (const m of f.bare.matchAll(/JSON\.parse\s*\(/g))
         if (m.index >= start && m.index < first) findings.push({ ...at(f, m.index), text: `${f.snippet(f.line(m.index))}  ← JSON.parse до перевірки підпису` });
@@ -441,38 +498,50 @@ function runChecks(files, envExample) {
   // C8
   {
     const findings = [];
+    const scanned = new Set();
     for (const f of callbacks) {
-      const codeLines = f.code.split("\n");
-      const bareLines = f.bare.split("\n");
-      if (!/timingSafeEqual\s*\(/.test(f.bare)) findings.push(whole(f, "немає crypto.timingSafeEqual"));
-      bareLines.forEach((lb, k) => {
-        if (comparesSignature(codeLines[k], lb)) findings.push({ file: f.rel, line: k + 1, text: `${f.snippet(k + 1)}  ← підпис через ===/==` });
-        if (/\.equals\s*\(|Buffer\.compare\s*\(/.test(lb) && /sig(?!nal)|hmac|digest|expected/i.test(codeLines[k]))
-          findings.push({ file: f.rel, line: k + 1, text: `${f.snippet(k + 1)}  ← .equals()/Buffer.compare не сталого часу` });
-        // timingSafeEqual throws on different lengths: the lengths are compared first (same or previous 3 lines).
-        if (/timingSafeEqual\s*\(/.test(lb) && !/import\b/.test(lb) && !LENGTH_CHECK.test(bareLines.slice(Math.max(0, k - 3), k + 1).join("\n")))
-          findings.push({ file: f.rel, line: k + 1, text: `${f.snippet(k + 1)}  ← немає перевірки довжини перед timingSafeEqual` });
-      });
+      // The route and the helpers it imports: verification may live in e.g. lib/n8n/signature.ts.
+      const rel = model.related(f);
+      if (!rel.some((r) => /timingSafeEqual\s*\(/.test(r.bare))) findings.push(whole(f, "немає crypto.timingSafeEqual"));
+      if (!rel.some((r) => /x-n8n-signature/i.test(r.code)) || !rel.some((r) => /createHmac\s*\(/.test(r.bare)))
+        findings.push(whole(f, "немає перевірки підпису x-n8n-signature (HMAC-SHA256 від timestamp.rawBody)"));
+      for (const r of rel) {
+        if (scanned.has(r.rel)) continue;
+        scanned.add(r.rel);
+        const codeLines = r.code.split("\n");
+        const bareLines = r.bare.split("\n");
+        bareLines.forEach((lb, k) => {
+          if (comparesSignature(codeLines[k], lb)) findings.push({ file: r.rel, line: k + 1, text: `${r.snippet(k + 1)}  ← підпис через ===/==` });
+          if (/\.equals\s*\(|Buffer\.compare\s*\(/.test(lb) && /sig(?!nal)|hmac|digest|expected/i.test(codeLines[k]))
+            findings.push({ file: r.rel, line: k + 1, text: `${r.snippet(k + 1)}  ← .equals()/Buffer.compare не сталого часу` });
+          // timingSafeEqual throws on different lengths: the lengths are compared first (same or previous 3 lines).
+          if (/timingSafeEqual\s*\(/.test(lb) && !/import\b/.test(lb) && !LENGTH_CHECK.test(bareLines.slice(Math.max(0, k - 3), k + 1).join("\n")))
+            findings.push({ file: r.rel, line: k + 1, text: `${r.snippet(k + 1)}  ← немає перевірки довжини перед timingSafeEqual` });
+        });
+      }
     }
     add("C8", "Підпис: спершу довжини, потім timingSafeEqual; не ===", findings, callbacks.length ? null : "колбек-роутів немає");
   }
   // C9
   {
     const findings = [];
-    for (const f of callbacks) {
-      const lower = f.code.toLowerCase();
-      const bareLines = f.bare.split("\n");
-      const missing = [];
-      if (!lower.includes("x-n8n-timestamp")) missing.push("x-n8n-timestamp");
-      // The 300 s window: a literal or a constant holding it, next to Date.now() (±3 lines).
-      const windowNames = [...f.bare.matchAll(/(?:const|let)\s+([\w$]+)\s*(?::[^=]+)?=\s*(?:300|300_000|300000|5\s*\*\s*60(?:\s*\*\s*1000)?)\b/g)].map((m) => m[1]);
+    // The 300 s window in one file: a literal or a constant holding it, next to Date.now() (±3 lines).
+    const comparesWindow = (r) => {
+      const bareLines = r.bare.split("\n");
+      const windowNames = [...r.bare.matchAll(/(?:const|let)\s+([\w$]+)\s*(?::[^=]+)?=\s*(?:300|300_000|300000|5\s*\*\s*60(?:\s*\*\s*1000)?)\b/g)].map((m) => m[1]);
       const mentionsWindow = (text) => WINDOW_LITERAL.test(text) || windowNames.some((n) => new RegExp(`(?<![\\w$])${escapeRe(n)}(?![\\w$])`).test(text));
-      const compared = bareLines.some(
+      return bareLines.some(
         (l, k) => /Date\.now\s*\(\s*\)/.test(l) && bareLines.slice(Math.max(0, k - 3), k + 4).some((near) => mentionsWindow(near) && !/(?:const|let)\s+[\w$]+\s*(?::[^=]+)?=\s*[\d_ *]+;?\s*$/.test(near.trim())),
       );
-      if (!compared) missing.push("порівняння з Date.now() у вікні 300 с");
+    };
+    for (const f of callbacks) {
+      const rel = model.related(f);
+      const lower = rel.map((r) => r.code.toLowerCase()).join("\n");
+      const missing = [];
+      if (!lower.includes("x-n8n-timestamp")) missing.push("x-n8n-timestamp");
+      if (!rel.some(comparesWindow)) missing.push("порівняння з Date.now() у вікні 300 с");
       if (!lower.includes("idempotency-key")) missing.push("idempotency-key");
-      if (!/\bjobId\b/.test(f.bare)) missing.push("звірка ключа з data.jobId");
+      if (!rel.some((r) => /\bjobId\b/.test(r.bare))) missing.push("звірка ключа з data.jobId");
       if (missing.length) findings.push(whole(f, `немає: ${missing.join(", ")}`));
     }
     add("C9", "Колбек перевіряє час (±300 с) і idempotency-key", findings, callbacks.length ? null : "колбек-роутів немає");
@@ -532,11 +601,11 @@ function runChecks(files, envExample) {
         const open = m.index + m[0].length - 1;
         return [open, closing(f, open)];
       });
-      for (const index of n8nCalls(f, fetchesByFile.get(f.rel)))
+      for (const index of n8nCalls(f, model))
         if (!afterSpans.some(([s, e]) => index > s && index < e))
           findings.push({ ...at(f, index), text: `${f.snippet(f.line(index))}  ← виклик n8n поза after(): користувач чекає на n8n` });
     }
-    const relevant = actionFiles.some((f) => n8nCalls(f, fetchesByFile.get(f.rel)).length);
+    const relevant = actionFiles.some((f) => n8nCalls(f, model).length);
     add("C13", "Server Action не чекає на n8n: виклик лише в after()", findings, relevant ? null : "Server Actions не викликають n8n");
   }
   return results;
