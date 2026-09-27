@@ -194,7 +194,8 @@ function isCallbackData(value: unknown): value is CallbackData {
 
 export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]">) {
   const { event } = await ctx.params;
-  const handler = HANDLERS[event];
+  // Own keys only: "toString" or "__proto__" must be an unknown event, not an Object.prototype method.
+  const handler = Object.hasOwn(HANDLERS, event) ? HANDLERS[event] : undefined;
   if (!handler) return reply(404, { error: "unknown event" });
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return reply(415, { error: "unsupported media type" });

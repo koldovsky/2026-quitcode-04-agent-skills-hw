@@ -23,7 +23,8 @@ Environment:
   N8N_CALLBACK_SECRET      HMAC secret (the same value the app uses). Required.
 
 Cases (expected status):
-  unknown event path            404     wrong content-type          415
+  unknown event path            404     path "toString"             404
+  wrong content-type            415
   body over 64 KB               413     timestamp 10 min old        401
   timestamp 10 min ahead        401     wrong signature             401
   signature without sha256=     401     body reformatted after signing  401
@@ -103,6 +104,9 @@ const otherPath = new URL(url);
 otherPath.pathname = otherPath.pathname.replace(/[^/]+$/, "no-such-event-path");
 
 add("unknown event path", 404, () => send({ target: otherPath, raw: fakeRaw, key: fakeKey }));
+const protoPath = new URL(url);
+protoPath.pathname = protoPath.pathname.replace(/[^/]+$/, "toString");
+add("event path \"toString\" (Object.prototype key)", 404, () => send({ target: protoPath, raw: fakeRaw, key: fakeKey }));
 add("wrong content-type", 415, () => send({ raw: fakeRaw, key: fakeKey, contentType: "text/plain" }));
 add("body over 64 KB", 413, () => {
   const raw = JSON.stringify({ version: 1, event, data: { jobId: fakeJob, padding: "x".repeat(70 * 1024) } });
