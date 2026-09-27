@@ -1,4 +1,4 @@
-# Перевірка (Task A–C, бонус E3)
+# Перевірка (Task A–C)
 
 > Прогони A/B і фіча «запит на кошторис» — в окремому звіті `docs/ab-validation.md` (Task D).
 
@@ -22,7 +22,7 @@
 ### Рев'ю застосунку за скілом
 
 - **Як робили:** окремий агент із чистим контекстом (субагент Claude Code, без історії цієї сесії й без наших знахідок) у копії `../hw4-review-base` на коміті `c8d53ce`: скіл уже встановлено, виправлень ще немає. Запит — дослівно з walkthrough, крок 5; режим лише читання.
-- **Скіл спрацював?** Через інструмент Skill — ні: скіл встановили посеред сесії, і в індексі скілів цієї сесії його не було. Агент прочитав `SKILL.md` і 19 файлів `rules/*.md` напряму. Свіжа сесія CLI скіл бачить (див. вище); неінтерактивний `claude -p` з рев'ю запустити не вдалося — CLI не залогінений (`Not logged in`).
+- **Скіл спрацював?** Через інструмент Skill — ні: скіл встановили посеред сесії, і в індексі скілів цієї сесії його не було. Агент прочитав `SKILL.md` і 19 файлів `rules/*.md` напряму. Свіжа сесія CLI скіл бачить (див. вище); неінтерактивний `claude -p` з рев'ю на той момент запустити не вдалося — CLI ще не був залогінений (`Not logged in`); вхід у CLI (2.1.283) виконали пізніше, і всі наступні свіжі сесії (Task B, D, E2) запускались уже через `claude -p`.
 - **Відхилення:** у копії немає `node_modules`, тому документацію Next.js агент читав з `hw4/node_modules/next/dist/docs/` (та сама версія 16.3.5).
 
 Знахідки (від CRITICAL до LOW; ✅ — виправлено в Task A):
@@ -34,7 +34,7 @@
 | `components/leads-toolbar.tsx:6` | `bundle-dynamic-imports` | `SourcesChart` (recharts) у початковому чанку, показується лише після кліку | `next/dynamic` з `ssr: false` (файл уже Client Component) |
 | `components/lead-search.tsx:5` | `bundle-barrel-imports` | `import { debounce } from "lodash"` — увесь CJS-пакет; `lodash` (на відміну від `lodash-es`) не оптимізується автоматично | `lodash/debounce` або прибрати debounce (`useDeferredValue`) |
 | `app/actions.ts:68-77` | `server-auth-actions` ✅ | `updateLeadStatus`/`deleteLead` не перевіряють сесію й workspace; `proxy.ts` захищає лише сторінки `/dashboard/*`, а Server Action доступна прямим POST | `getCurrentUser()` + перевірка `lead.workspaceId` на початку кожної дії |
-| `app/dashboard/layout.tsx:6-7` → `components/dashboard-header.tsx:5-6` | `server-parallel-fetching` ✅ | header повторює запити user/workspace | дедуплікація через `cache()` (коміт `a6385fb`) |
+| `app/dashboard/layout.tsx:6-7` → `components/dashboard-header.tsx:5-6` | `server-parallel-fetching` | header повторює запити user/workspace | окремо не виправляли: дублікати прибрав `server-cache-react` (коміт `a6385fb`); твердження правила про послідовний рендер у Next.js 16 неточне (див. `docs/skill-review.md`, п. 5) |
 | `app/dashboard/leads/[id]/page.tsx:12-16` | `async-api-routes` | `getLead(id)` стартує лише після `getCurrentUser()` | стартувати проміс раніше, `Promise.all` |
 | `app/dashboard/page.tsx` (без `loading.tsx`) | `async-suspense-boundaries` | уся сторінка чекає найповільніший `getLeadStats` (1200 мс) | async-компоненти в `<Suspense>` / `loading.tsx` |
 | `app/dashboard/page.tsx:32` → `components/leads-table.tsx:12` | `server-serialization` ✅ | у Client Component — повні `Lead` з `rawPayload`, `internalNotes`, IP | лише 5 полів (коміт `ebff140`) |
@@ -207,11 +207,15 @@ PASS  C15  .env.example has the contract variables
 exit=0
 ```
 
-**Додатково: матриця колбеків** (`send-signed-callback.mjs`) — на шаблонному роуті до коміту — 13/13 PASS; на фінальному коді (гілка, `npm start` + мок):
+**Додатково: матриця колбеків** (`send-signed-callback.mjs`).
+
+- На шаблонному роуті до коміту скіла — 13/13 PASS: 10 негативних випадків + 3 з `--job-id` (валідний колбек → 202, повтор того самого ключа → 200 `{"duplicate":true}`, ті самі байти з новим ключем → 400).
+- На фінальному коді гілки (`npm start`) — 11 негативних випадків (після `d9956f7` додано шлях `toString` → 404). Валідний колбек на гілці перевірено моком (`callback … -> 202`, статус «Готово»); позитивні випадки матриці з `--job-id` тут не запускали: для них потрібен `requestIdempotencyKey` конкретного запиту, а застосунок його назовні не віддає (і не повинен).
 
 ```
-send-signed-callback · http://127.0.0.1:3000/api/n8n/quote-request · event quote-request.completed · 10 cases
+send-signed-callback · http://127.0.0.1:3000/api/n8n/quote-request · event quote-request.completed · 11 cases
 PASS  unknown event path                       expected 404, got 404
+PASS  event path "toString" (Object.prototype key) expected 404, got 404
 PASS  wrong content-type                       expected 415, got 415
 PASS  body over 64 KB                          expected 413, got 413
 PASS  timestamp 10 min old                     expected 401, got 401
@@ -222,13 +226,10 @@ PASS  body reformatted after signing           expected 401, got 401
 PASS  valid signature, key != jobId:event      expected 400, got 400
 PASS  valid signature, event of another path   expected 400, got 400
 
-0 FAIL, 10 PASS
+0 FAIL, 11 PASS
 exit=0
 ```
 
 ## Task E3 (бонус) — ті самі скіли в Cursor
 
-- Версія Cursor, модель: <…>
-- Які скіли Cursor побачив: <…>
-- Ті самі запити, що в Task B, і запит із `materials/ab-task.md`: спрацювали скіли чи ні: <…>
-- Чим поведінка відрізнялась від Claude Code: <…>
+Не виконувався: з трьох бонусних варіантів обрано **E2** — тест спрацювання скіла `integrating-n8n-webhooks`, див. [`docs/trigger-evals.md`](trigger-evals.md).

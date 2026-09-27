@@ -16,7 +16,7 @@
   Webhook' Node»; одразу за ним Remove Duplicates за `idempotency-key`, далі Respond to Webhook 202
   `{"job_id": "{{ $execution.id }}"}`.
 - Вхідні дані — `body.data`: `quoteId`, `company`, `budget` (число або `null`), `description`.
-  Email клієнта не передаємо.
+  Email клієнта не передаємо: його збирає форма `/quotes/new`, і він лишається в LeadDesk (запис запиту) для зв'язку менеджера з клієнтом; воркфлоу, що лише готує PDF, email не потрібен. Якщо воркфлоу колись надсилатиме PDF сам — додати `email` у `data` окремим рішенням і тут записати.
 - Після генерації PDF — підписаний колбек на `body.callbackUrl` (Raw JSON, `x-n8n-timestamp`,
   `x-n8n-signature`, `idempotency-key` = `<jobId>:quote-request.completed`, `x-correlation-id`).
   У `data`: `jobId`, `status`, `requestIdempotencyKey` (= вхідний `idempotency-key`),
