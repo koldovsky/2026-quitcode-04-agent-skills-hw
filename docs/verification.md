@@ -73,12 +73,25 @@
 
 ## Task B — `building-client-form`
 
+- **Сесія:** нова, неінтерактивна: `claude -p --output-format stream-json --verbose` (Claude Code CLI 2.1.283, модель `claude-opus-5-5`, effort за замовчуванням) з теки `hw4` на коміті `04d514b`. Дозволені інструменти: `Read, Grep, Glob, Skill, Edit, Write, Bash(npm run lint), Bash(npm run build)`. У `init` сесії серед скілів — `building-client-form` і `vercel-react-best-practices` (Project), `find-skills` (User).
 - Запит у свіжій сесії (скіл не названо):
-  > <запит>
-- Чи спрацював скіл і як це видно: <виклик `Skill` з `building-client-form` / читання `SKILL.md` / ні>
-- Якщо не з першого разу — що змінили в `description`, і результат другої спроби: <…>
-- Що зроблено (файли): <…>
-- Пункти Verify зі скіла — результат кожного: <…>
+  > На сторінці ліда в дашборді (/dashboard/leads/[id]) додай форму «Додати нотатку»: одне текстове поле до 500 символів; нотатка дописується до внутрішніх нотаток ліда.
+- **Чи спрацював скіл і як це видно:** так, з першої спроби. **Перший** виклик інструмента в журналі сесії — `Skill {"skill":"building-client-form"}`, ще до читання коду. Далі агент прочитав `app/actions.ts`, `lib/lead-form.ts`, `lib/data.ts` (посилання зі скіла) і перевірив `after` у `node_modules/next/dist/docs`. 25 ходів, 75 с. `description` не змінювали.
+- **Що зроблено (файли)** — коміт `70a2bac` (код агента без змін): `lib/note-form.ts` (`parseNoteForm`, `NoteFormState`), `components/note-form.tsx` (`useActionState`), `app/actions.ts` (`addLeadNote` + спільна перевірка `isOwnLead`), `lib/db.ts` (`appendInternalNote`), `app/dashboard/leads/[id]/page.tsx`. Агент сам не запустив lint/build: викликав `PowerShell`, а дозволено було лише `Bash(npm run …)` — дві відмови в `permission_denials`; запускали ми.
+- **Що довелось виправити руками** — коміт `e92b702`: агент передав id через `useActionState(addLeadNote.bind(null, leadId))`. Відправка **без JS** з такою дією не завершувалась: дія повертала `invalid`, серверні компоненти рендерились (перевірено тимчасовими мітками в layout/header/page), а відповідь висіла до обриву клієнтом (15 с; `next dev`: `application-code: 15.0s`). Публічна форма заявки (`useActionState` без `bind`) і кнопка «Вийти» без JS працювали. Замінили `bind` на приховане поле `leadId` → та сама відправка — 0,5 с. Висновок перенесено в скіл (коміт `6cbdc2a`, версія 0.1.1): id — hidden-полем, у Verify — «відповідь без JS не висить».
+
+**Пункти Verify зі скіла** (продакшн-збірка, `npm run build && npm start`; «без JS» — multipart POST з прихованими полями форми й заголовком `Origin`, як це робить браузер з вимкненим JavaScript):
+
+| Пункт Verify | Результат |
+|---|---|
+| `npm run lint`, `npm run build` | без помилок (на `70a2bac` і на `e92b702`) |
+| Порожня відправка | без JS: HTTP 200 за 483 мс, `role="alert"` «Перевірте 1 поле», під полем «Напишіть текст нотатки», `aria-invalid="true"`, `aria-describedby="note-text-error note-text-hint"`; з JS — те саме за 266 мс |
+| Помилка — введене не зникає | 501 символ без JS: «Нотатка задовга: 501 із 500 символів. Скоротіть її.», у полі лишились 500 символів; з JS (510 символів) — так само |
+| Відправка без JavaScript | до `e92b702` — **висла** (15 с, див. вище); після — коректна нотатка: HTTP 200 за 555 мс, `role="status"` «Нотатку додано», нотатка на сторінці |
+| Дія без сесії | POST без cookie → 307 на `/login` (`proxy.ts`), запис не змінено |
+| Дія для чужого об'єкта | Марта (Brightline) надсилає форму ліда Studio Nova (`lead_0002`) → дія повертає «Лід не знайдено», сторінка — 404; нотатку не дописано |
+| Час відповіді не залежить від аудиту | з JS: 557 мс від кліку до «Нотатку додано»; `logAudit` (250 мс) — в `after()`; кнопка `disabled` і «Зберігаємо…» під час відправки |
+| Журнал сервера без персональних даних | у журналі `npm start` лише `db:<запит>` і службові рядки Next.js; текстів нотаток і email — 0 збігів |
 
 ## Task C — `integrating-n8n-webhooks`
 
