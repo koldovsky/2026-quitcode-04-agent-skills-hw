@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   Lead,
@@ -5,6 +6,10 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
+  QuotePatch,
+  QuoteStatus,
   SourceCount,
   User,
   Workspace,
@@ -19,6 +24,7 @@ type Store = {
   users: User[];
   leads: Lead[];
   audit: AuditEntry[];
+  quotes: Quote[];
   nextLeadNumber: number;
 };
 
@@ -36,6 +42,10 @@ const LATENCY_MS = {
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuote: 120,
+  getQuote: 80,
+  updateQuoteIfStatus: 80,
+  completeQuote: 80,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -262,12 +272,14 @@ function createStore(): Store {
     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
   ];
   const leads = seedLeads(200, workspaces, users);
-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
+  return { workspaces, users, leads, audit: [], quotes: [], nextLeadNumber: leads.length + 1 };
 }
 
 // One store per server process (also survives module reloads in `next dev`).
 const globalForStore = globalThis as unknown as { leadDeskStore?: Store };
 const store = (globalForStore.leadDeskStore ??= createStore());
+// A store created by `next dev` before quotes existed survives module reloads without them.
+store.quotes ??= [];
 
 const SESSION_PREFIX = "demo-";
 
@@ -392,6 +404,57 @@ export const db = {
   insertAuditEntry(entry: AuditEntry) {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
+    });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        id: randomUUID(),
+        status: "queued",
+        jobId: null,
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      store.quotes.push(quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  // Conditional update (UPDATE … WHERE id = $1 AND status = $2): the n8n callback may arrive
+  // before after() records "processing", and must not be overwritten by it.
+  updateQuoteIfStatus(id: string, expected: QuoteStatus, patch: QuotePatch) {
+    return query("updateQuoteIfStatus", () => {
+      const quote = store.quotes.find((q) => q.id === id && q.status === expected);
+      if (!quote) return false;
+      Object.assign(quote, patch, { updatedAt: new Date().toISOString() });
+      return true;
+    });
+  },
+
+  // Saves the workflow result. The quote is found by the idempotency key of the original request
+  // (data.requestIdempotencyKey) or by the n8n execution id saved after the 202 (data.jobId).
+  // "ready" is final; "failed" may still complete (the trigger timed out, but n8n did run).
+  completeQuote(match: { requestIdempotencyKey?: string; jobId: string }, patch: QuotePatch & { status: QuoteStatus }) {
+    return query("completeQuote", () => {
+      const quote = store.quotes.find((q) =>
+        match.requestIdempotencyKey ? q.idempotencyKey === match.requestIdempotencyKey : q.jobId === match.jobId,
+      );
+      if (!quote) return "not_found" as const;
+      if (quote.status === "ready") return "already_final" as const;
+      Object.assign(quote, patch, { jobId: quote.jobId ?? match.jobId, updatedAt: new Date().toISOString() });
+      return "updated" as const;
     });
   },
 };
