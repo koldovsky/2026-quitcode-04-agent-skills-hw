@@ -13,7 +13,7 @@ description: >-
   Не для форм пошуку чи фільтрів без запису на сервер і не для вигляду/стилів форми.
 metadata:
   owner: studio-nova-dev
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Форма клієнта: Server Action + useActionState
@@ -76,6 +76,10 @@ const [state, formAction, pending] = useActionState(saveNote, { status: "idle" }
 ```
 
 - `action={formAction}` на `<form>` — без `onSubmit` і `fetch`: без JS форма теж надсилається.
+- Id об'єкта (ліда, запиту) — **прихованим полем** `<input type="hidden" name="leadId" value={leadId} />`,
+  а не `useActionState(action.bind(null, id))`: у Next.js 16.3.5 / React 19.2 відповідь без JS з
+  прив'язаною дією не завершується (перевірено в Task B). Id від клієнта безпечний лише тому, що
+  дія перевіряє права (крок 1 розділу 1).
 - `pending` → `disabled` і текст кнопки («Зберігаємо…»); повторна відправка неможлива.
 - Після `ok` — повідомлення про успіх у `role="status"`.
 
@@ -107,7 +111,7 @@ const [state, formAction, pending] = useActionState(saveNote, { status: "idle" }
 - [ ] 1. Дія починається з перевірки сесії й прав (для внутрішніх форм) — до будь-якого запису.
 - [ ] 2. Уся валідація — на сервері в parse<Name>Form; ліміти довжини й enum перевірено.
 - [ ] 3. Дія повертає лише { status, errors?, values?, message? } — без рядків з бази.
-- [ ] 4. Форма: useActionState, <form action={formAction}>, pending блокує кнопку.
+- [ ] 4. Форма: useActionState(action) без .bind, <form action={formAction}>, id — hidden-полем, pending блокує кнопку.
 - [ ] 5. Кожне поле: label, aria-invalid, aria-describedby → текст помилки; підсумок у role="alert".
 - [ ] 6. Після помилки введене лишається (defaultValue з state.values).
 - [ ] 7. Листи, n8n, аудит — в after(); відповідь форми не чекає зовнішніх систем.
@@ -128,7 +132,7 @@ const [state, formAction, pending] = useActionState(saveNote, { status: "idle" }
 - [ ] `npm run lint` і `npm run build` без помилок.
 - [ ] Порожня відправка: під кожним обов'язковим полем — помилка, зверху — `role="alert"`, у полях — `aria-invalid="true"`.
 - [ ] Помилка в одному полі: решта введеного не зникла.
-- [ ] Відправка з вимкненим JavaScript (DevTools → Disable JavaScript) — дані зберігаються.
+- [ ] Відправка з вимкненим JavaScript (DevTools → Disable JavaScript): відповідь приходить за секунди (не «висить»), помилки видно, дані зберігаються.
 - [ ] Дія без сесії або для чужого об'єкта (`curl -X POST` з заголовком `Next-Action` і cookie іншого workspace) — запис не змінюється.
 - [ ] Час відповіді форми не залежить від листів/n8n/аудиту (DevTools → Network → `POST`).
 - [ ] У журналі `npm start` після відправки немає введених даних (email, текст, телефон).
