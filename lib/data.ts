@@ -4,12 +4,14 @@ import { redirect } from "next/navigation";
 import { db } from "./db";
 import { SESSION_COOKIE } from "./session";
 
-export async function getCurrentUser() {
+export async function getSessionUser() {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!sessionId) redirect("/login");
+  return sessionId ? db.getUserBySession(sessionId) : null;
+}
 
-  const user = await db.getUserBySession(sessionId);
+export async function getCurrentUser() {
+  const user = await getSessionUser();
   if (!user) redirect("/login");
 
   return user;
