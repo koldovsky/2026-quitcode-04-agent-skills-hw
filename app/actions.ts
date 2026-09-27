@@ -82,10 +82,10 @@ async function requireOwnLead(id: string) {
 }
 
 export async function addLeadNote(
-  leadId: string,
   _prevState: NoteFormState,
   formData: FormData,
 ): Promise<NoteFormState> {
+  const leadId = formData.get("leadId");
   if (typeof leadId !== "string" || !(await isOwnLead(leadId))) {
     return { status: "error", message: "Лід не знайдено" };
   }
