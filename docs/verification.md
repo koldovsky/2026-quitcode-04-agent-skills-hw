@@ -8,15 +8,22 @@
 
 ## Скіли видно у свіжій сесії
 
-- Як перевіряли: _заповнюється після перевірки людиною в новій сесії (`/context` → Skills або «які skills тобі доступні?»)_
+- Як перевіряли: 27.09.2026, **нова** сесія Claude Code у теці проєкту (після коміту `5ad1deb`), запит
+  «які skills тобі доступні? не відкривай файлів». Відповідь агента (скорочено): «Скіл проєкту (з
+  .claude/skills/): vercel-react-best-practices — поради Vercel щодо продуктивності React і Next.js…
+  До цього проєкту безпосередньо стосується лише vercel-react-best-practices. Решта скілів вбудовані
+  або глобальні.»
 
 | Skill | Звідки (Project / Personal / вбудований) | Примітка |
 |---|---|---|
-| `vercel-react-best-practices` | Project (`.claude/skills/`) | _підтвердити у свіжій сесії_ |
+| `vercel-react-best-practices` | Project (`.claude/skills/`) | видно у свіжій сесії, файли не відкривались |
 | `building-client-form` | | Task B |
 | `integrating-n8n-webhooks` | | Task C |
 
-- Особисті скіли, які теж видно: у `~/.claude/skills/synced/…` лежать синхронізовані `anthropic-skills`
+- Інші скіли, які теж видно в тій сесії: вбудовані в Claude Code (`code-review`, `simplify`,
+  `security-review`, `run`, `init`, `claude-api`, `update-config`, `keybindings-help`,
+  `fewer-permission-prompts`, `loop`, `schedule`, `workflow-authoring`, `artifact-*`, `dataviz`) і
+  особисті/синхронізовані `anthropic-skills` з `~/.claude/skills/synced/…`
   (`docs`, `docx`, `google-workspace`, `import-memory`, `morning`, `pdf`, `pptx`, `skill-creator`,
   `xlsx`). Жоден не стосується React-продуктивності, форм чи n8n, тож на перевірки Task A–C не впливає.
   `~/.cursor/skills`, `~/.agents/skills` — немає; `~/.codex/skills` — порожня. Для Task D це врахуємо
