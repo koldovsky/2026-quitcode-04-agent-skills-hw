@@ -30,9 +30,14 @@ if (args.includes("-h") || args.includes("--help")) {
   console.log(HELP);
   process.exit(0);
 }
+// null only when the option is absent; present without a value (or followed by another option)
+// is a usage error, not a silent fallback to the default.
 const opt = (name) => {
   const i = args.indexOf(name);
-  return i === -1 ? null : args[i + 1];
+  if (i === -1) return null;
+  const value = args[i + 1];
+  if (!value || value.startsWith("-")) fail(`${name} needs a value`);
+  return value;
 };
 const url = opt("--url");
 const secret = process.env.N8N_CALLBACK_SECRET;
