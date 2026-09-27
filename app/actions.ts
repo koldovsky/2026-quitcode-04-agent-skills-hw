@@ -1,8 +1,11 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { logAudit } from "@/lib/audit";
 import { getSessionUser } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
@@ -52,15 +55,21 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
+  // lead-created is an event "for information" (Webhook in Immediately mode): the visitor does not
+  // wait for n8n, and n8n gets only what the workflow needs — not the row with IP, user agent and
+  // the raw form. The key is created once per lead and reused by the client's retries.
+  const idempotencyKey = randomUUID();
+  after(async () => {
+    try {
+      await triggerWorkflow(
+        "lead-created",
+        { leadId: lead.id, company: lead.company, budget: lead.budget, source: lead.source },
+        { idempotencyKey },
+      );
+    } catch (error) {
+      console.error("lead.n8n failed", { leadId: lead.id, code: error instanceof Error ? error.name : "unknown" });
+    }
+  });
 
   await logAudit("lead.created", lead.id);
 

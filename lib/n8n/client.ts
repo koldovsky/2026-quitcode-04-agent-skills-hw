@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 const TIMEOUT_MS = 10_000;
 const RETRY_DELAYS_MS = [1_000, 3_000]; // up to 2 retries → 3 attempts
 
-export type N8nEvent = "quote-request"; // one kebab-case path per event
+export type N8nEvent = "quote-request" | "lead-created"; // one kebab-case path per event
 
 export type TriggerResult =
   | { ok: true; status: number; jobId: string | null }
