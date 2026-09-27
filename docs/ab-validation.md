@@ -401,18 +401,81 @@
 
 ## Перенесення прогону B у гілку (фіча)
 
-- Як переносили: <`git apply --3way docs/ab/b-with-skill.diff` / копіювання файлів руками>;
-  коміт(и): <sha>
-- Що довелось доробити руками після перенесення (і чому скіл цього не дав): <…>
-- Ключі контракту в `.env.example` (секрети — `change-me-…`, адрес `/webhook-test/` немає): <…>
-- `npm run lint`, `npm run build` на гілці: <…>
-- `check-contract.mjs` на фінальному коді (0 FAIL, код виходу 0):
+- Як переносили: `git apply --3way docs/ab/b-with-skill.diff` у корені робочого репозиторію, гілка
+  `ws04/pavmys` на коді BASE (між `04e8b58` і `41aa304` — лише документи). Застосовано 17 файлів;
+  кожен звірено з копією B (`cmp`) — **байт у байт**, без жодної правки. `package.json`,
+  `package-lock.json`, `.env.local`, `node_modules/` не переносились (агент нічого не доставляв).
+  Коміти:
+  - `4946c7f` feat(quotes): add quote requests started in n8n with a signed callback — код прогону B як є;
+  - `c97f358` fix(lead-form): send new leads to n8n through the contract client — доробка 1;
+  - `8a00f0b` fix(quotes): keep the task description off the public status page — доробка 2.
+- Що довелось доробити руками після перенесення (і чому скіл цього не дав):
+  1. **Старий виклик n8n у `submitLead`** (`app/actions.ts`) — одразу після перенесення повний
+     `check-contract` давав 7 FAIL (C1, C3, C4, C6, C7, C8, C14), усі в старому коді: весь запис ліда
+     (IP, user agent, `rawPayload`) прямим `fetch` на `N8N_WEBHOOK_URL` з `/webhook-test/`, без токена,
+     ключа й таймауту, з `await` у Server Action і журналом усього об'єкта помилки. Переведено на
+     `triggerWorkflow("lead-created", …)` в `after()` з `try/catch`; `data` — `leadId, name, email, phone,
+     company, budget, message` (без IP, user agent і сирих даних форми); `idempotencyKey` і
+     `correlationId` створюються один раз і зберігаються в записі ліда (два необов'язкові поля в `Lead`);
+     `N8nEvent` доповнено `"lead-created"`; `N8N_WEBHOOK_URL` прибрано з `.env.example`.
+     **Чому не скіл:** так задумано. Стоп-правило скіла — не мігрувати наявний виклик без «так» людини,
+     бо міграція змінює, що отримує живий воркфлоу клієнта. Агент B так і зробив: не чіпав, переліком
+     показав порушення й спитав. Склад `data` вирішила людина (скіл вимагає не слати персональні дані
+     «про всяк випадок» і питати).
+  2. **Опис задачі на публічній сторінці `/quotes/[id]`** — прибрано; лишились статус, компанія, бюджет і
+     дата. Сторінка відкривається будь-кому з посиланням; email агент B сховав сам, а опис задачі (може
+     містити дані клієнта) — ні. **Чому не скіл:** правила скіла про персональні дані стосуються журналів
+     і того, що йде в n8n, а про вміст сторінки статусу не кажуть нічого. Кандидат у скіл: «публічна
+     сторінка статусу показує лише статус і поля без даних клієнта».
+- Ключі контракту в `.env.example` (секрети — `change-me-…`, адрес `/webhook-test/` немає):
+  `N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook`, `N8N_WEBHOOK_TOKEN=change-me-webhook-token`,
+  `N8N_CALLBACK_SECRET=change-me-callback-secret`, `APP_BASE_URL=http://127.0.0.1:3000`. Інших `N8N_*`
+  немає; `/webhook-test/` немає ні в `.env.example`, ні в коді
+- `npm run lint`, `npm run build` на гілці: обидва проходять — одразу після перенесення (`4946c7f`) і на
+  фінальному коді (`8a00f0b`); у збірці є `/quotes/new`, `/quotes/[id]`, `/api/n8n/[event]`
+- `check-contract.mjs` на фінальному коді (0 FAIL, код виходу 0) — `HEAD` = `8a00f0b`, увесь код, без
+  прапорців:
   ```
-  <вивід>
+  check-contract (integrating-n8n-webhooks) · root …/2026-quitcode-04-agent-skills-hw · 42 source files · scope: all files
+
+  PASS  C1  no-test-url           only production webhook URLs: no /webhook-test/ in code or .env.example
+  PASS  C2  env-server-only       n8n settings stay on the server: no NEXT_PUBLIC_ n8n variables, no n8n code in Client Components
+  PASS  C3  env-example           .env.example declares the contract variables: base ends with /webhook, local URLs, change-me-… secrets
+  PASS  C4  one-client            n8n is called only from lib/n8n/client.ts; callback routes live under app/api/n8n/
+  PASS  C5  server-only           lib/n8n modules that hold config start with import "server-only"
+  PASS  C6  fetch-timeout         every fetch to n8n has signal: AbortSignal.timeout(…)
+  PASS  C7  request-contract      requests send x-n8n-token (from env), idempotency-key, x-correlation-id and the {version, event, data} envelope
+  PASS  C8  no-waiting            Server Actions start n8n only inside after()
+  PASS  C9  no-edge               no runtime = "edge" (deprecated in Next.js 16; the contract needs node:crypto)
+  PASS  C10 callback-raw-body     callback route: 404/415 checks, raw text body, 413, no JSON parsing before the signature check
+  PASS  C11 callback-signature    callback route: HMAC-SHA256 sha256=<hex>, length check + timingSafeEqual, never ===
+  PASS  C12 callback-timestamp    callback route: signs `${timestamp}.${raw}` and rejects x-n8n-timestamp outside ±300 s with 401
+  PASS  C13 callback-idempotency  callback route: claims idempotency-key (200 duplicate), matches it to `${jobId}:${event}`, releases it on failure
+  PASS  C14 log-hygiene           n8n code logs no bodies, personal data, secrets, env or whole error objects
+
+  14 checks: 14 PASS · 0 FAIL · 0 SKIP
   ```
-- Сценарій «форма → колбек → `/quotes/<id>`» ще раз, уже на гілці: <що показала сторінка, час
-  відповіді форми, чи прийшов колбек>
-- Рядок у `docs/n8n-integrations.md` (рекомендовано, не оцінюється): <…>
+  (Для порівняння: одразу після перенесення, на `4946c7f`, — 7 PASS · 7 FAIL, усі в старому `submitLead`
+  і `.env.example:6`; `--changed-since 04e8b58` — 14 PASS · 0 FAIL і тоді, і тепер.)
+- Сценарій «форма → колбек → `/quotes/<id>`» ще раз, уже на гілці: 2026-09-27 22:16 UTC, код доробок
+  (до їхнього коміту, той самий, що в `c97f358` + `8a00f0b`). Порти 3000 і 5678 ще тримали процеси
+  копії A, тож застосунок — `next start -p 3100`, мок — `tools/mock-n8n.mjs --port 5679 --mode
+  respond-202 --delay 5000`, обидва зі значеннями `change-me-…` з `.env.example` (а не з `.env.local`).
+  - Форма кошторису → `/quotes/q_28b5e1b8-…` → через ≈ 5 с сама перейшла в «Готово · Кошторис готовий ·
+    Завантажити кошторис (PDF)»; у блоці «Ваш запит» — компанія, бюджет «3 000 USD», дата, **опису немає**.
+    Мок: `POST /webhook/quote-request -> 202 in 1 ms auth=ok idempotency=new`, потім
+    `callback POST http://127.0.0.1:3100/api/n8n/quote-request -> 202 in 111 ms (try 1/3)`.
+  - Форма ліда на `/` → «Дякуємо! Заявку отримано.»; мок: `POST /webhook/lead-created -> 202 in 3 ms
+    auth=ok idempotency=new | headers: accept,accept-language,content-type,idempotency-key,user-agent,
+    x-correlation-id,x-n8n-token`; колбеку немає (подія «до відома», `callbackUrl` не передається).
+  - Журнал сервера: лише `n8n.request` (`lead-created`, `quote-request`) і `n8n.callback` — event/path,
+    correlationId, attempt, status, ms, bytes, sha256, плюс `db:*`. Тіл, email, телефонів, токенів і
+    підписів немає. Помилок у консолі браузера немає.
+  - Час відповіді форми в цьому запуску не вимірювали; на копії B — 308 мс (крок 3.4).
+- Рядок у `docs/n8n-integrations.md` (рекомендовано, не оцінюється): є обидва — `quote-request` (додав
+  агент B: Respond to Webhook 202 + callback, дані, колбек, сторінка статусу) і `lead-created` (доробка 1:
+  Immediately, без колбеку, склад `data` і що має змінитися в живому воркфлоу — Header Auth, шлях
+  `/webhook/lead-created`, поля в `$json.body.data`, Remove Duplicates, Publish). Власник — _TBD_
 
 ## Висновок
 
