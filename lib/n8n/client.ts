@@ -9,7 +9,7 @@ const RETRY_DELAYS_MS = [1_000, 3_000]; // at most 2 retries: 3 attempts in tota
 const ENVELOPE_VERSION = 1;
 
 /** kebab-case event = the Path of the n8n Webhook node. One event, one path. */
-export type N8nEvent = "quote-request";
+export type N8nEvent = "lead-created" | "quote-request";
 
 export type TriggerOptions = {
   /** Created once per business operation and stored with the record; the same on every retry. */

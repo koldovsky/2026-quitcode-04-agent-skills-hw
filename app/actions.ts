@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -7,6 +8,7 @@ import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { requireLeadAccess } from "@/lib/data";
 import { parseLeadForm, type LeadFormField, type LeadFormValues } from "@/lib/lead-form";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import {
   parseLeadNoteForm,
   type LeadNoteFormField,
@@ -33,6 +35,9 @@ export async function submitLead(
   const requestHeaders = await headers();
   const ipAddress = requestHeaders.get("x-forwarded-for")?.split(",")[0].trim() ?? "127.0.0.1";
   const userAgent = requestHeaders.get("user-agent") ?? "";
+  // Both keys are created ONCE and stored with the lead: every retry reuses them.
+  const idempotencyKey = randomUUID();
+  const correlationId = randomUUID();
 
   const lead = await db.insertLead({
     ...parsed.data,
@@ -55,17 +60,32 @@ export async function submitLead(
         receivedAt: new Date().toISOString(),
       },
     },
+    idempotencyKey,
+    correlationId,
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
+  // A "for information" event: n8n answers at once (Respond: Immediately) and nobody waits for it,
+  // not even the form (server-after-nonblocking). Only what the workflow needs: no IP, user agent
+  // or raw form data.
+  after(async () => {
+    try {
+      await triggerWorkflow(
+        "lead-created",
+        {
+          leadId: lead.id,
+          name: lead.fullName,
+          email: lead.email,
+          phone: lead.phone,
+          company: lead.company,
+          budget: lead.budget,
+          message: lead.message,
+        },
+        { idempotencyKey, correlationId },
+      );
+    } catch (error) {
+      console.error("lead.trigger_failed", { leadId: lead.id, error: error instanceof Error ? error.name : "unknown" });
+    }
+  });
 
   await logAudit("lead.created", lead.id);
 

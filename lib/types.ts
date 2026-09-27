@@ -47,6 +47,10 @@ export type Lead = {
   userAgent: string;
   rawPayload: Record<string, unknown>;
   internalNotes: string;
+  // Leads from the public form: the keys of their lead-created event to n8n, created once and
+  // reused on every retry.
+  idempotencyKey?: string;
+  correlationId?: string;
   createdAt: string;
   updatedAt: string;
 };
