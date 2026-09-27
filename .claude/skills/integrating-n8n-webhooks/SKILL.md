@@ -130,6 +130,9 @@ metadata:
   воркфлоу (Webhook, Remove Duplicates, Respond to Webhook, Crypto, HTTP Request), відомі пастки.
 - `scripts/check-contract.mjs` — статична перевірка контракту (C1–C13, PASS/FAIL, файл:рядок,
   код виходу 1 при FAIL; значень секретів не друкує). `node scripts/check-contract.mjs --help`.
+- `scripts/self-test.mjs` — регресія самого `check-contract.mjs`: код як у `main` LeadDesk,
+  навмисно поганий код (усі 13 FAIL), шаблони з `code-templates.md` (LF, CRLF, `src/` — 0 FAIL),
+  `--changed-since`, коди виходу. Запускати після кожної зміни скрипта чи шаблонів.
 - `scripts/send-signed-callback.mjs` — матриця підписаних колбеків проти роуту з очікуваним
   кодом на кожен випадок; секрет — лише з `N8N_CALLBACK_SECRET`. `--help`.
 - `scripts/mock-n8n.mjs` — офлайн-мок n8n (копія `tools/mock-n8n.mjs`, щоб скіл працював в інших
