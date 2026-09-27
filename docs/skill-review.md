@@ -90,9 +90,13 @@
 |---|---|---|---|
 | `async-parallel` | незалежні запити — через `Promise.all()` | `01-app/01-getting-started/06-fetching-data.md`, «Parallel data fetching»: layout і page рендеряться паралельно, але всередині компонента `await` один за одним — послідовні; рекомендовано `Promise.all` | діє → застосовуємо в `app/dashboard/page.tsx` |
 | `server-serialization` | передавати в Client Component лише поля, які він використовує | `05-server-and-client-components.md`: props клієнтських компонентів серіалізуються в RSC Payload; `02-guides/data-security.md`: повертати «safe, minimal DTO» | діє → застосовуємо до `LeadsTable` (зараз отримує весь `Lead` з `rawPayload`, `ipAddress`, `internalNotes`) |
-| `bundle-barrel-imports` | імпортувати напряму, не з barrel-файлів (у списку — `lodash`, `recharts`-подібні) | `03-api-reference/05-config/01-next-config-js/optimizePackageImports.md`: `recharts` і `lodash-es` Next.js 16 оптимізує **автоматично**; CJS-пакета `lodash` у списку немає | для `recharts` порада в 16.3.5 зайва — не застосовуємо; для `lodash` актуальна (`lodash/debounce`) |
+| `bundle-barrel-imports` | імпортувати напряму, не з barrel-файлів (серед прикладів — `lodash`) | `03-api-reference/05-config/01-next-config-js/optimizePackageImports.md`: `recharts` і `lodash-es` Next.js 16 оптимізує **автоматично**; CJS `lodash` у цьому списку немає, але `node_modules/next/dist/server/config.js:1117` за замовчуванням додає `modularizeImports: { lodash: { transform: "lodash/{{member}}" } }` | у 16.3.5 порада зайва і для `recharts`, і для `lodash` — не застосовуємо (спершу вважали, що для `lodash` актуальна; рев'ю зі скілом показало `modularizeImports`, перевірили в `config.js`) |
+| `server-cache-react` | `React.cache()` для дедуплікації в межах запиту | `02-guides/data-security.md`: приклад DAL з `cache` з `react` | діє, але з пасткою: `cache()` порівнює аргументи через `Object.is`, тож `getWorkspace({ slug })` з inline-об'єктом у `lib/data.ts:18` кешу не дає (у журналі `db:getWorkspace` ×3 на запит). Скіл про це попереджає; у цій домашці не виправляли |
+| `rendering-hydration-suppress-warning` | глушити очікувані розбіжності гідрації через `suppressHydrationWarning` | для дат у Client Component розбіжність виникає через різний часовий пояс сервера й браузера | не застосовуємо: краще прибрати причину (`timeZone` у `Intl.DateTimeFormat` або форматувати на сервері), ніж глушити попередження |
 
-<!-- TODO: допишіть сюди поради, які агент запропонує на кроці 5 і які ви відкинете після звірки. -->
+Рев'ю застосунку зі скілом (нова сесія Claude Code, файли не змінювались) дало 17 знахідок;
+застосовано `async-parallel` (`a829fe1`) і `server-serialization` (`08725c4`) — числа до/після в
+`docs/verification.md`.
 
 ## 6. Закріплення версії й коміт
 
