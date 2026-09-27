@@ -1,9 +1,12 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
 import type { LeadStatus } from "@/lib/types";
 
@@ -50,17 +53,27 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
+  // The visitor does not wait for n8n or the audit log. "lead-created" is a
+  // for-your-information event (Immediately mode), so there is no callback.
+  const idempotencyKey = randomUUID();
+  const correlationId = randomUUID();
+  after(async () => {
+    const result = await triggerWorkflow({
+      event: "lead-created",
+      // Minimum the workflow needs — not the row (no IP, user agent, raw payload, notes).
+      data: {
+        leadId: lead.id,
+        company: lead.company,
+        budget: lead.budget,
+        source: lead.source,
+        consentMarketing: lead.consentMarketing,
+      },
+      idempotencyKey,
+      correlationId,
     });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
-
-  await logAudit("lead.created", lead.id);
+    if (!result.ok) console.error(`n8n lead-created failed lead=${lead.id} reason=${result.reason}`);
+    await logAudit("lead.created", lead.id);
+  });
 
   return { status: "ok" };
 }
