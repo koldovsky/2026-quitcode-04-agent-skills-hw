@@ -65,7 +65,41 @@
 
 ## Task B — `building-client-form`
 
-_(заповнюється в Task B)_
+- **Свіжа сесія:** `claude -p --model claude-opus-4-8 --effort high --output-format stream-json --verbose --permission-mode acceptEdits --allowedTools "Skill,Read,Grep,Glob,Edit,Write,Bash(npm run lint),Bash(npm run build),Bash(npx tsc:*)" < prompt.txt`
+  з кореня репозиторію на коміті `eb134c8` (усі три скіли закомічені), session `f74af926-…`.
+  Особистих скілів на цей час не було: `~/.claude/skills/review-task` тимчасово перенесено.
+  CLI 2.1.168 не підтримує Opus 5.5, тому свіжі сесії (тут і в Task D, E2) — на `claude-opus-4-8`, `--effort high`.
+- Запит (скіл не названо):
+  > На сторінці ліда в дашборді (/dashboard/leads/[id]) додай форму «Додати нотатку»: одне текстове
+  > поле до 500 символів; нотатка дописується до внутрішніх нотаток ліда.
+- **Чи спрацював скіл і як це видно:** так, з першої спроби. Перший же виклик інструмента в журналі
+  сесії — `Skill {"skill":"building-client-form"}`, до будь-якого читання коду. `description` не змінювали.
+- **Що зроблено (файли):** `lib/note-form.ts` (чиста `parseNoteForm`, ≤ 500 символів, повертає
+  `errors` і `values`), `lib/db.ts` (`appendLeadNote`), `app/actions.ts` (`addLeadNote`: спершу
+  `getCurrentUser()` і перевірка `lead.workspaceId === workspace.id` — `leadId` з прихованого поля
+  не довіряється, потім валідація, запис, `after(() => logAudit(...))`, `revalidatePath`, повертає
+  лише `{ status }`), `components/add-note-form.tsx` (`useActionState` + `<form action>`,
+  `label`, `aria-invalid`, `aria-describedby`, `role="alert"`, `role="status"`, `defaultValue` з
+  `state.values`, `disabled={pending}`), `app/dashboard/leads/[id]/page.tsx`. Агент сам прочитав
+  `node_modules/next/dist/docs/…/after.md` і запустив lint і build.
+- **Пункти Verify (перевіряли ми, продакшн-збірка, `lead_0023`):**
+  - `npm run lint`, `npm run build` — без помилок;
+  - порожня відправка **без JS** (`curl -F` з прихованими полями `$ACTION_…` із HTML сторінки —
+    так браузер шле форму без JavaScript): HTTP 200, у відповіді `role="alert"` «Не вдалося
+    зберегти: перевірте поле нижче.», `aria-invalid="true"`, `id="note-error"` «Введіть текст
+    нотатки»;
+  - відправка справжньої нотатки без JS: HTTP 200 за 0,6 с, `role="status"` «Нотатку додано.»,
+    нотатка з'явилась на сторінці; у журналі `db:appendLeadNote: 1`, а `db:insertAuditEntry` —
+    уже після відповіді (`after()`);
+  - дія без сесії: POST форми на `/dashboard/leads/…` без cookie → 307 на `/login` (це `proxy.ts`);
+    окремо виклик самої дії на `/` (поза proxy) без cookie — жодного запису й жодного запиту до БД
+    (дія зупиняється на `getCurrentUser()`), з cookie той самий виклик доходить до перевірок дії;
+  - журнал сервера за весь сценарій — лише лічильники `db:…` і попередження Next про відсутній
+    `origin` у curl-запитах; ні тексту нотатки, ні імен, ні email.
+- **Що з кодом:** код проходить Verify, але в гілку перед Task D його **не** включено: нова дія з
+  `after()` в `app/actions.ts` потрапила б у BASE обох копій A/B і підказала б прогону A патерн
+  «повільне — в `after()`». Діф збережено й накочено окремим комітом після Task D (див. нижче в
+  історії: `feat(dashboard): add note form (Task B run)`).
 
 ## Task C — `integrating-n8n-webhooks`
 
