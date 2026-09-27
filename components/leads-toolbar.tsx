@@ -1,9 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import ExcelJS from "exceljs";
+import dynamic from "next/dynamic";
 import type { SourceCount } from "@/lib/types";
-import { SourcesChart } from "./sources-chart";
+
+// recharts loads only when the chart is first shown. `ssr: false` is allowed
+// here because this is a Client Component (not in Server Components).
+const SourcesChart = dynamic(() => import("./sources-chart").then((m) => m.SourcesChart), {
+  ssr: false,
+  loading: () => <div className="h-64 w-full" />,
+});
 
 type ExportRow = {
   id: string;
@@ -26,7 +32,9 @@ export function LeadsToolbar({ sources }: { sources: SourceCount[] }) {
       const response = await fetch("/api/leads");
       const { leads } = (await response.json()) as { leads: ExportRow[] };
 
-      const workbook = new ExcelJS.Workbook();
+      // exceljs is ~1 MB: load it only when someone actually exports.
+      const { Workbook } = await import("exceljs");
+      const workbook = new Workbook();
       const sheet = workbook.addWorksheet("Leads");
       sheet.columns = [
         { header: "ID", key: "id", width: 12 },
