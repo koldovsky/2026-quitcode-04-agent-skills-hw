@@ -101,3 +101,40 @@ export type AuditEntry = {
   leadId: string;
   at: string;
 };
+
+export const QUOTE_STATUSES = ["queued", "ready", "failed"] as const;
+
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
+// A request for a PDF quote. The record is our source of truth: the Server Action
+// creates it as "queued", n8n's signed callback moves it to "ready" or "failed".
+export type Quote = {
+  id: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  // Created once per request, reused by every retry and matched by the callback.
+  idempotencyKey: string;
+  correlationId: string;
+  jobId: string | null;
+  documentUrl: string | null;
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Pick<
+  Quote,
+  "company" | "email" | "description" | "budget" | "idempotencyKey" | "correlationId"
+>;
+
+// What the callback route hands to storage after verifying the signature.
+export type QuoteCallbackData = {
+  jobId: string;
+  status: "completed" | "failed";
+  requestIdempotencyKey: string;
+  documentUrl?: string;
+  errorCode?: string;
+};

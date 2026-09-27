@@ -5,6 +5,9 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
+  QuoteCallbackData,
   SourceCount,
   User,
   Workspace,
@@ -20,6 +23,10 @@ type Store = {
   leads: Lead[];
   audit: AuditEntry[];
   nextLeadNumber: number;
+  quotes: Quote[];
+  nextQuoteNumber: number;
+  // Idempotency keys of n8n callbacks we have already accepted (demo: process memory).
+  callbackKeys: Set<string>;
 };
 
 const LATENCY_MS = {
@@ -35,6 +42,9 @@ const LATENCY_MS = {
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuote: 120,
+  getQuote: 80,
+  updateQuote: 80,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -261,7 +271,20 @@ function createStore(): Store {
     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
   ];
   const leads = seedLeads(200, workspaces, users);
-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
+  return {
+    workspaces,
+    users,
+    leads,
+    audit: [],
+    nextLeadNumber: leads.length + 1,
+    quotes: [],
+    nextQuoteNumber: 1,
+    callbackKeys: new Set<string>(),
+  };
+}
+
+function quoteId(n: number) {
+  return `quote_${String(n).padStart(4, "0")}`;
 }
 
 // One store per server process (also survives module reloads in `next dev`).
@@ -382,5 +405,73 @@ export const db = {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
     });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        id: quoteId(store.nextQuoteNumber++),
+        status: "queued",
+        jobId: null,
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      store.quotes.push(quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  // The trigger could not reach n8n at all — the request never entered the workflow.
+  markQuoteFailed(id: string, errorCode: string) {
+    return query("updateQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      if (!quote || quote.status !== "queued") return false;
+      quote.status = "failed";
+      quote.errorCode = errorCode;
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  // Apply a verified callback, matched to our record by the idempotency key we sent.
+  applyQuoteCallback(data: QuoteCallbackData) {
+    return query("updateQuote", () => {
+      const quote = store.quotes.find((q) => q.idempotencyKey === data.requestIdempotencyKey);
+      if (!quote) return false;
+      quote.jobId = data.jobId;
+      quote.updatedAt = new Date().toISOString();
+      if (data.status === "completed") {
+        quote.status = "ready";
+        quote.documentUrl = data.documentUrl ?? null;
+        quote.errorCode = null;
+      } else {
+        quote.status = "failed";
+        quote.errorCode = data.errorCode ?? "workflow_failed";
+      }
+      return true;
+    });
+  },
+
+  // Idempotency for inbound callbacks: claim on first sight, release on failure.
+  // Demo only: a Set in process memory. Production: a table/KV with a UNIQUE constraint.
+  claimCallbackKey(key: string) {
+    if (store.callbackKeys.has(key)) return false;
+    store.callbackKeys.add(key);
+    return true;
+  },
+
+  releaseCallbackKey(key: string) {
+    store.callbackKeys.delete(key);
   },
 };

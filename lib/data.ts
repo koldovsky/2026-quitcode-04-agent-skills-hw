@@ -36,3 +36,7 @@ export async function getSourceBreakdown(workspaceId: string) {
 export async function getLead(id: string) {
   return db.getLead(id);
 }
+
+export async function getQuote(id: string) {
+  return db.getQuote(id);
+}
