@@ -4,17 +4,37 @@ import { useActionState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { requestQuote, type QuoteFormState } from "@/app/quotes/actions";
-import { BUDGET_OPTIONS, DESCRIPTION_MAX_LENGTH } from "@/lib/quote-form";
+import { BUDGET_OPTIONS, DESCRIPTION_MAX_LENGTH, type QuoteField } from "@/lib/quote-form";
 
 const initialState: QuoteFormState = { status: "idle" };
 
+const labelClass = "block text-sm font-medium";
 const inputClass =
   "mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 aria-invalid:border-red-500";
+
+const fieldId = (field: QuoteField) => `quote-${field}`;
+const errorId = (field: QuoteField) => `quote-${field}-error`;
+
+function FieldError({ field, message }: { field: QuoteField; message?: string }) {
+  if (!message) return null;
+  return (
+    <p id={errorId(field)} className="mt-1 text-xs text-red-600">
+      {message}
+    </p>
+  );
+}
 
 export function QuoteForm() {
   const [state, formAction, pending] = useActionState(requestQuote, initialState);
   const router = useRouter();
-  const errors = state.status === "invalid" ? state.errors : {};
+  const errors: Partial<Record<QuoteField, string>> = state.status === "invalid" ? state.errors : {};
+  // Team pattern (building-client-form): label htmlFor, aria-invalid, aria-describedby → error text.
+  const fieldProps = (field: QuoteField) => ({
+    id: fieldId(field),
+    name: field,
+    "aria-invalid": errors[field] ? true : undefined,
+    "aria-describedby": errors[field] ? errorId(field) : undefined,
+  });
   // Invalid state carries what the user typed; React 19 resets the form after every action.
   const values = state.status === "invalid" ? state.values : {};
   const quoteId = state.status === "ok" ? state.id : null;
@@ -43,54 +63,58 @@ export function QuoteForm() {
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="block text-sm font-medium">
-          Компанія
+        <div>
+          <label htmlFor={fieldId("company")} className={labelClass}>
+            Компанія
+          </label>
           <input
-            name="company"
+            {...fieldProps("company")}
             autoComplete="organization"
             maxLength={120}
             defaultValue={values.company ?? ""}
-            aria-invalid={errors.company ? true : undefined}
             className={inputClass}
           />
-          {errors.company && <span className="mt-1 block text-xs text-red-600">{errors.company}</span>}
-        </label>
-        <label className="block text-sm font-medium">
-          Email
+          <FieldError field="company" message={errors.company} />
+        </div>
+        <div>
+          <label htmlFor={fieldId("email")} className={labelClass}>
+            Email
+          </label>
           <input
-            name="email"
+            {...fieldProps("email")}
             type="email"
             autoComplete="email"
             maxLength={200}
             defaultValue={values.email ?? ""}
-            aria-invalid={errors.email ? true : undefined}
             className={inputClass}
           />
-          {errors.email && <span className="mt-1 block text-xs text-red-600">{errors.email}</span>}
-        </label>
+          <FieldError field="email" message={errors.email} />
+        </div>
       </div>
 
-      <label className="block text-sm font-medium">
-        Опис задачі
+      <div>
+        <label htmlFor={fieldId("description")} className={labelClass}>
+          Опис задачі
+        </label>
         <textarea
-          name="description"
+          {...fieldProps("description")}
           rows={5}
           maxLength={DESCRIPTION_MAX_LENGTH}
           defaultValue={values.description ?? ""}
-          aria-invalid={errors.description ? true : undefined}
           className={inputClass}
         />
-        {errors.description && <span className="mt-1 block text-xs text-red-600">{errors.description}</span>}
-      </label>
+        <FieldError field="description" message={errors.description} />
+      </div>
 
-      <label className="block text-sm font-medium">
-        Бюджет
+      <div>
+        <label htmlFor={fieldId("budget")} className={labelClass}>
+          Бюджет
+        </label>
         {/* key: defaultValue applies only on mount, so remount the select to restore the choice */}
         <select
           key={values.budget ?? ""}
-          name="budget"
+          {...fieldProps("budget")}
           defaultValue={values.budget ?? ""}
-          aria-invalid={errors.budget ? true : undefined}
           className={inputClass}
         >
           {BUDGET_OPTIONS.map((option) => (
@@ -99,8 +123,8 @@ export function QuoteForm() {
             </option>
           ))}
         </select>
-        {errors.budget && <span className="mt-1 block text-xs text-red-600">{errors.budget}</span>}
-      </label>
+        <FieldError field="budget" message={errors.budget} />
+      </div>
 
       <button
         type="submit"
