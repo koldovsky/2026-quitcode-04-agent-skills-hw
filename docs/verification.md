@@ -259,12 +259,22 @@ vercel-react-best-practices… Файли не змінюй»: 17 знахідо
 - SHA коміту зі скілом (BASE для Task D): `c9b2f02` — у ньому виправлення Task A, скіли
   `building-client-form` і `integrating-n8n-webhooks`; `/quotes` і переробленого виклику n8n ще
   немає. Наступні коміти змінюють лише `docs/`, яких у копіях Task D немає.
-- Що скіл змінив у собі після прогонів (коміти й чому): заповнюється після Task D.
+- Що скіл змінив у собі під час Task D (докладно — `docs/ab-validation.md`):
+  - `2aa71a0` — `check-contract.mjs` не бачив коду прогону A: виклик n8n у `lib/quotes.ts` через
+    `fetch(webhookUrl, …)` і колбек у `app/api/quotes/[id]/callback` лежали поза `lib/n8n/` і
+    `app/api/n8n/`, тож C4–C9 і C13 давали PASS «бо нічого немає» (11 PASS / 2 FAIL замість 6 / 7).
+    Тепер — розпізнавання за змінною з URL, POST-роут зі згадкою n8n як колбек, хелпери з локальних
+    модулів на один рівень;
+  - `816b79f` — `send-signed-callback.mjs` після 11/11 падав на Windows з `Assertion failed … async.c`
+    (код виходу 127): `process.exit()` при відкритих keep-alive-з'єднаннях → `process.exitCode`.
 
 **Як перевіряли сам скрипт.** Спершу на `main` — там порушення є. Потім на навмисно поганому коді,
 де кожна з 13 перевірок має що знайти. Далі на «обхідному» коді, який попередня версія скрипта
 пропускала (див. нижче). Нарешті на шаблонах скіла, де очікуємо 0 FAIL, і з `--changed-since`.
-Усі команди — з кореня репозиторію; копії лежать поруч із ним, як `../leaddesk-main` у walkthrough.
+`main` — з кореня репозиторію (`../leaddesk-main`, як у walkthrough); навмисно поганий код, шаблони й
+git-копія для `--changed-since` — тестові теки `bad/`, `tpl-now/`, `cs2/` у тимчасовій теці сесії поза
+репозиторієм, команда запускалась з неї. Виводи — версії `2aa71a0` (після прогону A скрипт навчився
+бачити код n8n поза `lib/n8n/` і `app/api/n8n/`; див. нижче).
 
 **`check-contract.mjs` на коді `main`** (`mkdir ../leaddesk-main && git archive main | tar -x -C ../leaddesk-main`, `main` = `01a7dd4`):
 
@@ -276,7 +286,7 @@ C1   FAIL  Тестовий URL вебхука (/webhook-test/) у коді чи
 C2   PASS  Змінні N8N_* з префіксом NEXT_PUBLIC_
 C3   FAIL  Виклики n8n і змінні N8N_* лише в lib/n8n/
          app/actions.ts:54  await fetch(process.env.N8N_WEBHOOK_URL!, {
-C4   PASS  Модулі lib/n8n/ починаються з import "server-only"  (немає модулів у lib/n8n/)
+C4   PASS  Модулі, що викликають n8n, починаються з import "server-only"  (немає модулів n8n)
 C5   FAIL  fetch до n8n з таймаутом (signal: AbortSignal.timeout)
          app/actions.ts:54  await fetch(process.env.N8N_WEBHOOK_URL!, {  ← немає signal: AbortSignal.timeout(…)
 C6   FAIL  Заголовки x-n8n-token, idempotency-key, x-correlation-id у запиті до n8n
@@ -302,15 +312,15 @@ C7–C9 і C12 на `main` — PASS, бо колбек-роуту й модул�
 Той самий результат (7 PASS, 6 FAIL) — і на поточному коді гілки: виклик n8n у `submitLead` і
 `.env.example` за умовою виправляються в Task D.
 
-**Навмисно поганий код** (`../leaddesk-bad`: колбек-роут з `request.json()`, підписом через `!==`,
+**Навмисно поганий код** (`bad/`: колбек-роут з `request.json()`, підписом через `!==`,
 `runtime = "edge"` і `console.log(body)`; `lib/n8n/client.ts` без `server-only`, таймауту й двох
 заголовків, з токеном у журналі; Server Action, що чекає на n8n і сама робить `fetch` до n8n;
 компонент з `NEXT_PUBLIC_N8N_WEBHOOK_URL`; `.env.example` з `/webhook-test`, «справжнім» на вигляд
 токеном і `NEXT_PUBLIC_N8N_*`) — кожна з 13 перевірок дає FAIL; значення токена не надруковано:
 
 ```
-$ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --root ../leaddesk-bad; echo "exit=$?"
-check-contract · root=../leaddesk-bad · whole project
+$ node <repo>/.claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --root bad; echo "exit=$?"
+check-contract · root=bad · whole project
 C1   FAIL  Тестовий URL вебхука (/webhook-test/) у коді чи .env.example
          .env.example:1  N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook-test
 C2   FAIL  Змінні N8N_* з префіксом NEXT_PUBLIC_
@@ -318,7 +328,7 @@ C2   FAIL  Змінні N8N_* з префіксом NEXT_PUBLIC_
          .env.example:3  NEXT_PUBLIC_N8N_WEBHOOK_URL=http://127.0.0.1:5678/webhook/quote-request
 C3   FAIL  Виклики n8n і змінні N8N_* лише в lib/n8n/
          app/quotes/actions.ts:6  await fetch(process.env.N8N_WEBHOOK_BASE_URL + "/quote-audit", { method: "POST", body: "{}" });
-C4   FAIL  Модулі lib/n8n/ починаються з import "server-only"
+C4   FAIL  Модулі, що викликають n8n, починаються з import "server-only"
          lib/n8n/client.ts:1  перший рядок не import "server-only"
 C5   FAIL  fetch до n8n з таймаутом (signal: AbortSignal.timeout)
          app/quotes/actions.ts:6  await fetch(process.env.N8N_WEBHOOK_BASE_URL + "/quote-audit", { method: "POST", body: "{}" });  ← немає signal: AbortSignal.timeout(…)
@@ -366,12 +376,12 @@ exit=1
 **Шаблони з `references/code-templates.md`** + `.env.example` з ключами контракту (у CRLF):
 
 ```
-$ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --root ../leaddesk-tpl; echo "exit=$?"
-check-contract · root=../leaddesk-tpl · whole project
+$ node <repo>/.claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --root tpl-now; echo "exit=$?"
+check-contract · root=tpl-now · whole project
 C1   PASS  Тестовий URL вебхука (/webhook-test/) у коді чи .env.example
 C2   PASS  Змінні N8N_* з префіксом NEXT_PUBLIC_
 C3   PASS  Виклики n8n і змінні N8N_* лише в lib/n8n/
-C4   PASS  Модулі lib/n8n/ починаються з import "server-only"
+C4   PASS  Модулі, що викликають n8n, починаються з import "server-only"
 C5   PASS  fetch до n8n з таймаутом (signal: AbortSignal.timeout)
 C6   PASS  Заголовки x-n8n-token, idempotency-key, x-correlation-id у запиті до n8n
 C7   PASS  Колбек читає сире тіло й не парсить JSON до перевірки підпису
@@ -391,12 +401,12 @@ exit=0
 (C3, C5, C6, C13) не показано, показано лише новий файл; неіснуючий ref — повідомлення й `exit=2`.
 
 ```
-$ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --root ../leaddesk-cs --changed-since base; echo "exit=$?"
-check-contract · root=../leaddesk-cs · changed since base (2 file(s))
+$ node <repo>/.claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --root cs2 --changed-since base; echo "exit=$?"
+check-contract · root=cs2 · changed since base (2 file(s))
 C1   PASS  Тестовий URL вебхука (/webhook-test/) у коді чи .env.example
 C2   PASS  Змінні N8N_* з префіксом NEXT_PUBLIC_
 C3   PASS  Виклики n8n і змінні N8N_* лише в lib/n8n/
-C4   FAIL  Модулі lib/n8n/ починаються з import "server-only"
+C4   FAIL  Модулі, що викликають n8n, починаються з import "server-only"
          lib/n8n/client.ts:1  перший рядок не import "server-only"
 C5   FAIL  fetch до n8n з таймаутом (signal: AbortSignal.timeout)
          lib/n8n/client.ts:2  return fetch(`${process.env.N8N_WEBHOOK_BASE_URL}/quote-request`, { method: "POST", body: JSON.strin  ← немає signal: AbortSignal.timeout(…)
@@ -414,8 +424,29 @@ C13  PASS  Server Action не чекає на n8n: виклик лише в afte
 exit=1
 ```
 
-**`check-contract.mjs` на фінальному коді** (після перенесення прогону B — 0 FAIL): заповнюється в
-Task D.
+**`check-contract.mjs` на фінальному коді** — гілка після перенесення прогону B і доведення (`5679c83`),
+увесь проєкт, без `--changed-since`:
+
+```
+$ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs; echo "exit=$?"
+check-contract · root=. · whole project
+C1   PASS  Тестовий URL вебхука (/webhook-test/) у коді чи .env.example
+C2   PASS  Змінні N8N_* з префіксом NEXT_PUBLIC_
+C3   PASS  Виклики n8n і змінні N8N_* лише в lib/n8n/
+C4   PASS  Модулі, що викликають n8n, починаються з import "server-only"
+C5   PASS  fetch до n8n з таймаутом (signal: AbortSignal.timeout)
+C6   PASS  Заголовки x-n8n-token, idempotency-key, x-correlation-id у запиті до n8n
+C7   PASS  Колбек читає сире тіло й не парсить JSON до перевірки підпису
+C8   PASS  Підпис: спершу довжини, потім timingSafeEqual; не ===
+C9   PASS  Колбек перевіряє час (±300 с) і idempotency-key
+C10  PASS  Немає runtime = "edge"
+C11  PASS  .env.example з ключами контракту (секрети — change-me-…, адреси локальні)
+C12  PASS  Журнали коду n8n без тіл, секретів і персональних даних
+C13  PASS  Server Action не чекає на n8n: виклик лише в after()
+
+13 PASS, 0 FAIL
+exit=0
+```
 
 **Матриця колбеків** — `send-signed-callback.mjs` проти шаблону `app/api/n8n/[event]/route.ts` у
 тимчасовій копії (`next start -p 3003`, `N8N_CALLBACK_SECRET` — щойно згенерований тестовий секрет
