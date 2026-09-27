@@ -1,11 +1,13 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, getWorkspace } from "@/lib/data";
 import { logAudit } from "@/lib/audit";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
 import { parseNoteForm, type NoteFormState } from "@/lib/note-form";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
@@ -53,17 +55,28 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
+  // Contact and request only: no IP, user agent, raw payload or internal notes go to n8n.
+  const data = {
+    leadId: lead.id,
+    fullName: lead.fullName,
+    email: lead.email,
+    phone: lead.phone,
+    company: lead.company,
+    website: lead.website,
+    budget: lead.budget,
+    message: lead.message,
+    consentMarketing: lead.consentMarketing,
+    source: lead.source,
+  };
+  // One key per lead: every retry of this event reuses it.
+  const options = { idempotencyKey: randomUUID(), correlationId: randomUUID() };
 
-  await logAudit("lead.created", lead.id);
+  // The visitor never waits for n8n or the audit log (server-after-nonblocking).
+  after(async () => {
+    const result = await triggerWorkflow("lead-created", data, options);
+    if (!result.ok) console.error(`[n8n] lead-created failed lead=${lead.id} status=${result.status ?? "network"}`);
+    await logAudit("lead.created", lead.id);
+  });
 
   return { status: "ok" };
 }
