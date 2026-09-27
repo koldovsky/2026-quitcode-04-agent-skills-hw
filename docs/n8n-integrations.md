@@ -4,6 +4,15 @@
 |---|---|---|---|---|
 | `quote-request` | Next.js → n8n | `POST {N8N_WEBHOOK_BASE_URL}/quote-request` | async: 202 + signed callback | Studio Nova |
 | `quote-request.completed` / `.failed` | n8n → Next.js | `POST /api/n8n/quote-request` | signed callback (HMAC-SHA256) | Studio Nova |
+| `lead-created` | Next.js → n8n | `POST {N8N_WEBHOOK_BASE_URL}/lead-created` | Immediately (for information, no callback) | Studio Nova |
+
+## lead-created (public lead form)
+
+- Trigger: Server Action `submitLead` (`app/actions.ts`) saves the lead, then calls `triggerWorkflow`
+  inside `after()` together with the audit entry — the visitor does not wait for n8n.
+- `data`: `leadId`, `company`, `budget`, `source`, `consentMarketing`. Not the row: no name, email,
+  phone, IP, user agent or raw payload. If the client's workflow needs contact details, agree on
+  the exact fields first and add them explicitly.
 
 ## quote-request (PDF quote)
 
