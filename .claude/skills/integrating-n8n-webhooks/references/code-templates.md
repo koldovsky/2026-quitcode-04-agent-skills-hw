@@ -30,9 +30,9 @@ export async function triggerWorkflow(
   const token = process.env.N8N_WEBHOOK_TOKEN;
   const appBaseUrl = process.env.APP_BASE_URL;
   // Without APP_BASE_URL the callback would go to "undefined/api/n8n/…" and never arrive.
-  if (!baseUrl || !token || (options.callbackPath && !appBaseUrl)) throw new Error("n8n is not configured");
+  if (!baseUrl || !token || (options.callbackPath && !appBaseUrl)) throw configError("N8nNotConfigured", "n8n is not configured");
   // Rejected before any request: the token must not travel over plain http to another host.
-  if (!isSafeWebhookBase(baseUrl)) throw new Error("N8N_WEBHOOK_BASE_URL must be https (http only for localhost)");
+  if (!isSafeWebhookBase(baseUrl)) throw configError("N8nInsecureBaseUrl", "N8N_WEBHOOK_BASE_URL must be https (http only for localhost)");
 
   const correlationId = options.correlationId ?? randomUUID();
   const payload = JSON.stringify({
@@ -89,6 +89,13 @@ function isSafeWebhookBase(value: string) {
   } catch {
     return false;
   }
+}
+
+// Callers log only error.name, so each configuration problem gets its own name (no values in it).
+function configError(name: string, message: string) {
+  const error = new Error(message);
+  error.name = name;
+  return error;
 }
 
 function logAttempt(event: string, correlationId: string, status: number | string, ms: number, attempt: number) {
