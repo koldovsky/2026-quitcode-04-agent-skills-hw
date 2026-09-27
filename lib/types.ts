@@ -64,6 +64,9 @@ export type NewLead = Omit<
   | "updatedAt"
 >;
 
+// The only lead fields the dashboard table sends to the browser.
+export type LeadRow = Pick<Lead, "id" | "fullName" | "company" | "status" | "createdAt">;
+
 export type User = {
   id: string;
   name: string;

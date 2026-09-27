@@ -9,6 +9,7 @@ import {
   getSourceBreakdown,
   getWorkspace,
 } from "@/lib/data";
+import type { LeadRow } from "@/lib/types";
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
@@ -18,6 +19,13 @@ export default async function DashboardPage() {
     getLeadStats(workspace.id),
     getSourceBreakdown(workspace.id),
   ]);
+  const rows: LeadRow[] = leads.map(({ id, fullName, company, status, createdAt }) => ({
+    id,
+    fullName,
+    company,
+    status,
+    createdAt,
+  }));
 
   return (
     <div className="space-y-6">
@@ -31,7 +39,7 @@ export default async function DashboardPage() {
       <StatsCards stats={stats} />
       <LeadsToolbar sources={sources} />
       <LeadSearch />
-      <LeadsTable leads={leads} />
+      <LeadsTable leads={rows} />
     </div>
   );
 }
