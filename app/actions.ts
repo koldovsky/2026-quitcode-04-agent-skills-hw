@@ -1,11 +1,15 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import type { LeadStatus } from "@/lib/types";
+import { LEAD_STATUSES, NOTE_MAX_LENGTH, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -50,28 +54,70 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
-
-  await logAudit("lead.created", lead.id);
+  const idempotencyKey = randomUUID();
+  after(() => logAudit("lead.created", lead.id));
+  after(() =>
+    triggerWorkflow({
+      event: "lead-created",
+      data: { leadId: lead.id, company: lead.company, budget: lead.budget, source: lead.source },
+      idempotencyKey,
+      correlationId: randomUUID(),
+      async: false,
+    }),
+  );
 
   return { status: "ok" };
 }
 
+async function requireLeadInUserWorkspace(id: string) {
+  const user = await getCurrentUser();
+  const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), getLead(id)]);
+  if (!lead || lead.workspaceId !== workspace.id) {
+    throw new Error("Lead not found");
+  }
+}
+
 export async function updateLeadStatus(id: string, status: LeadStatus) {
+  if (!LEAD_STATUSES.some((value) => value === status)) {
+    throw new Error("Unknown lead status");
+  }
+  await requireLeadInUserWorkspace(id);
   await db.updateLeadStatus(id, status);
   revalidatePath("/dashboard");
   revalidatePath(`/dashboard/leads/${id}`);
 }
 
+export type AddNoteState =
+  | { status: "idle" | "ok" }
+  | { status: "invalid"; errors: { text?: string }; values: { text: string } };
+
+export async function addNote(
+  _prevState: AddNoteState,
+  formData: FormData,
+): Promise<AddNoteState> {
+  const rawId = formData.get("leadId");
+  const id = typeof rawId === "string" ? rawId : "";
+  await requireLeadInUserWorkspace(id);
+
+  const raw = formData.get("text");
+  // Browsers submit textarea line breaks as CRLF while maxLength counts them as one character.
+  const text = typeof raw === "string" ? raw.replace(/\r\n/g, "\n").trim() : "";
+  if (text.length === 0 || text.length > NOTE_MAX_LENGTH) {
+    return {
+      status: "invalid",
+      errors: { text: `Від 1 до ${NOTE_MAX_LENGTH} символів` },
+      values: { text },
+    };
+  }
+
+  if (!(await db.appendNote(id, text))) throw new Error("Lead not found");
+  revalidatePath(`/dashboard/leads/${id}`);
+  after(() => logAudit("lead.note_added", id));
+  return { status: "ok" };
+}
+
 export async function deleteLead(id: string) {
+  await requireLeadInUserWorkspace(id);
   await db.deleteLead(id);
   revalidatePath("/dashboard");
 }

@@ -12,10 +12,19 @@ import {
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const workspace = await getWorkspace({ slug: user.workspaceSlug });
-  const leads = await getLeads(workspace.id);
-  const stats = await getLeadStats(workspace.id);
-  const sources = await getSourceBreakdown(workspace.id);
+  const workspace = await getWorkspace(user.workspaceSlug);
+  const [leads, stats, sources] = await Promise.all([
+    getLeads(workspace.id),
+    getLeadStats(workspace.id),
+    getSourceBreakdown(workspace.id),
+  ]);
+  const rows = leads.map(({ id, fullName, company, status, createdAt }) => ({
+    id,
+    fullName,
+    company,
+    status,
+    createdAt,
+  }));
 
   return (
     <div className="space-y-6">
@@ -29,7 +38,7 @@ export default async function DashboardPage() {
       <StatsCards stats={stats} />
       <LeadsToolbar sources={sources} />
       <LeadSearch />
-      <LeadsTable leads={leads} />
+      <LeadsTable leads={rows} />
     </div>
   );
 }
