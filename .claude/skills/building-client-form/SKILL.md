@@ -13,7 +13,7 @@ description: >-
   через сторонній провайдер, стилізації без зміни логіки форми.
 metadata:
   owner: studio-nova-dev
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Форма в LeadDesk: один патерн для всіх
@@ -45,7 +45,10 @@ metadata:
    Публічна форма без входу — сесію не перевіряємо, але все інше нижче — так само.
 2. Права: об'єкт, який змінюємо, належить workspace користувача
    (`lead.workspaceId === workspace.id`), інакше — `{ status: "error" }` без подробиць.
-   `id` об'єкта — через `action.bind(null, id)` або приховане поле, **і все одно перевіряємо**.
+   `id` об'єкта — **прихованим полем** `<input type="hidden" name="leadId" value={id} />` і
+   `formData.get("leadId")` у дії, **і все одно перевіряємо** (поле може підмінити будь-хто).
+   Не `useActionState(action.bind(null, id))` у Client Component: у Next 16.3.5 відправка без JS
+   виконує дію, але відповідь не завершується.
 3. Валідація `parse…Form(formData)` — лише на сервері вона має силу; `required`/`maxLength` у
    HTML — підказка, не захист. Workspace, автор, статус беремо з сесії й коду, **не з formData**.
 4. Запис у БД.
@@ -93,7 +96,7 @@ export type NoteFormState =
 - [ ] 1. Дія: перевірка сесії (або явне «публічна») і прав на об'єкт — всередині дії, до запису.
 - [ ] 2. Валідація в parse…Form на сервері; workspace/автор/статус — не з formData.
 - [ ] 3. Дія повертає лише { status, errors?, values? } — без рядка з бази.
-- [ ] 4. useActionState + <form action={formAction}>; без onSubmit/fetch.
+- [ ] 4. useActionState + <form action={formAction}>; без onSubmit/fetch; id об'єкта — прихованим полем, не .bind у клієнті.
 - [ ] 5. У кожного поля label, aria-invalid, aria-describedby → текст помилки; підсумок role="alert".
 - [ ] 6. Після помилки введене на місці (defaultValue зі state.values).
 - [ ] 7. Жодних formData/email/телефону/тексту в console.* на сервері й клієнті.
@@ -117,7 +120,7 @@ export type NoteFormState =
       `aria-invalid="true"` і `aria-describedby`, що вказує на текст помилки.
 - [ ] Помилка в одному полі → решта введеного лишилась.
 - [ ] Відправка з вимкненим JavaScript (DevTools → Command Menu → «Disable JavaScript») працює:
-      сторінка перезавантажується з результатом.
+      сторінка **перезавантажується з результатом за секунду**, а не «крутиться» без кінця.
 - [ ] Дія без сесії (вийти й повторити запит із вкладки Network → «Copy as cURL» без cookie) або від
       користувача іншого workspace → зміни в БД немає (лічильник `db:<запит>` у журналі сервера не
       зріс).
