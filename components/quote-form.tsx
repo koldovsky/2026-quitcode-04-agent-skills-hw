@@ -4,7 +4,7 @@ import { useActionState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { requestQuote, type QuoteFormState } from "@/app/quotes/actions";
-import { BUDGET_OPTIONS, DESCRIPTION_MAX_LENGTH, type QuoteField } from "@/lib/quote-form";
+import { BUDGET_OPTIONS, DESCRIPTION_MAX_LENGTH, HONEYPOT_FIELD, type QuoteField } from "@/lib/quote-form";
 
 const initialState: QuoteFormState = { status: "idle" };
 
@@ -35,8 +35,8 @@ export function QuoteForm() {
     "aria-invalid": errors[field] ? true : undefined,
     "aria-describedby": errors[field] ? errorId(field) : undefined,
   });
-  // Invalid state carries what the user typed; React 19 resets the form after every action.
-  const values = state.status === "invalid" ? state.values : {};
+  // Every error state carries what the user typed; React 19 resets the form after every action.
+  const values = "values" in state ? state.values : {};
   const quoteId = state.status === "ok" ? state.id : null;
 
   useEffect(() => {
@@ -61,6 +61,18 @@ export function QuoteForm() {
           Запит не надіслано: виправте поля нижче.
         </p>
       )}
+      {state.status === "error" && (
+        <p role="alert" className="text-sm text-red-700">
+          {state.message}
+        </p>
+      )}
+
+      {/* Anti-spam honeypot: off-screen, hidden from screen readers and out of the tab order, so
+          people leave it empty; bots that fill every input do not. */}
+      <div aria-hidden="true" className="absolute -left-[10000px] top-auto h-px w-px overflow-hidden">
+        <label htmlFor="quote-hp">Сайт компанії</label>
+        <input id="quote-hp" name={HONEYPOT_FIELD} type="text" tabIndex={-1} autoComplete="off" defaultValue="" />
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
