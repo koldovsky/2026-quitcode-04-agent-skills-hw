@@ -1,5 +1,6 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { db } from "@/lib/db";
 import { triggerWorkflow } from "@/lib/n8n/client";
@@ -7,8 +8,7 @@ import { parseQuoteForm, type QuoteFormField, type QuoteFormValues } from "@/lib
 
 export type RequestQuoteState =
   | { status: "idle" }
-  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues }
-  | { status: "ok"; id: string };
+  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues };
 
 // Public form: no session check, the Server Action only trusts its own validation.
 export async function requestQuote(
@@ -44,6 +44,7 @@ export async function requestQuote(
     }
   });
 
-  // Only form state goes back to the browser — no DB row, no keys.
-  return { status: "ok", id: quote.id };
+  // The status page is the answer: a server redirect works with and without JavaScript.
+  // Only the id leaves the server — no DB row, no keys.
+  redirect(`/quotes/${quote.id}`);
 }
