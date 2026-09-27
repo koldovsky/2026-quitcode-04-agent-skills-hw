@@ -1,0 +1,1176 @@
+diff --git a/.env.example b/.env.example
+index 26590dc..db36236 100644
+--- a/.env.example
++++ b/.env.example
+@@ -3,4 +3,15 @@
+ 
+ # n8n webhook that receives every new lead from the public form.
+ # Locally it points at the offline n8n mock: node tools/mock-n8n.mjs
+-N8N_WEBHOOK_URL=http://127.0.0.1:5678/webhook-test/lead-created
++N8N_WEBHOOK_URL=http://127.0.0.1:5678/webhook/lead-created
++
++# Production n8n webhook base — commit only the production path here; a local
++# test path belongs in your own .env.local, never here.
++N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook
++# Value of the x-n8n-token header n8n expects on incoming webhook calls.
++N8N_WEBHOOK_TOKEN=change-me-webhook-token
++# HMAC secret used to verify n8n's callback signature (x-n8n-signature).
++# Generate with: node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
++N8N_CALLBACK_SECRET=change-me-callback-secret
++# Address n8n uses to reach this app's callback routes.
++APP_BASE_URL=http://127.0.0.1:3000
+diff --git a/app/api/n8n/[event]/route.ts b/app/api/n8n/[event]/route.ts
+new file mode 100644
+index 0000000..4fd1b4c
+--- /dev/null
++++ b/app/api/n8n/[event]/route.ts
+@@ -0,0 +1,120 @@
++import { createHmac, timingSafeEqual } from "node:crypto";
++import { db } from "@/lib/db";
++
++const KNOWN_EVENTS = new Set(["quote-request"]);
++const MAX_BODY_BYTES = 64 * 1024;
++const MAX_CLOCK_SKEW_SECONDS = 300;
++
++type CallbackBody = {
++  event: string;
++  data: {
++    jobId: string;
++    status: "completed" | "failed";
++    requestIdempotencyKey: string;
++    result?: { documentUrl?: string };
++    error?: { code?: string };
++  };
++};
++
++function verifySignature(timestamp: string, raw: string, signature: string, secret: string) {
++  const expected = `sha256=${createHmac("sha256", secret).update(`${timestamp}.${raw}`).digest("hex")}`;
++  const expectedBuf = Buffer.from(expected);
++  const actualBuf = Buffer.from(signature);
++  if (expectedBuf.length !== actualBuf.length) return false;
++  return timingSafeEqual(expectedBuf, actualBuf);
++}
++
++function isPlausibleCallbackBody(value: unknown): value is CallbackBody {
++  if (typeof value !== "object" || value === null) return false;
++  const body = value as Record<string, unknown>;
++  if (typeof body.event !== "string") return false;
++  const data = body.data;
++  if (typeof data !== "object" || data === null) return false;
++  const d = data as Record<string, unknown>;
++  return (
++    typeof d.jobId === "string" &&
++    (d.status === "completed" || d.status === "failed") &&
++    typeof d.requestIdempotencyKey === "string"
++  );
++}
++
++export async function POST(request: Request, { params }: { params: Promise<{ event: string }> }) {
++  const { event } = await params;
++
++  // 1. Unknown event / wrong content-type — before reading the body.
++  if (!KNOWN_EVENTS.has(event)) {
++    return new Response(null, { status: 404 });
++  }
++  if (request.headers.get("content-type") !== "application/json") {
++    return new Response(null, { status: 415 });
++  }
++
++  // 2. Raw text, read exactly once — needed byte-for-byte for the signature.
++  const raw = await request.text();
++
++  // 3. Body size limit.
++  if (Buffer.byteLength(raw, "utf8") > MAX_BODY_BYTES) {
++    return new Response(null, { status: 413 });
++  }
++
++  // 4. Reject stale or future timestamps (replay window).
++  const timestampHeader = request.headers.get("x-n8n-timestamp") ?? "";
++  const timestamp = Number(timestampHeader);
++  if (!Number.isFinite(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > MAX_CLOCK_SKEW_SECONDS) {
++    return new Response(null, { status: 401 });
++  }
++
++  // 5. HMAC signature, constant-time compare.
++  const secret = process.env.N8N_CALLBACK_SECRET;
++  const signature = request.headers.get("x-n8n-signature") ?? "";
++  if (!secret || !verifySignature(timestampHeader, raw, signature, secret)) {
++    return new Response(null, { status: 401 });
++  }
++
++  // 6. Claim the idempotency key before doing anything else.
++  const idempotencyKeyHeader = request.headers.get("idempotency-key") ?? "";
++  const claimed = await db.claimCallbackKey(idempotencyKeyHeader);
++  if (!claimed) {
++    return Response.json({ duplicate: true }, { status: 200 });
++  }
++
++  // 7. Only now parse and validate the shape.
++  let parsed: unknown;
++  try {
++    parsed = JSON.parse(raw);
++  } catch {
++    await db.releaseCallbackKey(idempotencyKeyHeader);
++    return new Response(null, { status: 400 });
++  }
++
++  if (
++    !isPlausibleCallbackBody(parsed) ||
++    (parsed.event !== `${event}.completed` && parsed.event !== `${event}.failed`) ||
++    idempotencyKeyHeader !== `${parsed.data.jobId}:${parsed.event}`
++  ) {
++    await db.releaseCallbackKey(idempotencyKeyHeader);
++    return new Response(null, { status: 400 });
++  }
++
++  const quote = await db.getQuoteByIdempotencyKey(parsed.data.requestIdempotencyKey);
++  if (!quote) {
++    await db.releaseCallbackKey(idempotencyKeyHeader);
++    return new Response(null, { status: 400 });
++  }
++
++  // 8. Persist the minimal state before responding.
++  if (parsed.data.status === "completed" && parsed.data.result?.documentUrl) {
++    await db.updateQuoteResult(quote.id, {
++      status: "completed",
++      documentUrl: parsed.data.result.documentUrl,
++    });
++  } else {
++    await db.updateQuoteResult(quote.id, {
++      status: "failed",
++      errorCode: parsed.data.error?.code ?? "unknown",
++    });
++  }
++
++  // 9. Acknowledge.
++  return Response.json({ ok: true }, { status: 202 });
++}
+diff --git a/app/quotes/[id]/page.tsx b/app/quotes/[id]/page.tsx
+new file mode 100644
+index 0000000..55b41e7
+--- /dev/null
++++ b/app/quotes/[id]/page.tsx
+@@ -0,0 +1,79 @@
++import Link from "next/link";
++import { notFound } from "next/navigation";
++import { getQuote } from "@/lib/data";
++import { QuoteStatusBadge } from "@/components/quote-status-badge";
++import { QuoteStatusPoller } from "@/components/quote-status-poller";
++
++const dateTimeFormat = new Intl.DateTimeFormat("uk-UA", { dateStyle: "medium", timeStyle: "short" });
++
++export default async function QuoteStatusPage({ params }: PageProps<"/quotes/[id]">) {
++  const { id } = await params;
++  const quote = await getQuote(id);
++  if (!quote) notFound();
++
++  return (
++    <div className="mx-auto w-full max-w-2xl flex-1 space-y-6 px-6 py-12">
++      <Link href="/quotes/new" className="text-sm text-slate-500 hover:text-slate-900">
++        ← Новий запит
++      </Link>
++
++      <div className="flex items-start justify-between gap-4">
++        <div>
++          <h1 className="text-2xl font-semibold tracking-tight">Запит на кошторис</h1>
++          <p className="text-sm text-slate-500">{quote.id}</p>
++        </div>
++        <QuoteStatusBadge status={quote.status} />
++      </div>
++
++      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 rounded-lg border border-slate-200 bg-white p-5 text-sm sm:grid-cols-2">
++        <div>
++          <dt className="text-slate-500">Компанія</dt>
++          <dd className="font-medium break-words">{quote.company}</dd>
++        </div>
++        <div>
++          <dt className="text-slate-500">Email</dt>
++          <dd className="font-medium break-words">{quote.email}</dd>
++        </div>
++        <div>
++          <dt className="text-slate-500">Бюджет</dt>
++          <dd className="font-medium">{quote.budget === null ? "—" : `$${quote.budget}`}</dd>
++        </div>
++        <div>
++          <dt className="text-slate-500">Створено</dt>
++          <dd className="font-medium">{dateTimeFormat.format(new Date(quote.createdAt))}</dd>
++        </div>
++      </dl>
++
++      <section className="space-y-2 rounded-lg border border-slate-200 bg-white p-5 text-sm">
++        <h2 className="font-medium">Опис задачі</h2>
++        <p className="whitespace-pre-line text-slate-700">{quote.description}</p>
++      </section>
++
++      {quote.status === "queued" && (
++        <>
++          <p className="text-sm text-slate-500">
++            Кошторис готується — зазвичай це займає від 40 секунд до кількох хвилин. Сторінка
++            оновиться автоматично.
++          </p>
++          <QuoteStatusPoller />
++        </>
++      )}
++
++      {quote.status === "completed" && quote.documentUrl && (
++        <a
++          href={quote.documentUrl}
++          className="inline-block rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
++        >
++          Завантажити кошторис
++        </a>
++      )}
++
++      {quote.status === "failed" && (
++        <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
++          Не вдалося підготувати кошторис. Спробуйте надіслати запит ще раз або зв&apos;яжіться з
++          нами напряму.
++        </p>
++      )}
++    </div>
++  );
++}
+diff --git a/app/quotes/actions.ts b/app/quotes/actions.ts
+new file mode 100644
+index 0000000..11aa18b
+--- /dev/null
++++ b/app/quotes/actions.ts
+@@ -0,0 +1,54 @@
++"use server";
++
++import { randomUUID } from "node:crypto";
++import { redirect } from "next/navigation";
++import { after } from "next/server";
++import { db } from "@/lib/db";
++import { callN8nWorkflow } from "@/lib/n8n/client";
++import { parseQuoteForm, type QuoteFormField } from "@/lib/quote-form";
++
++export type SubmitQuoteState =
++  | { status: "idle" }
++  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>> };
++
++export async function submitQuoteRequest(
++  _prevState: SubmitQuoteState,
++  formData: FormData,
++): Promise<SubmitQuoteState> {
++  const parsed = parseQuoteForm(formData);
++  if (!parsed.ok) {
++    return { status: "invalid", errors: parsed.errors };
++  }
++
++  const idempotencyKey = randomUUID();
++  const correlationId = randomUUID();
++
++  const quote = await db.insertQuote({
++    ...parsed.data,
++    idempotencyKey,
++    correlationId,
++  });
++
++  after(async () => {
++    try {
++      await callN8nWorkflow({
++        event: "quote-request",
++        idempotencyKey,
++        correlationId,
++        callbackUrl: `${process.env.APP_BASE_URL}/api/n8n/quote-request`,
++        data: {
++          quoteId: quote.id,
++          company: quote.company,
++          email: quote.email,
++          description: quote.description,
++          budget: quote.budget,
++        },
++      });
++    } catch (error) {
++      console.error(`Failed to start quote-request workflow for ${quote.id}`, error);
++      await db.updateQuoteResult(quote.id, { status: "failed", errorCode: "n8n_dispatch_failed" });
++    }
++  });
++
++  redirect(`/quotes/${quote.id}`);
++}
+diff --git a/app/quotes/new/page.tsx b/app/quotes/new/page.tsx
+new file mode 100644
+index 0000000..b87214a
+--- /dev/null
++++ b/app/quotes/new/page.tsx
+@@ -0,0 +1,33 @@
++import Link from "next/link";
++import { QuoteRequestForm } from "@/components/quote-request-form";
++
++export default function NewQuotePage() {
++  return (
++    <div className="flex flex-1 flex-col">
++      <header className="border-b border-slate-200 bg-white">
++        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
++          <Link href="/" className="text-lg font-semibold tracking-tight">
++            Studio Nova
++          </Link>
++          <Link href="/login" className="text-sm text-slate-500 hover:text-slate-900">
++            Вхід для команди
++          </Link>
++        </div>
++      </header>
++
++      <main className="mx-auto grid w-full max-w-5xl flex-1 gap-10 px-6 py-12 md:grid-cols-[1fr_1.2fr]">
++        <section className="space-y-4">
++          <h1 className="text-3xl font-semibold tracking-tight">Запит на кошторис</h1>
++          <p className="text-slate-600">
++            Опишіть задачу — підготуємо PDF-кошторис і покажемо посилання на нього щойно він
++            буде готовий. Зазвичай це займає від 40 секунд до кількох хвилин.
++          </p>
++        </section>
++
++        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
++          <QuoteRequestForm />
++        </section>
++      </main>
++    </div>
++  );
++}
+diff --git a/components/quote-request-form.tsx b/components/quote-request-form.tsx
+new file mode 100644
+index 0000000..ce5267c
+--- /dev/null
++++ b/components/quote-request-form.tsx
+@@ -0,0 +1,50 @@
++"use client";
++
++import { useActionState } from "react";
++import { submitQuoteRequest, type SubmitQuoteState } from "@/app/quotes/actions";
++
++const initialState: SubmitQuoteState = { status: "idle" };
++
++const inputClass =
++  "mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
++
++export function QuoteRequestForm() {
++  const [state, formAction, pending] = useActionState(submitQuoteRequest, initialState);
++  const errors = state.status === "invalid" ? state.errors : {};
++
++  return (
++    <form action={formAction} className="space-y-4" noValidate>
++      <label className="block text-sm font-medium">
++        Компанія
++        <input name="company" autoComplete="organization" className={inputClass} />
++        {errors.company && <span className="mt-1 block text-xs text-red-600">{errors.company}</span>}
++      </label>
++
++      <label className="block text-sm font-medium">
++        Email
++        <input name="email" type="email" autoComplete="email" className={inputClass} />
++        {errors.email && <span className="mt-1 block text-xs text-red-600">{errors.email}</span>}
++      </label>
++
++      <label className="block text-sm font-medium">
++        Опис задачі
++        <textarea name="description" rows={4} className={inputClass} />
++        {errors.description && <span className="mt-1 block text-xs text-red-600">{errors.description}</span>}
++      </label>
++
++      <label className="block text-sm font-medium">
++        Орієнтовний бюджет, $
++        <input name="budget" type="number" min="0" step="1" className={inputClass} />
++        {errors.budget && <span className="mt-1 block text-xs text-red-600">{errors.budget}</span>}
++      </label>
++
++      <button
++        type="submit"
++        disabled={pending}
++        className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
++      >
++        {pending ? "Надсилаємо…" : "Надіслати запит"}
++      </button>
++    </form>
++  );
++}
+diff --git a/components/quote-status-badge.tsx b/components/quote-status-badge.tsx
+new file mode 100644
+index 0000000..01a0da5
+--- /dev/null
++++ b/components/quote-status-badge.tsx
+@@ -0,0 +1,23 @@
++import type { QuoteStatus } from "@/lib/types";
++
++export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
++  queued: "Готуємо кошторис…",
++  completed: "Кошторис готовий",
++  failed: "Не вдалося підготувати кошторис",
++};
++
++const QUOTE_STATUS_STYLES: Record<QuoteStatus, string> = {
++  queued: "bg-amber-50 text-amber-700 ring-amber-200",
++  completed: "bg-emerald-50 text-emerald-700 ring-emerald-200",
++  failed: "bg-red-50 text-red-700 ring-red-200",
++};
++
++export function QuoteStatusBadge({ status }: { status: QuoteStatus }) {
++  return (
++    <span
++      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${QUOTE_STATUS_STYLES[status]}`}
++    >
++      {QUOTE_STATUS_LABELS[status]}
++    </span>
++  );
++}
+diff --git a/components/quote-status-poller.tsx b/components/quote-status-poller.tsx
+new file mode 100644
+index 0000000..3f32a0c
+--- /dev/null
++++ b/components/quote-status-poller.tsx
+@@ -0,0 +1,20 @@
++"use client";
++
++import { useEffect } from "react";
++import { useRouter } from "next/navigation";
++
++const POLL_INTERVAL_MS = 5_000;
++
++// Refreshes the server-rendered status page while the n8n workflow is still
++// running, so a visitor left on the page sees the result without a manual
++// reload once the callback route updates the quote.
++export function QuoteStatusPoller() {
++  const router = useRouter();
++
++  useEffect(() => {
++    const interval = setInterval(() => router.refresh(), POLL_INTERVAL_MS);
++    return () => clearInterval(interval);
++  }, [router]);
++
++  return null;
++}
+diff --git a/lib/data.ts b/lib/data.ts
+index cad5f75..3147793 100644
+--- a/lib/data.ts
++++ b/lib/data.ts
+@@ -36,3 +36,7 @@ export async function getSourceBreakdown(workspaceId: string) {
+ export async function getLead(id: string) {
+   return db.getLead(id);
+ }
++
++export async function getQuote(id: string) {
++  return db.getQuote(id);
++}
+diff --git a/lib/db.ts b/lib/db.ts
+index dace5aa..bad9fa3 100644
+--- a/lib/db.ts
++++ b/lib/db.ts
+@@ -5,6 +5,8 @@ import type {
+   LeadStats,
+   LeadStatus,
+   NewLead,
++  NewQuote,
++  Quote,
+   SourceCount,
+   User,
+   Workspace,
+@@ -20,6 +22,9 @@ type Store = {
+   leads: Lead[];
+   audit: AuditEntry[];
+   nextLeadNumber: number;
++  quotes: Quote[];
++  nextQuoteNumber: number;
++  n8nCallbackKeys: Set<string>;
+ };
+ 
+ const LATENCY_MS = {
+@@ -36,6 +41,12 @@ const LATENCY_MS = {
+   insertAuditEntry: 250,
+   listUsers: 50,
+   createSession: 50,
++  insertQuote: 120,
++  getQuote: 80,
++  getQuoteByIdempotencyKey: 80,
++  updateQuoteResult: 80,
++  claimCallbackKey: 30,
++  releaseCallbackKey: 20,
+ } as const;
+ 
+ type QueryName = keyof typeof LATENCY_MS;
+@@ -162,6 +173,10 @@ function leadId(n: number) {
+   return `lead_${String(n).padStart(4, "0")}`;
+ }
+ 
++function quoteId(n: number) {
++  return `quote_${String(n).padStart(4, "0")}`;
++}
++
+ function seedLeads(count: number, workspaces: Workspace[], users: User[]): Lead[] {
+   const random = mulberry32(20260921);
+   const pick = <T,>(items: readonly T[]) => items[Math.floor(random() * items.length)];
+@@ -262,7 +277,16 @@ function createStore(): Store {
+     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
+   ];
+   const leads = seedLeads(200, workspaces, users);
+-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
++  return {
++    workspaces,
++    users,
++    leads,
++    audit: [],
++    nextLeadNumber: leads.length + 1,
++    quotes: [],
++    nextQuoteNumber: 1,
++    n8nCallbackKeys: new Set(),
++  };
+ }
+ 
+ // One store per server process (also survives module reloads in `next dev`).
+@@ -394,4 +418,70 @@ export const db = {
+       store.audit.push(entry);
+     });
+   },
++
++  insertQuote(input: NewQuote) {
++    return query("insertQuote", (): Quote => {
++      const now = new Date().toISOString();
++      const quote: Quote = {
++        ...input,
++        id: quoteId(store.nextQuoteNumber++),
++        status: "queued",
++        documentUrl: null,
++        errorCode: null,
++        createdAt: now,
++        updatedAt: now,
++      };
++      store.quotes.push(quote);
++      return structuredClone(quote);
++    });
++  },
++
++  getQuote(id: string) {
++    return query("getQuote", () => {
++      const quote = store.quotes.find((q) => q.id === id);
++      return quote ? structuredClone(quote) : null;
++    });
++  },
++
++  getQuoteByIdempotencyKey(idempotencyKey: string) {
++    return query("getQuoteByIdempotencyKey", () => {
++      const quote = store.quotes.find((q) => q.idempotencyKey === idempotencyKey);
++      return quote ? structuredClone(quote) : null;
++    });
++  },
++
++  updateQuoteResult(
++    id: string,
++    result:
++      | { status: "completed"; documentUrl: string }
++      | { status: "failed"; errorCode: string },
++  ) {
++    return query("updateQuoteResult", () => {
++      const quote = store.quotes.find((q) => q.id === id);
++      if (!quote) return false;
++      if (result.status === "completed") {
++        quote.status = "completed";
++        quote.documentUrl = result.documentUrl;
++      } else {
++        quote.status = "failed";
++        quote.errorCode = result.errorCode;
++      }
++      quote.updatedAt = new Date().toISOString();
++      return true;
++    });
++  },
++
++  claimCallbackKey(key: string) {
++    return query("claimCallbackKey", () => {
++      if (store.n8nCallbackKeys.has(key)) return false;
++      store.n8nCallbackKeys.add(key);
++      return true;
++    });
++  },
++
++  releaseCallbackKey(key: string) {
++    return query("releaseCallbackKey", () => {
++      store.n8nCallbackKeys.delete(key);
++    });
++  },
+ };
+diff --git a/lib/n8n/client.ts b/lib/n8n/client.ts
+new file mode 100644
+index 0000000..48b1e46
+--- /dev/null
++++ b/lib/n8n/client.ts
+@@ -0,0 +1,76 @@
++import "server-only";
++
++const REQUEST_TIMEOUT_MS = 10_000;
++const RETRY_DELAYS_MS = [1_000, 3_000];
++
++export type N8nEvent = "quote-request";
++
++type CallN8nWorkflowInput = {
++  event: N8nEvent;
++  data: Record<string, unknown>;
++  idempotencyKey: string;
++  correlationId: string;
++  callbackUrl: string;
++};
++
++function sleep(ms: number) {
++  return new Promise((resolve) => setTimeout(resolve, ms));
++}
++
++function isRetryableStatus(status: number) {
++  return status >= 500 || status === 524;
++}
++
++function isRetryableError(error: unknown) {
++  return error instanceof Error && (error.name === "TimeoutError" || error.name === "TypeError");
++}
++
++async function attemptOnce(url: string, body: string, headers: HeadersInit) {
++  try {
++    const response = await fetch(url, {
++      method: "POST",
++      headers,
++      body,
++      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
++    });
++    return { ok: response.status < 400, retryable: isRetryableStatus(response.status), status: response.status as number | null };
++  } catch (error) {
++    return { ok: false, retryable: isRetryableError(error), status: null as number | null };
++  }
++}
++
++// Fires the outgoing webhook that starts an n8n workflow. Long workflows only
++// ever respond 202 here; the real result comes back through the callback
++// route, never through this call's response body (see known-pitfalls.md).
++export async function callN8nWorkflow(input: CallN8nWorkflowInput): Promise<void> {
++  const baseUrl = process.env.N8N_WEBHOOK_BASE_URL;
++  const token = process.env.N8N_WEBHOOK_TOKEN;
++  if (!baseUrl || !token) {
++    throw new Error("N8N_WEBHOOK_BASE_URL / N8N_WEBHOOK_TOKEN is not configured");
++  }
++
++  const url = `${baseUrl}/${input.event}`;
++  const body = JSON.stringify({
++    version: 1,
++    event: input.event,
++    data: input.data,
++    callbackUrl: input.callbackUrl,
++  });
++  const headers: HeadersInit = {
++    "content-type": "application/json",
++    "x-n8n-token": token,
++    "idempotency-key": input.idempotencyKey,
++    "x-correlation-id": input.correlationId,
++  };
++
++  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
++    const result = await attemptOnce(url, body, headers);
++    if (result.ok) return;
++    if (!result.retryable || attempt === RETRY_DELAYS_MS.length) {
++      throw new Error(
++        `n8n webhook "${input.event}" failed${result.status ? ` with status ${result.status}` : ""}`,
++      );
++    }
++    await sleep(RETRY_DELAYS_MS[attempt]);
++  }
++}
+diff --git a/lib/quote-form.ts b/lib/quote-form.ts
+new file mode 100644
+index 0000000..9e59d90
+--- /dev/null
++++ b/lib/quote-form.ts
+@@ -0,0 +1,45 @@
++export type QuoteFormField = "company" | "email" | "description" | "budget";
++
++export type QuoteFormData = {
++  company: string;
++  email: string;
++  description: string;
++  budget: number | null;
++};
++
++export type QuoteParseResult =
++  | { ok: true; data: QuoteFormData }
++  | { ok: false; errors: Partial<Record<QuoteFormField, string>> };
++
++const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
++
++function text(formData: FormData, name: QuoteFormField, max = 200) {
++  const value = formData.get(name);
++  return typeof value === "string" ? value.trim().slice(0, max) : "";
++}
++
++export function parseQuoteForm(formData: FormData): QuoteParseResult {
++  const errors: Partial<Record<QuoteFormField, string>> = {};
++
++  const company = text(formData, "company", 120);
++  const email = text(formData, "email", 200).toLowerCase();
++  const description = text(formData, "description", 2000);
++  const budgetRaw = text(formData, "budget", 10);
++
++  if (!company) errors.company = "Вкажіть назву компанії";
++  if (!EMAIL_RE.test(email)) errors.email = "Перевірте email";
++  if (description.length < 10) errors.description = "Опишіть задачу хоча б одним реченням";
++
++  let budget: number | null = null;
++  if (budgetRaw) {
++    const parsedBudget = Number(budgetRaw);
++    if (!Number.isFinite(parsedBudget) || parsedBudget <= 0) {
++      errors.budget = "Вкажіть коректний бюджет";
++    } else {
++      budget = parsedBudget;
++    }
++  }
++
++  if (Object.keys(errors).length > 0) return { ok: false, errors };
++  return { ok: true, data: { company, email, description, budget } };
++}
+diff --git a/lib/types.ts b/lib/types.ts
+index 7803a22..a50f76f 100644
+--- a/lib/types.ts
++++ b/lib/types.ts
+@@ -98,3 +98,27 @@ export type AuditEntry = {
+   leadId: string;
+   at: string;
+ };
++
++export const QUOTE_STATUSES = ["queued", "completed", "failed"] as const;
++
++export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
++
++export type Quote = {
++  id: string;
++  company: string;
++  email: string;
++  description: string;
++  budget: number | null;
++  status: QuoteStatus;
++  idempotencyKey: string;
++  correlationId: string;
++  documentUrl: string | null;
++  errorCode: string | null;
++  createdAt: string;
++  updatedAt: string;
++};
++
++export type NewQuote = Omit<
++  Quote,
++  "id" | "status" | "documentUrl" | "errorCode" | "createdAt" | "updatedAt"
++>;
+diff --git a/package-lock.json b/package-lock.json
+index 71c858c..ee0d101 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -13,7 +13,8 @@
+         "next": "16.3.5",
+         "react": "19.2.8",
+         "react-dom": "19.2.8",
+-        "recharts": "^3.10.1"
++        "recharts": "^3.10.1",
++        "server-only": "^0.0.1"
+       },
+       "devDependencies": {
+         "@tailwindcss/postcss": "^4",
+@@ -676,9 +677,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -695,9 +693,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -714,9 +709,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -733,9 +725,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -752,9 +741,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -771,9 +757,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -790,9 +773,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -809,9 +789,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -828,9 +805,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -853,9 +827,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -878,9 +849,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -903,9 +871,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -928,9 +893,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -953,9 +915,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -978,9 +937,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1003,9 +959,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1273,9 +1226,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1292,9 +1242,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1311,9 +1258,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1330,9 +1274,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1609,9 +1550,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1629,9 +1567,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1649,9 +1584,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1669,9 +1601,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2298,9 +2227,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2315,9 +2241,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2332,9 +2255,6 @@
+         "loong64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2349,9 +2269,6 @@
+         "loong64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2366,9 +2283,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2383,9 +2297,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2400,9 +2311,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2417,9 +2325,6 @@
+         "s390x"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2434,9 +2339,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2451,9 +2353,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5846,9 +5745,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -5870,9 +5766,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -5894,9 +5787,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -5918,9 +5808,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -7114,6 +7001,12 @@
+         "semver": "bin/semver.js"
+       }
+     },
++    "node_modules/server-only": {
++      "version": "0.0.1",
++      "resolved": "https://registry.npmjs.org/server-only/-/server-only-0.0.1.tgz",
++      "integrity": "sha512-qepMx2JxAa5jjfzxG79yPPq+8BuFToHd1hm7kI+Z4zAq1ftQiP7HcxMhDDItrbtwVeLg/cY2JnKnrcFkmiswNA==",
++      "license": "MIT"
++    },
+     "node_modules/set-function-length": {
+       "version": "1.2.2",
+       "resolved": "https://registry.npmjs.org/set-function-length/-/set-function-length-1.2.2.tgz",
+diff --git a/package.json b/package.json
+index 0cfeb95..404ffbb 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,8 @@
+     "next": "16.3.5",
+     "react": "19.2.8",
+     "react-dom": "19.2.8",
+-    "recharts": "^3.10.1"
++    "recharts": "^3.10.1",
++    "server-only": "^0.0.1"
+   },
+   "devDependencies": {
+     "@tailwindcss/postcss": "^4",

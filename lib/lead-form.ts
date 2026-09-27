@@ -73,3 +73,24 @@ export function parseLeadForm(formData: FormData): ParseResult {
 
   return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, data };
 }
+
+export const NOTE_MAX_LENGTH = 500;
+
+export type NoteParseResult =
+  | { ok: true; note: string }
+  | { ok: false; error: string; value: string };
+
+export function parseLeadNoteForm(formData: FormData): NoteParseResult {
+  const raw = formData.get("note");
+  const value = typeof raw === "string" ? raw : "";
+  const note = value.trim();
+
+  if (!note) {
+    return { ok: false, error: "Введіть текст нотатки", value };
+  }
+  if (note.length > NOTE_MAX_LENGTH) {
+    return { ok: false, error: `Нотатка не може перевищувати ${NOTE_MAX_LENGTH} символів`, value };
+  }
+
+  return { ok: true, note };
+}

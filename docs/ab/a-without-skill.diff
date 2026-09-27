@@ -1,0 +1,926 @@
+diff --git a/.env.example b/.env.example
+index 26590dc..99c47f8 100644
+--- a/.env.example
++++ b/.env.example
+@@ -4,3 +4,14 @@
+ # n8n webhook that receives every new lead from the public form.
+ # Locally it points at the offline n8n mock: node tools/mock-n8n.mjs
+ N8N_WEBHOOK_URL=http://127.0.0.1:5678/webhook-test/lead-created
++
++# n8n webhook that starts the "quote-request" workflow (builds a PDF quote, 40-90s).
++# Locally it points at the offline n8n mock: node tools/mock-n8n.mjs
++N8N_QUOTE_WEBHOOK_URL=http://127.0.0.1:5678/webhook-test/quote-request
++
++# Shared secret n8n must send in the X-Webhook-Secret header when it calls
++# POST /api/quotes/webhook back once a quote PDF is ready.
++N8N_CALLBACK_SECRET=change-me
++
++# Public base URL of this app, used to build the callback URL sent to n8n.
++APP_BASE_URL=http://localhost:3000
+diff --git a/app/api/quotes/webhook/route.ts b/app/api/quotes/webhook/route.ts
+new file mode 100644
+index 0000000..b55e421
+--- /dev/null
++++ b/app/api/quotes/webhook/route.ts
+@@ -0,0 +1,36 @@
++import { revalidatePath } from "next/cache";
++import { db } from "@/lib/db";
++
++export async function POST(request: Request) {
++  const secret = request.headers.get("x-webhook-secret");
++  if (!secret || secret !== process.env.N8N_CALLBACK_SECRET) {
++    return Response.json({ error: "unauthorized" }, { status: 401 });
++  }
++
++  let body: unknown;
++  try {
++    body = await request.json();
++  } catch {
++    return Response.json({ error: "invalid json" }, { status: 400 });
++  }
++
++  const { quoteId, status, pdfUrl, errorMessage } = (body ?? {}) as Record<string, unknown>;
++
++  if (typeof quoteId !== "string" || (status !== "ready" && status !== "error")) {
++    return Response.json({ error: "invalid payload" }, { status: 400 });
++  }
++
++  const quote = await db.getQuoteRequest(quoteId);
++  if (!quote) {
++    return Response.json({ error: "not found" }, { status: 404 });
++  }
++
++  await db.updateQuoteRequestStatus(quoteId, status, {
++    pdfUrl: typeof pdfUrl === "string" ? pdfUrl : null,
++    errorMessage: typeof errorMessage === "string" ? errorMessage : null,
++  });
++
++  revalidatePath(`/quotes/${quoteId}`);
++
++  return Response.json({ ok: true });
++}
+diff --git a/app/quotes/[id]/page.tsx b/app/quotes/[id]/page.tsx
+new file mode 100644
+index 0000000..87d16e6
+--- /dev/null
++++ b/app/quotes/[id]/page.tsx
+@@ -0,0 +1,85 @@
++import Link from "next/link";
++import { notFound } from "next/navigation";
++import { QuoteStatusBadge } from "@/components/quote-status-badge";
++import { QuoteStatusPoller } from "@/components/quote-status-poller";
++import { db } from "@/lib/db";
++
++export const dynamic = "force-dynamic";
++
++const dateTimeFormat = new Intl.DateTimeFormat("uk-UA", { dateStyle: "medium", timeStyle: "short" });
++const usd = new Intl.NumberFormat("uk-UA", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
++
++export default async function QuotePage({ params }: PageProps<"/quotes/[id]">) {
++  const { id } = await params;
++  const quote = await db.getQuoteRequest(id);
++
++  if (!quote) notFound();
++
++  const details: Array<[string, string]> = [
++    ["Компанія", quote.company],
++    ["Email", quote.email],
++    ["Бюджет", quote.budget === null ? "—" : usd.format(quote.budget)],
++    ["Створено", dateTimeFormat.format(new Date(quote.createdAt))],
++  ];
++
++  return (
++    <div className="mx-auto max-w-2xl space-y-6 px-6 py-12">
++      <Link href="/quotes/new" className="text-sm text-slate-500 hover:text-slate-900">
++        ← Новий запит
++      </Link>
++
++      <div className="flex items-start justify-between gap-4">
++        <div>
++          <h1 className="text-2xl font-semibold tracking-tight">Запит на кошторис</h1>
++          <p className="text-sm text-slate-500">{quote.id}</p>
++        </div>
++        <QuoteStatusBadge status={quote.status} />
++      </div>
++
++      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 rounded-lg border border-slate-200 bg-white p-5 text-sm sm:grid-cols-2">
++        {details.map(([label, value]) => (
++          <div key={label}>
++            <dt className="text-slate-500">{label}</dt>
++            <dd className="font-medium break-words">{value}</dd>
++          </div>
++        ))}
++      </dl>
++
++      <section className="space-y-2 rounded-lg border border-slate-200 bg-white p-5 text-sm">
++        <h2 className="font-medium">Опис задачі</h2>
++        <p className="whitespace-pre-line text-slate-700">{quote.description}</p>
++      </section>
++
++      {quote.status === "pending" && (
++        <section className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
++          Готуємо кошторис — зазвичай це займає 40–90 секунд. Сторінка оновиться автоматично.
++        </section>
++      )}
++
++      {quote.status === "ready" && (
++        <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-sm">
++          {quote.pdfUrl ? (
++            <a
++              href={quote.pdfUrl}
++              target="_blank"
++              rel="noopener noreferrer"
++              className="font-medium text-emerald-700 hover:underline"
++            >
++              Завантажити кошторис (PDF)
++            </a>
++          ) : (
++            <p className="text-emerald-800">Кошторис готовий.</p>
++          )}
++        </section>
++      )}
++
++      {quote.status === "error" && (
++        <section className="rounded-lg border border-red-200 bg-red-50 p-5 text-sm text-red-700">
++          {quote.errorMessage || "Не вдалося підготувати кошторис. Спробуйте ще раз."}
++        </section>
++      )}
++
++      <QuoteStatusPoller pending={quote.status === "pending"} />
++    </div>
++  );
++}
+diff --git a/app/quotes/actions.ts b/app/quotes/actions.ts
+new file mode 100644
+index 0000000..40147af
+--- /dev/null
++++ b/app/quotes/actions.ts
+@@ -0,0 +1,53 @@
++"use server";
++
++import { headers } from "next/headers";
++import { redirect } from "next/navigation";
++import { db } from "@/lib/db";
++import { parseQuoteForm, type QuoteFormField } from "@/lib/quote-form";
++
++export type SubmitQuoteState =
++  | { status: "idle" }
++  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>> };
++
++export async function submitQuoteRequest(
++  _prevState: SubmitQuoteState,
++  formData: FormData,
++): Promise<SubmitQuoteState> {
++  const parsed = parseQuoteForm(formData);
++  if (!parsed.ok) {
++    return { status: "invalid", errors: parsed.errors };
++  }
++
++  const quote = await db.insertQuoteRequest(parsed.data);
++
++  const requestHeaders = await headers();
++  const baseUrl = process.env.APP_BASE_URL ?? requestHeaders.get("origin") ?? "http://localhost:3000";
++
++  try {
++    const response = await fetch(process.env.N8N_QUOTE_WEBHOOK_URL!, {
++      method: "POST",
++      headers: { "content-type": "application/json" },
++      body: JSON.stringify({
++        quoteId: quote.id,
++        company: quote.company,
++        email: quote.email,
++        description: quote.description,
++        budget: quote.budget,
++        callbackUrl: `${baseUrl}/api/quotes/webhook`,
++      }),
++    });
++
++    if (!response.ok) {
++      await db.updateQuoteRequestStatus(quote.id, "error", {
++        errorMessage: `n8n відповів статусом ${response.status}`,
++      });
++    }
++  } catch (error) {
++    console.error(`Failed to start quote workflow for ${quote.id}`, error);
++    await db.updateQuoteRequestStatus(quote.id, "error", {
++      errorMessage: "Не вдалося запустити воркфлоу підготовки кошторису",
++    });
++  }
++
++  redirect(`/quotes/${quote.id}`);
++}
+diff --git a/app/quotes/new/page.tsx b/app/quotes/new/page.tsx
+new file mode 100644
+index 0000000..b76083a
+--- /dev/null
++++ b/app/quotes/new/page.tsx
+@@ -0,0 +1,15 @@
++import { QuoteForm } from "@/components/quote-form";
++
++export default function NewQuotePage() {
++  return (
++    <div className="mx-auto max-w-2xl px-6 py-12">
++      <h1 className="text-2xl font-semibold tracking-tight">Запит на кошторис</h1>
++      <p className="mt-2 text-sm text-slate-600">
++        Опишіть задачу — підготуємо кошторис у форматі PDF. Зазвичай це займає 40–90 секунд.
++      </p>
++      <div className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
++        <QuoteForm />
++      </div>
++    </div>
++  );
++}
+diff --git a/components/quote-form.tsx b/components/quote-form.tsx
+new file mode 100644
+index 0000000..ae077a4
+--- /dev/null
++++ b/components/quote-form.tsx
+@@ -0,0 +1,57 @@
++"use client";
++
++import { useActionState } from "react";
++import { submitQuoteRequest, type SubmitQuoteState } from "@/app/quotes/actions";
++import { QUOTE_BUDGET_OPTIONS } from "@/lib/quote-form";
++
++const initialState: SubmitQuoteState = { status: "idle" };
++
++const inputClass =
++  "mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
++
++export function QuoteForm() {
++  const [state, formAction, pending] = useActionState(submitQuoteRequest, initialState);
++  const errors = state.status === "invalid" ? state.errors : {};
++
++  return (
++    <form action={formAction} className="space-y-4" noValidate>
++      <label className="block text-sm font-medium">
++        Компанія
++        <input name="company" autoComplete="organization" className={inputClass} />
++        {errors.company && <span className="mt-1 block text-xs text-red-600">{errors.company}</span>}
++      </label>
++
++      <label className="block text-sm font-medium">
++        Email
++        <input name="email" type="email" autoComplete="email" className={inputClass} />
++        {errors.email && <span className="mt-1 block text-xs text-red-600">{errors.email}</span>}
++      </label>
++
++      <label className="block text-sm font-medium">
++        Бюджет
++        <select name="budget" defaultValue="" className={inputClass}>
++          {QUOTE_BUDGET_OPTIONS.map((option) => (
++            <option key={option.value} value={option.value}>
++              {option.label}
++            </option>
++          ))}
++        </select>
++        {errors.budget && <span className="mt-1 block text-xs text-red-600">{errors.budget}</span>}
++      </label>
++
++      <label className="block text-sm font-medium">
++        Опис задачі
++        <textarea name="description" rows={5} className={inputClass} />
++        {errors.description && <span className="mt-1 block text-xs text-red-600">{errors.description}</span>}
++      </label>
++
++      <button
++        type="submit"
++        disabled={pending}
++        className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
++      >
++        {pending ? "Надсилаємо…" : "Отримати кошторис"}
++      </button>
++    </form>
++  );
++}
+diff --git a/components/quote-status-badge.tsx b/components/quote-status-badge.tsx
+new file mode 100644
+index 0000000..3658d37
+--- /dev/null
++++ b/components/quote-status-badge.tsx
+@@ -0,0 +1,23 @@
++import type { QuoteStatus } from "@/lib/types";
++
++export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
++  pending: "Готується",
++  ready: "Готово",
++  error: "Помилка",
++};
++
++const QUOTE_STATUS_STYLES: Record<QuoteStatus, string> = {
++  pending: "bg-amber-50 text-amber-700 ring-amber-200",
++  ready: "bg-emerald-50 text-emerald-700 ring-emerald-200",
++  error: "bg-red-50 text-red-700 ring-red-200",
++};
++
++export function QuoteStatusBadge({ status }: { status: QuoteStatus }) {
++  return (
++    <span
++      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${QUOTE_STATUS_STYLES[status]}`}
++    >
++      {QUOTE_STATUS_LABELS[status]}
++    </span>
++  );
++}
+diff --git a/components/quote-status-poller.tsx b/components/quote-status-poller.tsx
+new file mode 100644
+index 0000000..91b1f44
+--- /dev/null
++++ b/components/quote-status-poller.tsx
+@@ -0,0 +1,16 @@
++"use client";
++
++import { useEffect } from "react";
++import { useRouter } from "next/navigation";
++
++export function QuoteStatusPoller({ pending }: { pending: boolean }) {
++  const router = useRouter();
++
++  useEffect(() => {
++    if (!pending) return;
++    const interval = setInterval(() => router.refresh(), 5000);
++    return () => clearInterval(interval);
++  }, [pending, router]);
++
++  return null;
++}
+diff --git a/lib/db.ts b/lib/db.ts
+index dace5aa..9e53436 100644
+--- a/lib/db.ts
++++ b/lib/db.ts
+@@ -5,6 +5,9 @@ import type {
+   LeadStats,
+   LeadStatus,
+   NewLead,
++  NewQuoteRequest,
++  QuoteRequest,
++  QuoteStatus,
+   SourceCount,
+   User,
+   Workspace,
+@@ -20,6 +23,8 @@ type Store = {
+   leads: Lead[];
+   audit: AuditEntry[];
+   nextLeadNumber: number;
++  quoteRequests: QuoteRequest[];
++  nextQuoteNumber: number;
+ };
+ 
+ const LATENCY_MS = {
+@@ -36,6 +41,9 @@ const LATENCY_MS = {
+   insertAuditEntry: 250,
+   listUsers: 50,
+   createSession: 50,
++  insertQuoteRequest: 150,
++  getQuoteRequest: 80,
++  updateQuoteRequestStatus: 80,
+ } as const;
+ 
+ type QueryName = keyof typeof LATENCY_MS;
+@@ -162,6 +170,10 @@ function leadId(n: number) {
+   return `lead_${String(n).padStart(4, "0")}`;
+ }
+ 
++function quoteId(n: number) {
++  return `quote_${String(n).padStart(4, "0")}`;
++}
++
+ function seedLeads(count: number, workspaces: Workspace[], users: User[]): Lead[] {
+   const random = mulberry32(20260921);
+   const pick = <T,>(items: readonly T[]) => items[Math.floor(random() * items.length)];
+@@ -262,7 +274,15 @@ function createStore(): Store {
+     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
+   ];
+   const leads = seedLeads(200, workspaces, users);
+-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
++  return {
++    workspaces,
++    users,
++    leads,
++    audit: [],
++    nextLeadNumber: leads.length + 1,
++    quoteRequests: [],
++    nextQuoteNumber: 1,
++  };
+ }
+ 
+ // One store per server process (also survives module reloads in `next dev`).
+@@ -394,4 +414,44 @@ export const db = {
+       store.audit.push(entry);
+     });
+   },
++
++  insertQuoteRequest(input: NewQuoteRequest) {
++    return query("insertQuoteRequest", (): QuoteRequest => {
++      const now = new Date().toISOString();
++      const quote: QuoteRequest = {
++        ...input,
++        id: quoteId(store.nextQuoteNumber++),
++        status: "pending",
++        pdfUrl: null,
++        errorMessage: null,
++        createdAt: now,
++        updatedAt: now,
++      };
++      store.quoteRequests.push(quote);
++      return structuredClone(quote);
++    });
++  },
++
++  getQuoteRequest(id: string) {
++    return query("getQuoteRequest", () => {
++      const quote = store.quoteRequests.find((q) => q.id === id);
++      return quote ? structuredClone(quote) : null;
++    });
++  },
++
++  updateQuoteRequestStatus(
++    id: string,
++    status: QuoteStatus,
++    extra?: { pdfUrl?: string | null; errorMessage?: string | null },
++  ) {
++    return query("updateQuoteRequestStatus", () => {
++      const quote = store.quoteRequests.find((q) => q.id === id);
++      if (!quote) return false;
++      quote.status = status;
++      if (extra?.pdfUrl !== undefined) quote.pdfUrl = extra.pdfUrl;
++      if (extra?.errorMessage !== undefined) quote.errorMessage = extra.errorMessage;
++      quote.updatedAt = new Date().toISOString();
++      return true;
++    });
++  },
+ };
+diff --git a/lib/quote-form.ts b/lib/quote-form.ts
+new file mode 100644
+index 0000000..18b74d5
+--- /dev/null
++++ b/lib/quote-form.ts
+@@ -0,0 +1,54 @@
++export const QUOTE_BUDGET_OPTIONS = [
++  { value: "", label: "Ще не визначились" },
++  { value: "500", label: "до $500" },
++  { value: "1500", label: "$500–1500" },
++  { value: "5000", label: "$1500–5000" },
++  { value: "10000", label: "$5000–10000" },
++  { value: "20000", label: "понад $10000" },
++] as const;
++
++export type QuoteFormField = "company" | "email" | "description" | "budget";
++
++export type QuoteFormData = {
++  company: string;
++  email: string;
++  description: string;
++  budget: number | null;
++};
++
++export type ParseResult =
++  | { ok: true; data: QuoteFormData }
++  | { ok: false; errors: Partial<Record<QuoteFormField, string>> };
++
++const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
++
++function text(formData: FormData, name: QuoteFormField, max = 200) {
++  const value = formData.get(name);
++  return typeof value === "string" ? value.trim().slice(0, max) : "";
++}
++
++export function parseQuoteForm(formData: FormData): ParseResult {
++  const data: QuoteFormData = {
++    company: text(formData, "company", 120),
++    email: text(formData, "email", 200).toLowerCase(),
++    description: text(formData, "description", 2000),
++    budget: null,
++  };
++
++  const errors: Partial<Record<QuoteFormField, string>> = {};
++
++  if (!data.company) errors.company = "Вкажіть назву компанії";
++  if (!EMAIL_RE.test(data.email)) errors.email = "Перевірте email";
++  if (data.description.length < 10) errors.description = "Опишіть задачу хоча б одним реченням";
++
++  const budget = text(formData, "budget", 10);
++  if (budget) {
++    if (!QUOTE_BUDGET_OPTIONS.some((option) => option.value === budget)) {
++      errors.budget = "Оберіть бюджет зі списку";
++    } else {
++      data.budget = Number(budget);
++    }
++  }
++
++  return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, data };
++}
+diff --git a/lib/types.ts b/lib/types.ts
+index 7803a22..4bcec00 100644
+--- a/lib/types.ts
++++ b/lib/types.ts
+@@ -98,3 +98,25 @@ export type AuditEntry = {
+   leadId: string;
+   at: string;
+ };
++
++export const QUOTE_STATUSES = ["pending", "ready", "error"] as const;
++
++export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
++
++export type QuoteRequest = {
++  id: string;
++  company: string;
++  email: string;
++  description: string;
++  budget: number | null;
++  status: QuoteStatus;
++  pdfUrl: string | null;
++  errorMessage: string | null;
++  createdAt: string;
++  updatedAt: string;
++};
++
++export type NewQuoteRequest = Omit<
++  QuoteRequest,
++  "id" | "status" | "pdfUrl" | "errorMessage" | "createdAt" | "updatedAt"
++>;
+diff --git a/package-lock.json b/package-lock.json
+index 71c858c..471eac2 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -676,9 +676,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -695,9 +692,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -714,9 +708,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -733,9 +724,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -752,9 +740,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -771,9 +756,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -790,9 +772,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -809,9 +788,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -828,9 +804,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -853,9 +826,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -878,9 +848,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -903,9 +870,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -928,9 +892,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -953,9 +914,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -978,9 +936,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1003,9 +958,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1273,9 +1225,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1292,9 +1241,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1311,9 +1257,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1330,9 +1273,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1609,9 +1549,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1629,9 +1566,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1649,9 +1583,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -1669,9 +1600,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2298,9 +2226,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2315,9 +2240,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2332,9 +2254,6 @@
+         "loong64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2349,9 +2268,6 @@
+         "loong64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2366,9 +2282,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2383,9 +2296,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2400,9 +2310,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2417,9 +2324,6 @@
+         "s390x"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2434,9 +2338,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2451,9 +2352,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5846,9 +5744,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -5870,9 +5765,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -5894,9 +5786,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -5918,9 +5807,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [

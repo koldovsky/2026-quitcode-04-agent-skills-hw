@@ -98,3 +98,27 @@ export type AuditEntry = {
   leadId: string;
   at: string;
 };
+
+export const QUOTE_STATUSES = ["queued", "completed", "failed"] as const;
+
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
+export type Quote = {
+  id: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  idempotencyKey: string;
+  correlationId: string;
+  documentUrl: string | null;
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Omit<
+  Quote,
+  "id" | "status" | "documentUrl" | "errorCode" | "createdAt" | "updatedAt"
+>;

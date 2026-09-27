@@ -5,6 +5,8 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
   SourceCount,
   User,
   Workspace,
@@ -20,6 +22,9 @@ type Store = {
   leads: Lead[];
   audit: AuditEntry[];
   nextLeadNumber: number;
+  quotes: Quote[];
+  nextQuoteNumber: number;
+  n8nCallbackKeys: Set<string>;
 };
 
 const LATENCY_MS = {
@@ -31,10 +36,17 @@ const LATENCY_MS = {
   getLead: 80,
   insertLead: 120,
   updateLeadStatus: 80,
+  appendLeadNote: 80,
   deleteLead: 80,
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuote: 120,
+  getQuote: 80,
+  getQuoteByIdempotencyKey: 80,
+  updateQuoteResult: 80,
+  claimCallbackKey: 30,
+  releaseCallbackKey: 20,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -161,6 +173,10 @@ function leadId(n: number) {
   return `lead_${String(n).padStart(4, "0")}`;
 }
 
+function quoteId(n: number) {
+  return `quote_${String(n).padStart(4, "0")}`;
+}
+
 function seedLeads(count: number, workspaces: Workspace[], users: User[]): Lead[] {
   const random = mulberry32(20260921);
   const pick = <T,>(items: readonly T[]) => items[Math.floor(random() * items.length)];
@@ -261,7 +277,16 @@ function createStore(): Store {
     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
   ];
   const leads = seedLeads(200, workspaces, users);
-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
+  return {
+    workspaces,
+    users,
+    leads,
+    audit: [],
+    nextLeadNumber: leads.length + 1,
+    quotes: [],
+    nextQuoteNumber: 1,
+    n8nCallbackKeys: new Set(),
+  };
 }
 
 // One store per server process (also survives module reloads in `next dev`).
@@ -369,6 +394,16 @@ export const db = {
     });
   },
 
+  appendLeadNote(id: string, note: string) {
+    return query("appendLeadNote", () => {
+      const lead = store.leads.find((l) => l.id === id);
+      if (!lead) return false;
+      lead.internalNotes = lead.internalNotes ? `${lead.internalNotes}\n\n${note}` : note;
+      lead.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
   deleteLead(id: string) {
     return query("deleteLead", () => {
       const index = store.leads.findIndex((l) => l.id === id);
@@ -381,6 +416,72 @@ export const db = {
   insertAuditEntry(entry: AuditEntry) {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
+    });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        id: quoteId(store.nextQuoteNumber++),
+        status: "queued",
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      store.quotes.push(quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  getQuoteByIdempotencyKey(idempotencyKey: string) {
+    return query("getQuoteByIdempotencyKey", () => {
+      const quote = store.quotes.find((q) => q.idempotencyKey === idempotencyKey);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  updateQuoteResult(
+    id: string,
+    result:
+      | { status: "completed"; documentUrl: string }
+      | { status: "failed"; errorCode: string },
+  ) {
+    return query("updateQuoteResult", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      if (!quote) return false;
+      if (result.status === "completed") {
+        quote.status = "completed";
+        quote.documentUrl = result.documentUrl;
+      } else {
+        quote.status = "failed";
+        quote.errorCode = result.errorCode;
+      }
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  claimCallbackKey(key: string) {
+    return query("claimCallbackKey", () => {
+      if (store.n8nCallbackKeys.has(key)) return false;
+      store.n8nCallbackKeys.add(key);
+      return true;
+    });
+  },
+
+  releaseCallbackKey(key: string) {
+    return query("releaseCallbackKey", () => {
+      store.n8nCallbackKeys.delete(key);
     });
   },
 };
