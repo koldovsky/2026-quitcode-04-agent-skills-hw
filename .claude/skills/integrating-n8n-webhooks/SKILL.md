@@ -111,6 +111,9 @@ Ready-to-adapt code for the client module, the action and the callback route:
 - [ ] `npm run lint` and `npm run build` pass.
 - [ ] `node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs` → 0 FAIL
       (in a copy: `--root <dir> --changed-since <ref>` to see only new code).
+- [ ] If the full-project run still shows FAILs in code you did not touch (older n8n calls,
+      `.env.example`), list them to the human with file:line and propose migrating them onto
+      `lib/n8n/client.ts` as a separate step — do not silently leave them and do not widen the task.
 - [ ] With the mock (`node --env-file=.env.local .claude/skills/integrating-n8n-webhooks/scripts/mock-n8n.mjs --mode respond-202 --delay 5000`):
       the mock log shows `POST /webhook/<event> -> 202`, `auth=ok`, `idempotency=new`; the form
       answers in well under a second; the callback line ends with `-> 202`.
