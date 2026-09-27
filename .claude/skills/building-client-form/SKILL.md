@@ -75,6 +75,11 @@ export type NoteFormState =
 Ні `console.log(formData)`, ні email, телефон, ім'я, текст повідомлення, IP. Лише id і коди:
 `console.error("note.create failed", { leadId, code })`.
 
+`next dev` сам журналює аргументи й результат кожної Server Action (`└─ ƒ addNote({…})`), тож
+введене видно в терміналі розробника; у `next start` цього немає. Перевіряй журнал на
+продакшн-збірці; `logging: { serverFunctions: false }` у `next.config.ts` — налаштування всього
+проєкту, лише після «так» людини.
+
 ### 5. Клієнтська частина: `useActionState`, робота без JS
 
 ```tsx
@@ -105,8 +110,11 @@ const values = state.status === "invalid" ? state.values : {};
   беруть його в `defaultValue`. Паролі й секрети назад не повертаємо.
 - `pending` з `useActionState` — для стану кнопки (`rendering-usetransition-loading`), без
   власного `useState` для завантаження.
-- Службові дані (`leadId`) — через `addNote.bind(null, leadId)` або приховане поле; на сервері
-  однаково перевіряємо права (крок 1.2).
+- Службові дані (`leadId`) — прихованим полем `<input type="hidden" name="leadId" value={leadId} />`;
+  на сервері це звичайний вхід, права перевіряємо (крок 1.2). **Не** `addNote.bind(null, leadId)`
+  усередині Client Component разом з `useActionState`: `bind()` на кожному рендері дає нову дію, і
+  без JavaScript POST зависає (нотатка вже записана, відповіді немає) — перевірено в LeadDesk.
+  `.bind()` лише в Server Component, звідки дія приходить пропом.
 
 ## Чекліст
 
@@ -137,7 +145,10 @@ const values = state.status === "invalid" ? state.values : {};
       поле має `aria-invalid="true"` і `aria-describedby` на текст помилки; введене не зникло.
 - [ ] Відправка з вимкненим JS (DevTools → Ctrl+Shift+P → «Disable JavaScript») доходить до
       сервера й показує результат.
-- [ ] Дія без сесії (вийти або видалити cookie сесії й повторити відправку) повертає
-      `{ status: "unauthorized" }` і нічого не записує.
-- [ ] Журнал сервера після успішної й помилкової відправки — лише id і коди, без введених даних.
+- [ ] Дія без сесії: у DevTools → Application → Cookies **змініть** значення cookie сесії на
+      вигадане й повторіть відправку — форма показує `unauthorized`, у журналі немає запису
+      (`db:<запис>`). Якщо cookie **видалити**, `proxy.ts` перенаправить POST на `/login`, і в dev
+      буде «An unexpected response was received from the server» — дію це не перевіряє.
+- [ ] Журнал сервера (`npm run build && npm start`) після успішної й помилкової відправки — лише
+      id і коди, без введених даних.
 - [ ] Відповідь приходить одразу: DevTools → Network → POST не чекає на лист / n8n / аудит.
