@@ -179,7 +179,7 @@ const values = "values" in state ? state.values : {};
 - [ ] Публічна форма (без сесії): заповніть у DevTools приховане антиспам-поле й надішліть — запису
       немає (у журналі без `db:<запис>`), `role="alert"` із загальним повідомленням, введене лишилось;
       з порожнім полем — звичайний успіх.
-- [ ] Дія з сесією без сесії: у DevTools → Application → Cookies **змініть** значення cookie сесії на
+- [ ] Дія, що вимагає сесії, — без сесії: у DevTools → Application → Cookies **змініть** значення cookie сесії на
       вигадане й повторіть відправку — форма показує `unauthorized`, введене лишилось, у журналі
       немає запису (`db:<запис>`). Якщо cookie **видалити**, `proxy.ts` перенаправить POST на
       `/login`, і в dev буде «An unexpected response was received from the server» — дію це не

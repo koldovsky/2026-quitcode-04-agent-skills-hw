@@ -74,18 +74,26 @@ const sibling = (segment) => {
 
 let mismatches = 0;
 async function send(name, expected, { to = url, raw = body, ts = now(), signature, key = `${jobId}:${event}`, contentType = "application/json", chunked = false } = {}) {
-  const res = await fetch(to, {
-    method: "POST",
-    // chunked: a stream body goes without content-length, so only a cap while reading can stop it
-    ...(chunked ? { body: new Blob([raw]).stream(), duplex: "half" } : { body: raw }),
-    headers: {
-      "content-type": contentType,
-      "x-n8n-timestamp": String(ts),
-      "x-n8n-signature": signature ?? sign(ts, raw),
-      "idempotency-key": key,
-      "x-correlation-id": randomUUID(),
-    },
-  });
+  let res;
+  try {
+    res = await fetch(to, {
+      method: "POST",
+      // chunked: a stream body goes without content-length, so only a cap while reading can stop it
+      ...(chunked ? { body: new Blob([raw]).stream(), duplex: "half" } : { body: raw }),
+      headers: {
+        "content-type": contentType,
+        "x-n8n-timestamp": String(ts),
+        "x-n8n-signature": signature ?? sign(ts, raw),
+        "idempotency-key": key,
+        "x-correlation-id": randomUUID(),
+      },
+    });
+  } catch (error) {
+    // No server, or it dropped the connection mid-upload: a mismatch for this case, not a crash.
+    mismatches++;
+    console.log(`FAIL  ${name.padEnd(36)} expected ${expected}, got a network error (${error?.cause?.code ?? error?.name ?? "unknown"})`);
+    return;
+  }
   const text = (await res.text()).slice(0, 60);
   const ok = res.status === expected;
   if (!ok) mismatches++;
