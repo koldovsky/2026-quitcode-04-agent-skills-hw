@@ -54,13 +54,17 @@ Next.js (розділ 5).
 
 | Аудит | Результат | Дата аналізу |
 |---|---|---|
-| Gen (Agent Trust Hub) | Pass | на skills.sh дати не видно; з CLI — _заповнить людина після встановлення (див. нижче)_ |
-| Socket | Pass | те саме |
-| Snyk | Pass | те саме |
+| Gen (Agent Trust Hub) | skills.sh: Pass · CLI: **Safe** | дати не показано ні на skills.sh, ні в CLI |
+| Socket | skills.sh: Pass · CLI: **0 alerts** | не показано |
+| Snyk | skills.sh: Pass · CLI: **Low Risk** | не показано |
 
 - Де взяли: сторінка <https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices>
   (27.09.2026): усі три — Pass; 746,9 тис. встановлень; «First seen» — 19.01.2026.
-  Блок «Security Risk Assessments» з CLI — _див. допис після встановлення нижче_.
+  Блок «Security Risk Assessments» з CLI (людина запустила встановлення у своєму терміналі **без**
+  `DISABLE_TELEMETRY`, 27.09.2026): `Gen: Safe · Socket: 0 alerts · Snyk: Low Risk`, «Details:
+  https://skills.sh/vercel-labs/agent-skills». Цей блок з'явився **до** питання «Proceed with
+  installation?», тобто до встановлення. Snyk у CLI — «Low Risk», а не «чисто»: деталей CLI не дає; з
+  огляду на розділ 2 (жодного виконуваного коду) це прийнятно. CLI теж не показує SHA/версію аудиту.
 - Чому CLI може не показати блок: з `DISABLE_TELEMETRY=1` (або `DO_NOT_TRACK=1`) CLI аудити не
   завантажує взагалі; коли CLI запускає агент, він сам вмикає `--yes`, і встановлення йде без
   підтвердження. Тому встановлення запускає людина у звичайному терміналі.
@@ -91,7 +95,27 @@ Next.js (розділ 5).
 | `server-serialization` | У Client Component передавати лише поля, які він використовує | `02-guides/data-security.md`: Data Access Layer має повертати «safe, minimal Data Transfer Objects (DTOs)», «only return the data relevant for this query and not everything» | **Діє**, і це ще й питання безпеки (у браузер потрапляють IP, user-agent, `rawPayload`, внутрішні нотатки). Застосовуємо в `LeadsTable` |
 | `bundle-barrel-imports` | Для бібліотек-«бочок» — `experimental.optimizePackageImports` у `next.config` | `03-api-reference/05-config/01-next-config-js/optimizePackageImports.md`: список «optimized by default» уже містить **`recharts`** і **`lodash-es`**, але **не `lodash`** | **Частково.** Для `recharts` порада зайва (Next 16 робить це сам). Для `lodash` доречна, але в `lead-search.tsx` краще взагалі не тягнути lodash заради одного `debounce`. Всліпу `recharts` у конфіг не додаємо |
 
-_Після виправлень (крок 5 Task A) — допис: які поради виявились зайвими або шкідливими на практиці._
+**Допис після виправлень (крок 5 Task A).** Застосовано 4 правила — `async-parallel`,
+`server-cache-react`, `server-serialization`, `server-auth-actions` (деталі й числа — у
+`docs/verification.md`). Що з'ясувалось на практиці:
+
+- `server-cache-react` — у нашому коді `cache()` вже **був** на `getWorkspace`, але не працював через
+  inline-об'єкт `{ slug }` в аргументі. Саме застереження скіла про `Object.is` пояснило, чому лічильник
+  `db:getWorkspace` показував 3 виклики на запит. Порада правдива для React 19.2 / Next 16.3.5.
+- `server-cache-react` **не прискорив** сторінку (TTFB без змін): Next 16 рендерить layout і page
+  паралельно (`06-fetching-data.md`), тож дублікати йшли одночасно. Виграш — у 3× меншому
+  навантаженні на БД, а не в часі. Скіл цього нюансу не згадує.
+- `server-parallel-fetching` (перебудова дерева компонентів) **не знадобився**: після `async-parallel`
+  найдовший запит (`getLeadStats`, 1,2 с) і так визначає час; дальше покращення — стрімінг через
+  `<Suspense>` (`async-suspense-boundaries`), не застосовували.
+- `bundle-barrel-imports` для `recharts` — **зайвий** у Next 16 (уже в списку
+  `optimizePackageImports` за замовчуванням), тому в `next.config.ts` його не додавали.
+- `server-auth-actions`: приклад у скілі кидає `unauthorized(...)` з власного `@/lib/errors`. У Next 16
+  є вбудований `unauthorized()` з `next/navigation`, але він експериментальний і потребує
+  `experimental.authInterrupts` — тому для відмови використали `redirect("/login")` (через наявний
+  `getCurrentUser`) і `throw new Error(...)`, без зміни конфігурації.
+- `server-after-nonblocking` для `submitLead` свідомо **відкладено** до Task D: це частина переробки
+  виклику n8n за контрактом, її робитиме агент у прогонах A/B.
 
 ## 6. Закріплення версії й коміт
 
@@ -103,7 +127,11 @@ _Після виправлень (крок 5 Task A) — допис: які по
   (для перегляду аудитів — та сама команда **без** `DISABLE_TELEMETRY=1`). Scope — **Project**.
 - Де лягли файли; справжні файли чи посилання: `.claude/skills/vercel-react-best-practices/`,
   **справжні файли** (`--copy`), без junction/symlink і без другої копії в `.agents/skills/`.
-  _Факт після встановлення — нижче._
+  **Факт (після встановлення):** `.claude/skills/vercel-react-best-practices/` — звичайна тека
+  (PowerShell `(Get-Item …).LinkType` порожній), 75 файлів; `ls .agents` → немає; `diff -r` з
+  відрев'юваним клоном тега — ідентично, окрім відсутнього `metadata.json` (очікувано).
+  Коміт `5ad1deb`; у `skills-lock.json`: `ref: agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278`,
+  `computedHash: 6b526d01…60ca6b`.
 - Що потрапило в git: тека скіла (очікується 75 файлів) і `skills-lock.json` (джерело, тег, хеш).
 - Як оновлювати: та сама команда з новим тегом (або `npx skills@1.7.0 update`) → `git diff` на теці
   скіла → рев'ю змін за цим чеклістом (нові скрипти, `allowed-tools`, хуки, посилання, приховані
