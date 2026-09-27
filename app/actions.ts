@@ -71,7 +71,15 @@ export async function submitLead(
     }
   });
 
-  await logAudit("lead.created", lead.id);
+  // The audit entry is a slow side effect too (server-after-nonblocking): the visitor gets "ok"
+  // without waiting for it.
+  after(async () => {
+    try {
+      await logAudit("lead.created", lead.id);
+    } catch (error) {
+      console.error("lead.audit failed", { leadId: lead.id, code: error instanceof Error ? error.name : "unknown" });
+    }
+  });
 
   return { status: "ok" };
 }
