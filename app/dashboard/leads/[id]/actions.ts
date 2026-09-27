@@ -14,13 +14,13 @@ export type NoteFormState =
   | { status: "error" };
 
 // Server Actions are public endpoints: the session and the lead's workspace
-// are checked here, the lead id from bind() is not trusted.
+// are checked here, the lead id from the hidden field is not trusted.
 export async function addLeadNote(
-  leadId: string,
   _prevState: NoteFormState,
   formData: FormData,
 ): Promise<NoteFormState> {
   const user = await getCurrentUser();
+  const leadId = formData.get("leadId");
   if (typeof leadId !== "string") return { status: "error" };
 
   const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), getLead(leadId)]);
