@@ -19,15 +19,36 @@
 
 ## Task A — виправлення за скілом Vercel
 
-Рев'ю застосунку зроблено за правилами скіла (`.claude/skills/vercel-react-best-practices/rules/*.md`)
-з лічильниками `db:<запит>` у журналі сервера. Знахідки, з яких обрано виправлення:
+### Рев'ю застосунку за скілом
 
-| Файл:рядок | id правила | Що не так |
-|---|---|---|
-| `app/dashboard/page.tsx:16-18` | `async-parallel` | `getLeads` (400 мс) → `getLeadStats` (1200 мс) → `getSourceBreakdown` (400 мс) по черзі, хоча незалежні |
-| `lib/data.ts:7`, `lib/data.ts:18` | `server-cache-react` | `getCurrentUser` без `cache()`; `getWorkspace` у `cache()`, але з inline-об'єктом `{ slug }` — промах кешу на кожен виклик; layout, header і page → по 3 запити до БД |
-| `components/leads-table.tsx:12` | `server-serialization` | Client Component отримує повні `Lead` з `rawPayload`, `internalNotes`, `ipAddress`, `userAgent` (у HTML — 172 входження `rawPayload`, 424 КБ) |
-| `components/leads-toolbar.tsx:4`, `:5` | `bundle-dynamic-imports` / `bundle-conditional` | `exceljs` і `recharts` у клієнтському бандлі одразу, хоча потрібні лише після кліку |
+- **Як робили:** окремий агент із чистим контекстом (субагент Claude Code, без історії цієї сесії й без наших знахідок) у копії `../hw4-review-base` на коміті `c8d53ce`: скіл уже встановлено, виправлень ще немає. Запит — дослівно з walkthrough, крок 5; режим лише читання.
+- **Скіл спрацював?** Через інструмент Skill — ні: скіл встановили посеред сесії, і в індексі скілів цієї сесії його не було. Агент прочитав `SKILL.md` і 19 файлів `rules/*.md` напряму. Свіжа сесія CLI скіл бачить (див. вище); неінтерактивний `claude -p` з рев'ю запустити не вдалося — CLI не залогінений (`Not logged in`).
+- **Відхилення:** у копії немає `node_modules`, тому документацію Next.js агент читав з `hw4/node_modules/next/dist/docs/` (та сама версія 16.3.5).
+
+Знахідки (від CRITICAL до LOW; ✅ — виправлено в Task A):
+
+| Файл:рядок | id правила | Що не так | Виправлення для Next.js 16 |
+|---|---|---|---|
+| `app/dashboard/page.tsx:14-18` | `async-parallel` ✅ | leads (400) → stats (1200) → sources (400) по черзі | `Promise.all` (коміт `6d3b885`) |
+| `components/leads-toolbar.tsx:4` | `bundle-conditional` | `exceljs` у початковому бандлі, потрібен лише після кліку «Експорт» | `await import("exceljs")` у `handleExport`, preload на hover/focus |
+| `components/leads-toolbar.tsx:6` | `bundle-dynamic-imports` | `SourcesChart` (recharts) у початковому чанку, показується лише після кліку | `next/dynamic` з `ssr: false` (файл уже Client Component) |
+| `components/lead-search.tsx:5` | `bundle-barrel-imports` | `import { debounce } from "lodash"` — увесь CJS-пакет; `lodash` (на відміну від `lodash-es`) не оптимізується автоматично | `lodash/debounce` або прибрати debounce (`useDeferredValue`) |
+| `app/actions.ts:68-77` | `server-auth-actions` | `updateLeadStatus`/`deleteLead` не перевіряють сесію й workspace; `proxy.ts` захищає лише сторінки `/dashboard/*`, а Server Action доступна прямим POST | `getCurrentUser()` + перевірка `lead.workspaceId` на початку кожної дії |
+| `app/dashboard/layout.tsx:6-7` → `components/dashboard-header.tsx:5-6` | `server-parallel-fetching` ✅ | header повторює запити user/workspace | дедуплікація через `cache()` (коміт `a6385fb`) |
+| `app/dashboard/leads/[id]/page.tsx:12-16` | `async-api-routes` | `getLead(id)` стартує лише після `getCurrentUser()` | стартувати проміс раніше, `Promise.all` |
+| `app/dashboard/page.tsx` (без `loading.tsx`) | `async-suspense-boundaries` | уся сторінка чекає найповільніший `getLeadStats` (1200 мс) | async-компоненти в `<Suspense>` / `loading.tsx` |
+| `app/dashboard/page.tsx:32` → `components/leads-table.tsx:12` | `server-serialization` ✅ | у Client Component — повні `Lead` з `rawPayload`, `internalNotes`, IP | лише 5 полів (коміт `ebff140`) |
+| `components/lead-search.tsx:16-24` | `client-swr-dedup` | після гідрації повторно тягне `/api/leads` (~600 мс), експорт — ще раз | передати серверні рядки пропсом або `useSWR` |
+| `lib/data.ts:7-16`, `lib/data.ts:18` | `server-cache-react` ✅ | `getCurrentUser` без `cache()`; `getWorkspace` з inline-об'єктом — кеш завжди промахується | `cache()` + примітивний аргумент (коміт `a6385fb`) |
+| `app/actions.ts:53-63` | `server-after-nonblocking` | відповідь форми чекає `fetch` до n8n і `logAudit` (250 мс) | `after()` — **не застосовуємо в Task A**: виклик n8n переробляється за контрактом у Task D |
+| `components/lead-search.tsx:18, 26-45` | `rerender-derived-state-no-effect`, `rerender-use-deferred-value` | похідний `filtered` через effect + debounce без `.cancel()` | `useDeferredValue` + `useMemo` |
+| `components/leads-table.tsx:25`, `components/leads-toolbar.tsx:72` | `rerender-functional-setstate` | `setX(!x)` через замикання | `setX(v => !v)` |
+| `components/leads-table.tsx:17-20` | `js-tosorted-immutable` | копія + сортування на кожен рендер, collator щоразу | `useMemo` + `toSorted`, `Intl.Collator` на рівні модуля |
+| `lib/db.ts:334-338` | `js-combine-iterations` | `getSourceBreakdown` проходить ліди 6 разів (заглушка БД) | один прохід / `GROUP BY` |
+
+Порівняння з нашим рев'ю: усі три наші виправлення агент знайшов незалежно. Нове, чого ми не
+помітили: `server-auth-actions` (Server Actions без перевірки сесії — безпекова, а не лише
+продуктивна проблема) і `client-swr-dedup` (повторний `/api/leads` з клієнта).
 
 **Як міряли (для `async-parallel`):** продакшн-збірка (`npm run build && npm start`), cookie
 `leaddesk_session=demo-u_olena`, один прогрівальний запит і 3 прогони
