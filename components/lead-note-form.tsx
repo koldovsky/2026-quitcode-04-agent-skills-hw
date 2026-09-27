@@ -7,11 +7,12 @@ import { NOTE_MAX_LENGTH } from "@/lib/note-form";
 const initialState: NoteFormState = { status: "idle" };
 
 export function LeadNoteForm({ leadId }: { leadId: string }) {
-  // leadId goes in a hidden field, not addLeadNote.bind(): a bound action re-created on every render
-  // never settles in useActionState's no-JS re-render, and the POST hangs.
+  // leadId goes in a hidden field (the team pattern; forms.md allows it as well as bind()): with
+  // useActionState(addLeadNote.bind(null, leadId)) the no-JS POST in LeadDesk saved the note but returned no page.
   const [state, formAction, pending] = useActionState(addLeadNote, initialState);
   const errors = state.status === "invalid" ? state.errors : {};
-  const values = state.status === "invalid" ? state.values : {};
+  // Every error state carries what the user typed; only "ok" lets the form reset.
+  const values = "values" in state ? state.values : {};
   const failure =
     state.status === "unauthorized" || state.status === "forbidden" || state.status === "error"
       ? state.message

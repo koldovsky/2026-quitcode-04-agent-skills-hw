@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { getSessionUser } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import { parseNoteForm, type NoteField } from "@/lib/note-form";
+import { parseNoteForm, readNoteValues, type NoteField } from "@/lib/note-form";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
@@ -103,20 +103,27 @@ export type NoteFormState =
       errors: Partial<Record<NoteField, string>>;
       values: Partial<Record<NoteField, string>>;
     }
-  | { status: "unauthorized" | "forbidden" | "error"; message: string }
+  | {
+      status: "unauthorized" | "forbidden" | "error";
+      message: string;
+      values: Partial<Record<NoteField, string>>;
+    }
   | { status: "ok"; message: string };
 
 export async function addLeadNote(
   _prevState: NoteFormState,
   formData: FormData,
 ): Promise<NoteFormState> {
+  // Any error keeps what the user typed: React 19 resets the form after every action.
+  const values = readNoteValues(formData);
+
   // leadId comes from a hidden field, so it is checked against the user's workspace like any input.
   const auth = await authorizeLead(formData.get("leadId"));
   if (auth.status === "unauthorized") {
-    return { status: "unauthorized", message: "Сесія завершилась. Увійдіть знову." };
+    return { status: "unauthorized", message: "Сесія завершилась. Увійдіть знову.", values };
   }
   if (auth.status === "forbidden") {
-    return { status: "forbidden", message: "Немає доступу до цього ліда." };
+    return { status: "forbidden", message: "Немає доступу до цього ліда.", values };
   }
   const { lead } = auth;
 
@@ -128,7 +135,7 @@ export async function addLeadNote(
   const saved = await db.appendLeadNote(lead.id, parsed.data.text);
   if (!saved) {
     console.error("lead.note_add failed", { leadId: lead.id, code: "not_found" });
-    return { status: "error", message: "Не вдалося зберегти нотатку. Спробуйте ще раз." };
+    return { status: "error", message: "Не вдалося зберегти нотатку. Спробуйте ще раз.", values };
   }
 
   revalidatePath(`/dashboard/leads/${lead.id}`);

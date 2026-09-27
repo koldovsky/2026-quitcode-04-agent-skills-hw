@@ -14,11 +14,16 @@ export type NoteParseResult =
       values: Partial<Record<NoteField, string>>;
     };
 
-export function parseNoteForm(formData: FormData): NoteParseResult {
+// What the user typed, returned with any error so that the field keeps it (React 19 resets the form).
+export function readNoteValues(formData: FormData): Partial<Record<NoteField, string>> {
   const raw = formData.get("text");
   // Browsers send textarea line breaks as CRLF, but maxLength counts each one as a single character.
-  const text = typeof raw === "string" ? raw.replace(/\r\n?/g, "\n").trim() : "";
-  const values = { text: text.slice(0, NOTE_MAX_LENGTH) };
+  return { text: typeof raw === "string" ? raw.replace(/\r\n?/g, "\n") : "" };
+}
+
+export function parseNoteForm(formData: FormData): NoteParseResult {
+  const values = readNoteValues(formData);
+  const text = values.text?.trim() ?? "";
 
   if (!text) {
     return { ok: false, errors: { text: "Напишіть текст нотатки" }, values };
