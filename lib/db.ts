@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   Lead,
@@ -5,6 +6,8 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
   SourceCount,
   User,
   Workspace,
@@ -36,6 +39,9 @@ const LATENCY_MS = {
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuote: 120,
+  getQuote: 80,
+  updateQuote: 80,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -269,6 +275,14 @@ function createStore(): Store {
 const globalForStore = globalThis as unknown as { leadDeskStore?: Store };
 const store = (globalForStore.leadDeskStore ??= createStore());
 
+// Quotes live in their own map so a store created before quotes existed keeps working.
+const globalForQuotes = globalThis as unknown as { leadDeskQuotes?: Map<string, Quote> };
+const quotes = (globalForQuotes.leadDeskQuotes ??= new Map<string, Quote>());
+
+export type QuoteCallbackResult =
+  | { status: "completed"; documentUrl: string }
+  | { status: "failed"; errorCode: string };
+
 const SESSION_PREFIX = "demo-";
 
 export const db = {
@@ -392,6 +406,68 @@ export const db = {
   insertAuditEntry(entry: AuditEntry) {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
+    });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        // The status page is public, so the id must not be guessable.
+        id: `q_${randomUUID()}`,
+        status: "queued",
+        idempotencyKey: randomUUID(),
+        correlationId: randomUUID(),
+        jobId: null,
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      quotes.set(quote.id, quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = quotes.get(id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  // Only queued → processing/failed: a fast callback may already have finished the quote.
+  markQuoteDispatched(id: string, result: { status: "processing"; jobId: string } | { status: "failed" }) {
+    return query("updateQuote", () => {
+      const quote = quotes.get(id);
+      if (!quote || quote.status !== "queued") return false;
+      quote.status = result.status;
+      if (result.status === "processing") quote.jobId = result.jobId;
+      else quote.errorCode = "dispatch_failed";
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  // Finds the quote by the idempotency key of our request to n8n. Returns false for an unknown key.
+  completeQuoteFromCallback(requestIdempotencyKey: string, jobId: string, result: QuoteCallbackResult) {
+    return query("updateQuote", () => {
+      const quote = [...quotes.values()].find((q) => q.idempotencyKey === requestIdempotencyKey);
+      if (!quote) return false;
+      // A finished quote is not overwritten; the callback is still acknowledged.
+      if (quote.status === "ready") return true;
+      quote.jobId = jobId;
+      if (result.status === "completed") {
+        quote.status = "ready";
+        quote.documentUrl = result.documentUrl;
+        quote.errorCode = null;
+      } else {
+        quote.status = "failed";
+        quote.errorCode = result.errorCode;
+      }
+      quote.updatedAt = new Date().toISOString();
+      return true;
     });
   },
 };
