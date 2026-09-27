@@ -5,6 +5,16 @@
 | event | напрям | шлях n8n | режим | власник |
 |---|---|---|---|---|
 | `quote-request` | Next.js → n8n → колбек `POST /api/n8n/quote-request` | `/webhook/quote-request` | Respond to Webhook 202 `{ job_id }` + підписаний колбек (воркфлоу 40–90 с) | _уточнити_ |
+| `lead-created` | Next.js → n8n | `/webhook/lead-created` | Immediately (подія «до відома», результат не потрібен) | _уточнити_ |
+
+## `lead-created`
+
+- Запуск: Server Action `submitLead` (`app/actions.ts`) з публічної форми `/`, виклик n8n — в
+  `after()`, форма на n8n не чекає.
+- `data`: `{ leadId, company, budget, source }` — без імені, email, телефону, IP, user agent і сирої
+  форми. Якщо воркфлоу потрібні контакти — це рішення людини (правило зупинки скіла), не коду.
+- `idempotency-key` — новий UUID на кожен лід, однаковий у повторах клієнта (`lib/n8n/client.ts`);
+  окремо не зберігається, бо повторюється лише в межах одного `after()`.
 
 ## `quote-request`
 
