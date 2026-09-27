@@ -49,7 +49,13 @@ export type Lead = {
   internalNotes: string;
   createdAt: string;
   updatedAt: string;
+  /** lead-created ids for n8n: created once with the lead, the same on any re-send of the event. */
+  n8nIdempotencyKey?: string;
+  n8nCorrelationId?: string;
 };
+
+/** Lead fields the dashboard table receives as RSC props (search loads its own set from /api/leads). */
+export type LeadRow = Pick<Lead, "id" | "fullName" | "company" | "status" | "createdAt">;
 
 export type NewLead = Omit<
   Lead,
@@ -92,6 +98,28 @@ export type SourceCount = {
   source: LeadSource;
   count: number;
 };
+
+export type QuoteStatus = "queued" | "processing" | "ready" | "failed";
+
+export type Quote = {
+  id: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  /** Key of the outgoing n8n request: created once with the quote, reused by every retry. */
+  idempotencyKey: string;
+  correlationId: string;
+  /** n8n execution id from the 202 response. */
+  jobId: string | null;
+  documentUrl: string | null;
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Pick<Quote, "company" | "email" | "description" | "budget" | "idempotencyKey" | "correlationId">;
 
 export type AuditEntry = {
   action: string;

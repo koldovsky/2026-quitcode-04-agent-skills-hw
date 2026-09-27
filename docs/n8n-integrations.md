@@ -1,0 +1,34 @@
+# Інтеграції з n8n
+
+Контракт — `.claude/skills/integrating-n8n-webhooks/SKILL.md`. Виклики n8n — лише `lib/n8n/client.ts`,
+колбеки — `app/api/n8n/[event]/route.ts`.
+
+| event | напрям | шлях n8n | режим | власник |
+|---|---|---|---|---|
+| `quote-request` | Next.js → n8n → колбек `/api/n8n/quote-request` | `/webhook/quote-request` | Respond to Webhook 202 `{"job_id"}` + колбек `quote-request.completed` | уточнити |
+| `lead-created` | Next.js → n8n | `/webhook/lead-created` | Immediately, 200; без колбека | уточнити |
+
+## `quote-request`
+
+- Запускає: Server Action `requestQuote` (`app/quotes/actions.ts`) з форми `/quotes/new`, виклик — в `after()`. Кожен
+  прийнятий запит — це запуск воркфлоу, тому форма обмежена: 20 запитів на всю форму й 5 на адресу за 10 хв (адреса —
+  лише із заголовка, який перезаписує проксі: `TRUSTED_CLIENT_IP_HEADER`).
+- `data`: `quoteId`, `company`, `description`, `budget` (число або `null`). Без email: посилання на PDF приходить у колбеку
+  й показується на `/quotes/[id]`, n8n нікому не пише. Якщо воркфлоу має надсилати кошторис листом — додати email лише
+  після узгодження з власником воркфлоу.
+- Воркфлоу працює 40–90 с, тому відповідь — 202 `{"job_id"}` одразу, результат — підписаним колбеком:
+  `data.status = "completed"` з `result.documentUrl` (лише `https:`) або `"failed"` з `error.code`. Будь-яка інша
+  відповідь на запуск (200 без `job_id`, 4xx, вичерпані повтори) — кошторис одразу `failed`, але лише якщо колбек ще не
+  записав результат (`queued`/`processing`).
+- Колбек: повтор уже збереженого — 200 `{"duplicate": true}`; повтор, поки перша доставка ще зберігається, — 409
+  (Retry On Fail спробує ще раз; «в обробці» старше 60 с вважається завислим і приймається знову); тіло понад 64 KB —
+  413 ще під час читання. Пізній `failed` не перетирає вже готовий кошторис.
+- Статус: `/quotes/[id]` (`queued` → `processing` → `ready` | `failed`), сторінка оновлюється кожні 5 с; якщо колбека немає
+  5 хвилин, опитування зупиняється й сторінка каже, що кошторис запізнюється (пізній колбек усе одно приймається).
+
+## `lead-created`
+
+- Запускає: Server Action `submitLead` (`app/actions.ts`) з публічної форми ліда, виклик — `triggerWorkflow` в `after()`.
+- `data`: `leadId`, `source`, `company`, `budget` — без email, телефону, IP, user agent і сирих даних форми.
+  Раніше в n8n ішов увесь запис ліда на `/webhook-test/`; новий формат тіла треба узгодити з власником воркфлоу
+  (Webhook: шлях `lead-created`, Header Auth `x-n8n-token`, Immediately, дані — у `$json.body.data`).

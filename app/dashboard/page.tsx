@@ -4,8 +4,8 @@ import { LeadsToolbar } from "@/components/leads-toolbar";
 import { StatsCards } from "@/components/stats-cards";
 import {
   getCurrentUser,
+  getLeadRows,
   getLeadStats,
-  getLeads,
   getSourceBreakdown,
   getWorkspace,
 } from "@/lib/data";
@@ -13,9 +13,11 @@ import {
 export default async function DashboardPage() {
   const user = await getCurrentUser();
   const workspace = await getWorkspace({ slug: user.workspaceSlug });
-  const leads = await getLeads(workspace.id);
-  const stats = await getLeadStats(workspace.id);
-  const sources = await getSourceBreakdown(workspace.id);
+  const [leads, stats, sources] = await Promise.all([
+    getLeadRows(workspace.id),
+    getLeadStats(workspace.id),
+    getSourceBreakdown(workspace.id),
+  ]);
 
   return (
     <div className="space-y-6">

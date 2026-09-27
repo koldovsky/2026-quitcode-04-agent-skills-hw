@@ -1,11 +1,16 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import type { LeadStatus } from "@/lib/types";
+import { parseLeadNote, type LeadNoteField } from "@/lib/lead-note";
+import { triggerWorkflow } from "@/lib/n8n/client";
+import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -29,6 +34,9 @@ export async function submitLead(
 
   const lead = await db.insertLead({
     ...parsed.data,
+    // lead-created ids: once per lead, stored with it (team n8n contract), reused in retries and re-sends
+    n8nIdempotencyKey: randomUUID(),
+    n8nCorrelationId: randomUUID(),
     workspaceId: PUBLIC_FORM_WORKSPACE_ID,
     jobTitle: "",
     city: "",
@@ -50,28 +58,86 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
+  // lead-created is an informational event (Webhook "Immediately", no callback): the form does not wait
+  // for n8n, and n8n gets only what the workflow needs — no email, phone, IP or raw form payload.
+  const ids = { idempotencyKey: lead.n8nIdempotencyKey!, correlationId: lead.n8nCorrelationId! };
+  after(async () => {
+    const result = await triggerWorkflow(
+      "lead-created",
+      { leadId: lead.id, source: lead.source, company: lead.company, budget: lead.budget },
+      ids,
+    );
+    if (!result.ok) console.error("n8n.out", { event: "lead-created", correlationId: ids.correlationId, status: result.status, error: "delivery_failed" });
+  });
 
-  await logAudit("lead.created", lead.id);
+  after(() => logAudit("lead.created", lead.id)); // the visitor does not wait for the audit write
 
   return { status: "ok" };
 }
 
-export async function updateLeadStatus(id: string, status: LeadStatus) {
-  await db.updateLeadStatus(id, status);
-  revalidatePath("/dashboard");
-  revalidatePath(`/dashboard/leads/${id}`);
+export type LeadMutationState = { status: "ok" } | { status: "invalid" } | { status: "not_found" };
+
+// Server Actions are public POST endpoints: the page's own checks do not cover them,
+// so every mutation re-checks the session and that the lead is in the caller's workspace.
+async function findOwnLead(id: unknown) {
+  if (typeof id !== "string") return null;
+  const user = await getCurrentUser();
+  const [workspace, lead] = await Promise.all([
+    getWorkspace({ slug: user.workspaceSlug }),
+    getLead(id),
+  ]);
+  return lead && lead.workspaceId === workspace.id ? lead : null;
 }
 
-export async function deleteLead(id: string) {
-  await db.deleteLead(id);
+export async function updateLeadStatus(id: string, status: LeadStatus): Promise<LeadMutationState> {
+  const lead = await findOwnLead(id);
+  if (!lead) return { status: "not_found" };
+  if (!(LEAD_STATUSES as readonly unknown[]).includes(status)) return { status: "invalid" };
+
+  // The lead can be deleted between the check above and this write: then nothing was changed.
+  if (!(await db.updateLeadStatus(lead.id, status))) return { status: "not_found" };
   revalidatePath("/dashboard");
+  revalidatePath(`/dashboard/leads/${lead.id}`);
+  return { status: "ok" };
+}
+
+export type AddLeadNoteState =
+  | { status: "idle" }
+  | {
+      status: "invalid";
+      errors: Partial<Record<LeadNoteField | "form", string>>;
+      values: Partial<Record<LeadNoteField, string>>;
+    }
+  | { status: "ok" };
+
+const LEAD_UNAVAILABLE = "Лід недоступний: його вже видалено або він з іншого воркспейсу.";
+
+export async function addLeadNote(
+  _prevState: AddLeadNoteState,
+  formData: FormData,
+): Promise<AddLeadNoteState> {
+  const typed = formData.get("note");
+  const values = { note: typeof typed === "string" ? typed : "" };
+
+  const lead = await findOwnLead(formData.get("leadId"));
+  if (!lead) return { status: "invalid", errors: { form: LEAD_UNAVAILABLE }, values };
+
+  const parsed = parseLeadNote(formData);
+  if (!parsed.ok) return { status: "invalid", errors: parsed.errors, values: parsed.values };
+
+  const saved = await db.appendLeadNote(lead.id, parsed.note);
+  if (!saved) return { status: "invalid", errors: { form: LEAD_UNAVAILABLE }, values };
+
+  after(() => logAudit("lead.note_added", lead.id));
+  revalidatePath(`/dashboard/leads/${lead.id}`);
+  return { status: "ok" };
+}
+
+export async function deleteLead(id: string): Promise<LeadMutationState> {
+  const lead = await findOwnLead(id);
+  if (!lead) return { status: "not_found" };
+
+  if (!(await db.deleteLead(lead.id))) return { status: "not_found" }; // already deleted by someone else
+  revalidatePath("/dashboard");
+  return { status: "ok" };
 }

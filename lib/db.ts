@@ -1,10 +1,13 @@
 import type {
   AuditEntry,
   Lead,
+  LeadRow,
   LeadSource,
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
   SourceCount,
   User,
   Workspace,
@@ -31,10 +34,20 @@ const LATENCY_MS = {
   getLead: 80,
   insertLead: 120,
   updateLeadStatus: 80,
+  appendLeadNote: 80,
   deleteLead: 80,
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuote: 120,
+  getQuote: 80,
+  findQuoteForCallback: 80,
+  setQuoteJob: 80,
+  finishQuote: 80,
+  failQuoteTrigger: 80,
+  claimCallbackKey: 20,
+  completeCallbackKey: 20,
+  releaseCallbackKey: 20,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -268,6 +281,18 @@ function createStore(): Store {
 const globalForStore = globalThis as unknown as { leadDeskStore?: Store };
 const store = (globalForStore.leadDeskStore ??= createStore());
 
+// Quotes live in their own global so a store created before they existed keeps working in `next dev`.
+// callbackKeys stands in for a table with a unique constraint on the callback idempotency-key
+// and a state column: "processing" while the first delivery is being saved, "done" once it is.
+// A "processing" claim older than CALLBACK_CLAIM_LEASE_MS is stale (the handler died before
+// completing or releasing it) and may be claimed again.
+type CallbackKeyState = "processing" | "done";
+type CallbackKey = { state: CallbackKeyState; at: number };
+type QuoteStore = { quotes: Quote[]; callbackKeys: Map<string, CallbackKey> };
+const CALLBACK_CLAIM_LEASE_MS = 60_000;
+const globalForQuotes = globalThis as unknown as { leadDeskQuotes?: QuoteStore };
+const quoteStore: QuoteStore = (globalForQuotes.leadDeskQuotes ??= { quotes: [], callbackKeys: new Map() });
+
 const SESSION_PREFIX = "demo-";
 
 export const db = {
@@ -302,6 +327,16 @@ export const db = {
         .filter((lead) => lead.workspaceId === workspaceId)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .map((lead) => structuredClone(lead)),
+    );
+  },
+
+  /** The dashboard table's five fields, projected in the store: the rest of each lead is never copied. */
+  getLeadRows(workspaceId: string): Promise<LeadRow[]> {
+    return query("getLeads", () =>
+      store.leads
+        .filter((lead) => lead.workspaceId === workspaceId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map(({ id, fullName, company, status, createdAt }) => ({ id, fullName, company, status, createdAt })),
     );
   },
 
@@ -369,6 +404,16 @@ export const db = {
     });
   },
 
+  appendLeadNote(id: string, note: string) {
+    return query("appendLeadNote", () => {
+      const lead = store.leads.find((l) => l.id === id);
+      if (!lead) return false;
+      lead.internalNotes = lead.internalNotes ? `${lead.internalNotes}\n${note}` : note;
+      lead.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
   deleteLead(id: string) {
     return query("deleteLead", () => {
       const index = store.leads.findIndex((l) => l.id === id);
@@ -382,5 +427,112 @@ export const db = {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
     });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        // The status page is public, so the id must not be guessable.
+        id: crypto.randomUUID(),
+        status: "queued",
+        jobId: null,
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      quoteStore.quotes.push(quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = quoteStore.quotes.find((q) => q.id === id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  /** The quote a callback belongs to: by n8n jobId, or by our request key if the 202 was not saved yet. */
+  findQuoteForCallback(jobId: string, requestIdempotencyKey: string | null) {
+    return query("findQuoteForCallback", () => {
+      const quote = quoteStore.quotes.find(
+        (q) =>
+          q.jobId === jobId ||
+          (requestIdempotencyKey !== null && q.idempotencyKey === requestIdempotencyKey && q.jobId === null),
+      );
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  /** n8n accepted the request. The callback may already have finished the quote, so only queued moves on. */
+  setQuoteJob(id: string, jobId: string | null) {
+    return query("setQuoteJob", () => {
+      const quote = quoteStore.quotes.find((q) => q.id === id);
+      if (!quote) return false;
+      quote.jobId ??= jobId;
+      if (quote.status === "queued") quote.status = "processing";
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  finishQuote(
+    id: string,
+    outcome: { status: "ready"; documentUrl: string } | { status: "failed"; errorCode: string },
+    jobId: string | null = null,
+  ) {
+    return query("finishQuote", () => {
+      const quote = quoteStore.quotes.find((q) => q.id === id);
+      if (!quote) return false;
+      // A late "failed" (a trigger that looked lost, then a callback after all) never undoes a ready quote.
+      if (quote.status === "ready" && outcome.status === "failed") return false;
+      quote.jobId ??= jobId;
+      quote.status = outcome.status;
+      quote.documentUrl = outcome.status === "ready" ? outcome.documentUrl : null;
+      quote.errorCode = outcome.status === "failed" ? outcome.errorCode : null;
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  /**
+   * The trigger failed (no 202 with a job id): ends the quote as failed, but only while it is still waiting
+   * (queued/processing). If the callback has already finished it — ready or failed with n8n's own error
+   * code — that result stays.
+   */
+  failQuoteTrigger(id: string) {
+    return query("failQuoteTrigger", () => {
+      const quote = quoteStore.quotes.find((q) => q.id === id);
+      if (!quote || (quote.status !== "queued" && quote.status !== "processing")) return false;
+      quote.status = "failed";
+      quote.documentUrl = null;
+      quote.errorCode = "trigger_failed";
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  /** Atomically records a callback key as "processing"; otherwise returns the state it already has. */
+  claimCallbackKey(key: string): Promise<"claimed" | CallbackKeyState> {
+    return query("claimCallbackKey", () => {
+      const now = Date.now();
+      const current = quoteStore.callbackKeys.get(key);
+      const stale = current?.state === "processing" && now - current.at > CALLBACK_CLAIM_LEASE_MS;
+      if (current && !stale) return current.state;
+      quoteStore.callbackKeys.set(key, { state: "processing", at: now });
+      return "claimed";
+    });
+  },
+
+  /** Marks a claimed key as done: from now on a repeat is a duplicate. */
+  completeCallbackKey(key: string) {
+    return query("completeCallbackKey", () => quoteStore.callbackKeys.set(key, { state: "done", at: Date.now() }).size > 0);
+  },
+
+  releaseCallbackKey(key: string) {
+    return query("releaseCallbackKey", () => quoteStore.callbackKeys.delete(key));
   },
 };
