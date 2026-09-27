@@ -4,8 +4,9 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { requireLeadAccess } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import type { LeadStatus } from "@/lib/types";
+import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -66,12 +67,17 @@ export async function submitLead(
 }
 
 export async function updateLeadStatus(id: string, status: LeadStatus) {
+  if (!LEAD_STATUSES.includes(status)) throw new Error("Invalid status");
+  await requireLeadAccess(id);
+
   await db.updateLeadStatus(id, status);
   revalidatePath("/dashboard");
   revalidatePath(`/dashboard/leads/${id}`);
 }
 
 export async function deleteLead(id: string) {
+  await requireLeadAccess(id);
+
   await db.deleteLead(id);
   revalidatePath("/dashboard");
 }
