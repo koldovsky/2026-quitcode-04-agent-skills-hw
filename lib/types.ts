@@ -46,6 +46,9 @@ export type Lead = {
   ipAddress: string;
   userAgent: string;
   rawPayload: Record<string, unknown>;
+  // Sent to n8n with lead-created as idempotency-key; the same value in every retry of this lead.
+  // null for seed leads, which were never sent.
+  idempotencyKey: string | null;
   internalNotes: string;
   createdAt: string;
   updatedAt: string;
@@ -98,3 +101,33 @@ export type AuditEntry = {
   leadId: string;
   at: string;
 };
+
+// queued → (n8n accepted) processing → (callback) ready | failed
+export type QuoteStatus = "queued" | "processing" | "ready" | "failed";
+
+export type Quote = {
+  // Random UUID: /quotes/[id] is public, so the id must not be guessable.
+  id: string;
+  workspaceId: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  // Sent to n8n as idempotency-key; the same value in every retry of this request.
+  idempotencyKey: string;
+  correlationId: string;
+  // n8n execution id from the 202 response; also data.jobId in the callback.
+  jobId: string | null;
+  documentUrl: string | null;
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Pick<
+  Quote,
+  "workspaceId" | "company" | "email" | "description" | "budget" | "idempotencyKey" | "correlationId"
+>;
+
+export type QuotePatch = Partial<Pick<Quote, "status" | "jobId" | "documentUrl" | "errorCode">>;
