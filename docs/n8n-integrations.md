@@ -3,10 +3,12 @@
 | event | напрям | шлях n8n | режим | власник |
 |---|---|---|---|---|
 | `quote-request` | Next.js → n8n → колбек `/api/n8n/quote-request` | `/webhook/quote-request` | Respond to Webhook 202 `{job_id}` + підписаний колбек | уточнити |
-| `lead-created` | Next.js → n8n | `/webhook-test/lead-created` (тестовий URL!) | Immediately | уточнити |
+| `lead-created` | Next.js → n8n | `/webhook/lead-created` | Immediately | уточнити |
 
-`lead-created` поки не відповідає контракту (тестовий URL, повний запис ліда в тілі, без токена й
-ключів, `await` у Server Action) — потрібна окрема міграція.
+`lead-created` переведено на `lib/n8n/client.ts` (коміт `bb4a91d`): production URL, `x-n8n-token`,
+`idempotency-key`, `x-correlation-id`, виклик в `after()`. У `data`: `leadId`, `fullName`, `email`, `phone`,
+`company`, `website`, `budget`, `message`, `consentMarketing`, `source` — без IP, user agent, сирих
+даних форми й внутрішніх нотаток (склад узгоджено з власником проєкту).
 
 ## Що має налаштувати власник воркфлоу `quote-request`
 
