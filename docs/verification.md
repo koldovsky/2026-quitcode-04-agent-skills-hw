@@ -12,7 +12,9 @@
 > - **Task B:** `building-client-form` спрацював з першої спроби (виклик `Skill`), усі пункти Verify
 >   пройдено й записано.
 > - **Task C:** 13 перевірок C1–C13; на `main` — 6 FAIL, на навмисно поганому коді — 13 FAIL, на
->   фінальному коді — 0 FAIL; `scripts/self-test.mjs` — 10 з 10 випадків.
+>   фінальному коді — 0 FAIL; `scripts/self-test.mjs` — 13 з 13 випадків.
+> - Рев'ю CodeRabbit PR #13 (11 коментарів + перевірка Task B) — усе підтверджено відтворенням і
+>   виправлено окремими комітами (розділ «Рев'ю CodeRabbit» наприкінці).
 > - Остання перевірка гілки (27.09.2026, після рев'ю): `npm run lint`, `npm run build` — без
 >   помилок; `check-contract.mjs` — 13 PASS / 0 FAIL; `self-test.mjs` — усі випадки як очікувалось.
 
@@ -470,22 +472,26 @@ exit=1
 Шаблони беруться просто з `references/code-templates.md`, тож шаблон, що розійшовся з контрактом,
 теж дає FAIL. Сам тест перевірено мутаціями в копії скіла поза репозиторієм: C8, що мовчки не
 повертає знахідок, → FAIL на «deliberately bad code»; шаблон клієнта без `AbortSignal.timeout` →
-C5 FAIL на всіх трьох варіантах шаблонів.
+C5 FAIL на всіх трьох варіантах шаблонів. Після рев'ю CodeRabbit (`99a29a4`) — ще три випадки;
+два з них на старій версії скрипта давали `FAIL` (див. розділ «Рев'ю CodeRabbit»).
 
 ```
 $ node .claude/skills/integrating-n8n-webhooks/scripts/self-test.mjs; echo "exit=$?"
 check-contract self-test · <repo>\.claude\skills\integrating-n8n-webhooks\scripts\check-contract.mjs
 
-ok    main-like (LeadDesk main)          7 PASS, 6 FAIL, exit 1
-ok    deliberately bad code              0 PASS, 13 FAIL, exit 1
-ok    templates (LF)                     13 PASS, 0 FAIL, exit 0
-ok    templates (CRLF)                   13 PASS, 0 FAIL, exit 0
-ok    templates (src/ layout)            13 PASS, 0 FAIL, exit 0
-ok    --changed-since base               10 PASS, 3 FAIL, exit 1
-ok    --changed-since <unknown ref>      exit 2
-ok    --help                             exit 0
-ok    unknown option                     exit 2
-ok    --root that does not exist         exit 2
+ok    main-like (LeadDesk main)              7 PASS, 6 FAIL, exit 1
+ok    deliberately bad code                  0 PASS, 13 FAIL, exit 1
+ok    templates (LF)                         13 PASS, 0 FAIL, exit 0
+ok    templates (CRLF)                       13 PASS, 0 FAIL, exit 0
+ok    templates (src/ layout)                13 PASS, 0 FAIL, exit 0
+ok    C5: timeout elsewhere in the file      12 PASS, 1 FAIL, exit 1
+ok    C5: timeout in a variable              13 PASS, 0 FAIL, exit 0
+ok    --changed-since base                   10 PASS, 3 FAIL, exit 1
+ok    --changed-since <unknown ref>          exit 2
+ok    --changed-since, Cyrillic file names   11 PASS, 2 FAIL, exit 1
+ok    --help                                 exit 0
+ok    unknown option                         exit 2
+ok    --root that does not exist             exit 2
 
 all cases as expected
 exit=0
@@ -543,3 +549,28 @@ exit=0
 `grep -ciE "sha256=|documentUrl|jobId"` по журналу — `0` (ні підписів, ні тіла).
 Випадок `"constructor" as the event` — регресія: з `HANDLERS[event]` на звичайному об'єкті такий
 шлях знаходив `Object.prototype.constructor` замість 404; у шаблоні тепер `Object.hasOwn`.
+
+## Рев'ю CodeRabbit (PR #13)
+
+Кожен коментар спершу звірено з поточним кодом і, де можна, відтворено (продакшн-збірка
+`next start`, мок `respond-202`, нові випадки `self-test.mjs`); виправлено окремими комітами. Жоден
+не відхилено.
+
+| Коментар | Вердикт | Коміт | Як перевірили |
+|---|---|---|---|
+| Task B (pre-merge): `SKILL.md` має закінчуватись розділом Verify | слушно — регресія `f5f1d40` | `2edc1cd` | останній `##` — Verify |
+| `building-client-form`, чекліст п. 1: сесія — лише для дій над даними користувача, публічна форма — ліміти й антиспам | слушно: суперечив кроку 1.1 | `a255422` | — |
+| Колбек (роут і шаблон): `request.text()` без ліміту під час читання | слушно | `7a292f1` | chunked-тіло без `content-length`: було — 8 с без відповіді, 2 МБ прочитано; стало — 413 за ~300 мс, 80 КБ |
+| Колбек (шаблон, те саме в роуті): `startsWith("application/json")` | слушно | `7a292f1` | `application/jsonp`, `application/json-seq`: було 401 (пройшли далі), стало 415; `; charset=utf-8` і `Application/JSON` — приймаються |
+| Клієнт n8n (роут і шаблон): `x-n8n-token` на будь-який `N8N_WEBHOOK_BASE_URL` | слушно (захист від помилки конфігурації) | `89940cc` | `N8N_WEBHOOK_BASE_URL=http://n8n.example.test/webhook`: 0 запитів (ні `n8n.out`, ні рядка в моку), лід — `lead.n8n failed`, кошторис — `failed` |
+| `check-contract` C5: `signal` будь-де + `AbortSignal.timeout` будь-де у файлі | слушно | `99a29a4` | новий випадок self-test на старій версії — `FAIL expected [C5] got []`, на новій — ok |
+| `check-contract --changed-since`: шляхи git у лапках (`"b/…\320…"`) | слушно | `99a29a4` | новий випадок з кириличними іменами файлів (`core.quotePath=true`): було `got []`, стало `[C4 C5]` |
+| `send-signed-callback.mjs`: опція без значення | слушно для `--event` (`--url` уже перевірявся) | `3d9ccff` | `--event` без значення й `--event --url …` — було: тихий дефолт / подія `--url`; стало: `exit 2` |
+| `requestQuote`: антиспам перед `insertQuote` | слушно (так вимагає власний `building-client-form`) | `911bd6e` | без JS: заповнений honeypot — 0 записів, `role="alert"`, введене лишилось; порожній — запис і «Готово». Обмеження частоти — ні: пороги вирішує людина |
+| `completeQuote`: `jobId` колбека ≠ збереженому з 202 | слушно (захист у глибину) | `00145a7` | `tsc`; наскрізний сценарій з моком — «Готово» (`jobId` збігається). Гілку «не збігається» наживо не відтворено: ключ запиту назовні не видно |
+
+Після всіх змін: `npm run lint`, `npm run build` — без помилок; `check-contract.mjs` — 13 PASS /
+0 FAIL; `self-test.mjs` — 13 з 13; матриця колбеків — 11 з 11; сценарій «форма → колбек →
+`/quotes/<id>`» — «Готово»; форма заявки — медіана 141 мс; `/dashboard` — по одному запиту сесії
+й воркспейсу. Пропозицію запустити `coderabbit review --agent` не виконано: потрібне встановлення
+CLI, а встановлення — лише після «так» людини.
