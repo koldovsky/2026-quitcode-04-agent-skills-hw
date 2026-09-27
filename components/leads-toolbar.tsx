@@ -1,9 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import ExcelJS from "exceljs";
+import dynamic from "next/dynamic";
 import type { SourceCount } from "@/lib/types";
-import { SourcesChart } from "./sources-chart";
+
+// recharts is only needed once the chart is opened, so it gets its own chunk.
+const SourcesChart = dynamic(() => import("./sources-chart").then((m) => m.SourcesChart), {
+  ssr: false,
+  loading: () => <div className="h-64 w-full" />,
+});
 
 type ExportRow = {
   id: string;
@@ -23,7 +28,11 @@ export function LeadsToolbar({ sources }: { sources: SourceCount[] }) {
   async function handleExport() {
     setExporting(true);
     try {
-      const response = await fetch("/api/leads");
+      // exceljs is large and only needed for export, so it loads on click.
+      const [{ default: ExcelJS }, response] = await Promise.all([
+        import("exceljs"),
+        fetch("/api/leads"),
+      ]);
       const { leads } = (await response.json()) as { leads: ExportRow[] };
 
       const workbook = new ExcelJS.Workbook();
