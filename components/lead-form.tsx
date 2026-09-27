@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { submitLead, type SubmitLeadState } from "@/app/actions";
 import { BUDGET_OPTIONS } from "@/lib/lead-form";
+import { HoneypotField } from "./honeypot-field";
 
 const initialState: SubmitLeadState = { status: "idle" };
 
@@ -24,6 +25,13 @@ export function LeadForm() {
 
   return (
     <form action={formAction} className="space-y-4" noValidate>
+      {state.status === "error" && (
+        <p role="alert" className="text-sm text-red-700">
+          {state.message}
+        </p>
+      )}
+      <HoneypotField id="lead-hp" />
+
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-sm font-medium">
           Ім&apos;я

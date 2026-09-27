@@ -4,13 +4,8 @@ import { randomUUID } from "node:crypto";
 import { after } from "next/server";
 import { db } from "@/lib/db";
 import { triggerWorkflow } from "@/lib/n8n/client";
-import {
-  isHoneypotFilled,
-  parseQuoteForm,
-  readQuoteValues,
-  type QuoteField,
-  type QuoteFormValues,
-} from "@/lib/quote-form";
+import { isHoneypotFilled } from "@/lib/honeypot";
+import { parseQuoteForm, readQuoteValues, type QuoteField, type QuoteFormValues } from "@/lib/quote-form";
 
 // Public form, like submitLead: no session; quotes go to the same workspace as public leads.
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";

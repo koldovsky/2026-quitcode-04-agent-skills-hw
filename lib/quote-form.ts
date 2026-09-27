@@ -21,15 +21,6 @@ export type QuoteParseResult =
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Anti-spam honeypot: a field people never see or reach (off-screen, hidden from screen readers
-// and the tab order), which bots that fill every input do fill.
-export const HONEYPOT_FIELD = "website";
-
-export function isHoneypotFilled(formData: FormData) {
-  const value = formData.get(HONEYPOT_FIELD);
-  return typeof value === "string" && value.trim() !== "";
-}
-
 // What the user typed, returned with any error so that the fields keep it (React 19 resets the form).
 export function readQuoteValues(formData: FormData): QuoteFormValues {
   const read = (name: QuoteField) => {

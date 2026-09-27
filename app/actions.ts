@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { triggerWorkflow } from "@/lib/n8n/client";
 import { logAudit } from "@/lib/audit";
 import { getSessionUser } from "@/lib/data";
+import { isHoneypotFilled } from "@/lib/honeypot";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
 import { parseNoteForm, readNoteValues, type NoteField } from "@/lib/note-form";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
@@ -17,6 +18,7 @@ const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 export type SubmitLeadState =
   | { status: "idle" }
   | { status: "invalid"; errors: Partial<Record<LeadFormField, string>> }
+  | { status: "error"; message: string }
   | { status: "ok" };
 
 export async function submitLead(
@@ -26,6 +28,13 @@ export async function submitLead(
   const parsed = parseLeadForm(formData);
   if (!parsed.ok) {
     return { status: "invalid", errors: parsed.errors };
+  }
+
+  // Anti-spam — a public form has no session: a filled honeypot means a bot. No lead, a generic
+  // answer, a log line without the form data.
+  if (isHoneypotFilled(formData)) {
+    console.warn("lead.rejected", { reason: "honeypot" });
+    return { status: "error", message: "Не вдалося надіслати заявку. Спробуйте ще раз." };
   }
 
   const requestHeaders = await headers();
