@@ -22,8 +22,9 @@ Options:
 
 Cases: main-like code (C1 C3 C5 C6 C11 C13 FAIL), deliberately bad code (all 13 FAIL, the secret
 value is not printed), the templates from references/code-templates.md (LF, CRLF, src/ layout:
-0 FAIL), --changed-since (only the new file's FAILs; needs git), CLI exit codes (--help, unknown
-option, missing --root, unknown ref).
+0 FAIL), C5 with a timeout elsewhere in the file (FAIL) or in a variable (PASS), --changed-since
+(only the new file's FAILs; also with Cyrillic file names; needs git), CLI exit codes (--help,
+unknown option, missing --root, unknown ref).
 
 Exit code: 0 — every case as expected, 1 — at least one case differs.
 `;
@@ -115,6 +116,60 @@ export async function POST(request: Request) {
 `,
 };
 
+const HEADERS_OK = `{ "x-n8n-token": "t", "idempotency-key": "k", "x-correlation-id": "c" }`;
+
+// C5: a timeout somewhere in the file must not count for a request that does not use it.
+const TIMEOUT_ELSEWHERE = {
+  "lib/n8n/client.ts": `import "server-only";
+
+const unused = AbortSignal.timeout(10_000);
+const controller = new AbortController();
+
+export function ping() {
+  void unused;
+  return fetch(\`\${process.env.N8N_WEBHOOK_BASE_URL}/ping\`, { method: "POST", headers: ${HEADERS_OK}, signal: controller.signal });
+}
+`,
+  ".env.example": GOOD_ENV,
+};
+
+// C5: the timeout in a variable — shorthand { signal } and signal: <name> — is fine.
+const TIMEOUT_VARIABLE = {
+  "lib/n8n/client.ts": `import "server-only";
+
+export function ping() {
+  const signal = AbortSignal.timeout(10_000);
+  return fetch(\`\${process.env.N8N_WEBHOOK_BASE_URL}/ping\`, {
+    method: "POST",
+    headers: ${HEADERS_OK},
+    signal,
+  });
+}
+
+export function pong() {
+  const deadline = AbortSignal.timeout(10_000);
+  return fetch(\`\${process.env.N8N_WEBHOOK_BASE_URL}/pong\`, { method: "POST", headers: ${HEADERS_OK}, signal: deadline });
+}
+`,
+  ".env.example": GOOD_ENV,
+};
+
+// --changed-since with non-ASCII file names: git prints them quoted ("lib/n8n/\\320…").
+const CYRILLIC_BASE = { ...MAIN_LIKE, "lib/n8n/відправка.ts": `import "server-only";\n\nexport const version = 1;\n` };
+const CYRILLIC_CHANGES = {
+  // tracked, changed after base: the new line has a fetch without a timeout → C5
+  "lib/n8n/відправка.ts": `import "server-only";
+
+export const version = 1;
+export const send = () =>
+  fetch(\`\${process.env.N8N_WEBHOOK_BASE_URL}/x\`, { method: "POST", headers: ${HEADERS_OK} });
+`,
+  // untracked: no import "server-only" → C4
+  "lib/n8n/клієнт.ts": "export const base = process.env.N8N_WEBHOOK_BASE_URL;\n",
+};
+// Git's own env config: quote non-ASCII paths whatever the user's core.quotePath is.
+const QUOTED_PATHS_ENV = { ...process.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.quotePath", GIT_CONFIG_VALUE_0: "true" };
+
 // Added after the base commit in the --changed-since case.
 const NEW_CLIENT = {
   "lib/n8n/client.ts": `export async function trigger(data: unknown) {
@@ -156,8 +211,8 @@ function writeProject(dir, files) {
   }
 }
 
-function runChecker(extraArgs) {
-  const r = spawnSync(process.execPath, [CHECKER, ...extraArgs], { encoding: "utf8" });
+function runChecker(extraArgs, env = process.env) {
+  const r = spawnSync(process.execPath, [CHECKER, ...extraArgs], { encoding: "utf8", env });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -169,11 +224,11 @@ function verdicts(out) {
 
 function report(ok, name, detail) {
   if (!ok) failures++;
-  console.log(`${ok ? "ok  " : "FAIL"}  ${name.padEnd(34)} ${detail}`);
+  console.log(`${ok ? "ok  " : "FAIL"}  ${name.padEnd(38)} ${detail}`);
 }
 
-function expectCase(name, dir, expectFail, extraArgs = [], notPrinted = []) {
-  const { code, out } = runChecker(["--root", dir, ...extraArgs]);
+function expectCase(name, dir, expectFail, { args: extraArgs = [], notPrinted = [], env } = {}) {
+  const { code, out } = runChecker(["--root", dir, ...extraArgs], env);
   const { failed, seen } = verdicts(out);
   const missing = ALL.filter((id) => !seen.includes(id));
   const sameFails = failed.length === expectFail.length && expectFail.every((id) => failed.includes(id));
@@ -211,15 +266,17 @@ try {
 
   const cases = [
     ["main-like (LeadDesk main)", MAIN_LIKE, ["C1", "C3", "C5", "C6", "C11", "C13"]],
-    ["deliberately bad code", BAD, ALL, [], [FAKE_SECRET]],
+    ["deliberately bad code", BAD, ALL, { notPrinted: [FAKE_SECRET] }],
     ["templates (LF)", templateFiles(), []],
     ["templates (CRLF)", crlf(templateFiles()), []],
     ["templates (src/ layout)", underSrc(templateFiles()), []],
+    ["C5: timeout elsewhere in the file", TIMEOUT_ELSEWHERE, ["C5"]],
+    ["C5: timeout in a variable", TIMEOUT_VARIABLE, []],
   ];
-  for (const [name, files, expectFail, extraArgs, notPrinted] of cases) {
+  for (const [name, files, expectFail, options] of cases) {
     const dir = join(root, name.replace(/[^a-z0-9]+/gi, "-"));
     writeProject(dir, files);
-    expectCase(name, dir, expectFail, extraArgs, notPrinted);
+    expectCase(name, dir, expectFail, options);
   }
 
   // --changed-since: old violations of main-like code are hidden, the new file's are shown.
@@ -232,8 +289,17 @@ try {
     git(dir, "commit", "-qm", "base");
     git(dir, "tag", "base");
     writeProject(dir, NEW_CLIENT);
-    expectCase("--changed-since base", dir, ["C4", "C5", "C6"], ["--changed-since", "base"]);
+    expectCase("--changed-since base", dir, ["C4", "C5", "C6"], { args: ["--changed-since", "base"] });
     expectExit("--changed-since <unknown ref>", ["--root", dir, "--changed-since", "no-such-ref"], 2);
+
+    const cyr = join(root, "changed-since-cyrillic");
+    writeProject(cyr, CYRILLIC_BASE);
+    git(cyr, "init", "-q");
+    git(cyr, "add", "-A");
+    git(cyr, "commit", "-qm", "base");
+    git(cyr, "tag", "base");
+    writeProject(cyr, CYRILLIC_CHANGES);
+    expectCase("--changed-since, Cyrillic file names", cyr, ["C4", "C5"], { args: ["--changed-since", "base"], env: QUOTED_PATHS_ENV });
   } else {
     console.log("skip  --changed-since                     git not found");
   }

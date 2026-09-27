@@ -193,6 +193,20 @@ const escapeRe = (s) => s.replace(/[$.*+?^()[\]{}|\\]/g, "\\$&");
 
 // ---------- git (--changed-since) ----------
 
+// Git prints unusual paths C-quoted, non-ASCII as octal bytes ("lib/\320\272.ts"); decode them
+// to the UTF-8 path the scan uses, or findings in such files are dropped.
+function gitPath(s) {
+  if (!s.startsWith('"') || !s.endsWith('"')) return s;
+  const ESC = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13 };
+  const bytes = [];
+  for (const m of s.slice(1, -1).matchAll(/\\([0-7]{3}|.)|([^\\]+)/gsu)) {
+    if (m[2] !== undefined) bytes.push(...Buffer.from(m[2], "utf8"));
+    else if (/^[0-7]{3}$/.test(m[1])) bytes.push(parseInt(m[1], 8));
+    else bytes.push(ESC[m[1]] ?? m[1].charCodeAt(0));
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
 function changedLines(root, ref) {
   const git = (args) =>
     execFileSync("git", ["-C", root, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
@@ -205,7 +219,8 @@ function changedLines(root, ref) {
   let current = null;
   for (const l of git(["diff", "-U0", "--no-color", "--no-ext-diff", ref, "--"]).split("\n")) {
     if (l.startsWith("+++ ")) {
-      current = l === "+++ /dev/null" ? null : l.slice(6);
+      const path = gitPath(l.slice(4));
+      current = path === "/dev/null" ? null : path.replace(/^b\//, "");
       if (current && !changed.has(current)) changed.set(current, new Set());
     } else if (current && l.startsWith("@@")) {
       const m = /\+(\d+)(?:,(\d+))?/.exec(l);
@@ -214,7 +229,7 @@ function changedLines(root, ref) {
       for (let k = 0; k < count; k++) changed.get(current).add(start + k);
     }
   }
-  for (const f of git(["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean)) changed.set(f, "all");
+  for (const f of git(["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean)) changed.set(gitPath(f), "all");
   return changed;
 }
 
@@ -461,7 +476,12 @@ function runChecks(files, envExample) {
     for (const f of files)
       for (const call of fetchesByFile.get(f.rel)) {
         const direct = /AbortSignal\.timeout\s*\(/.test(call.args);
-        const viaVariable = /\bsignal\b/.test(call.args) && /AbortSignal\.timeout\s*\(/.test(f.code);
+        // signal: <name> or shorthand { signal } — counts only if that name is declared from
+        // AbortSignal.timeout(…); a timeout elsewhere in the file does not.
+        const signalName = /\bsignal\s*:\s*([\w$]+)(?![\w$.])/.exec(call.args)?.[1] ?? (/[{,]\s*signal\s*[,}]/.test(call.args) ? "signal" : null);
+        const viaVariable =
+          signalName !== null &&
+          new RegExp(`(?:const|let|var)\\s+${escapeRe(signalName)}\\s*(?::[^=]+)?=[^;\\n]*AbortSignal\\.timeout\\s*\\(`).test(f.code);
         if (!direct && !viaVariable) findings.push({ ...at(f, call.index), text: `${f.snippet(f.line(call.index))}  ← немає signal: AbortSignal.timeout(…)` });
       }
     const total = [...fetchesByFile.values()].reduce((s, v) => s + v.length, 0);
