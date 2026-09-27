@@ -107,15 +107,32 @@ vercel-react-best-practices… Файли не змінюй»: 17 знахідо
     без JS на продакшн-збірці). ✅
   - Успішна відправка — «Нотатку додано.» (`role="status"`), нотатка з'явилась у «Внутрішні
     нотатки»; у журналі `db:appendLeadNote: 1`. ✅
-  - Без JS (продакшн-збірка) — помилки, збереження й додавання працюють (за звітом агента). ✅
-    <!-- TODO: перевірте самі: DevTools → Ctrl+Shift+P → «Disable JavaScript» → відправка. -->
+  - Без JS — працює. ✅ Серверний HTML форми (як його бачить браузер без JS):
+    `<form … action="" encType="multipart/form-data" method="POST">` зі службовими полями React
+    (`$ACTION_REF_1`, `$ACTION_1:0`, `$ACTION_1:1`, `$ACTION_KEY`) і `leadId`. Цю форму надіслано
+    звичайним multipart POST без виконання JS (скрипт на Node `fetch`), і на `next start`, і на
+    `next dev`:
+    - порожня → `HTTP 200`, сторінка з `role="alert"` «Нотатку не збережено…» і `aria-invalid="true"`;
+    - з текстом → `HTTP 200` за ~0,8 с, «Нотатку додано.», текст у «Внутрішні нотатки»,
+      `db:appendLeadNote: 1`;
+    - з cookie `bogus` → запису немає (після дії рендер сторінки через `getCurrentUser()` дає
+      редирект на `/login`, `HTTP 307`).
+
+    У браузері з DevTools «Disable JavaScript» спершу «не працювало»: вимкнення JS діє лише після
+    **перезавантаження** сторінки — у вже гідрованому DOM форма має
+    `action="javascript:throw new Error('A React form was unexpectedly submitted…')"`, яку React
+    ставить на клієнті, і без JS така форма нічого не відправляє.
+    <!-- TODO: якщо перевірите в браузері з перезавантаженням — допишіть результат. -->
   - Без сесії:
     - cookie **видалено** — `proxy.ts` перенаправив POST на `/login` (`POST /login 200 in 61ms`), у
       dev — «An unexpected response was received from the server»; **запису немає** (після цього в
       журналі жодного `db:appendLeadNote`). Дію цей сценарій не перевіряє: до неї запит не дійшов;
-    - з вигаданою сесією, від користувача іншого воркспейсу, з підміненим `leadId` — нічого не
-      записується (за звітом агента, без JS).
-      <!-- TODO: перевірте самі: змініть значення cookie leaddesk_session на bogus → відправка → «Сесія завершилась. Увійдіть знову.» -->
+    - cookie **змінено** на `bogus` (DevTools → Application → Cookies) — перевірено в браузері:
+      форма показала «Сесія завершилась. Увійдіть знову.», у журналі після
+      `POST /dashboard/leads/lead_0023 200 in 202ms` лише `db:getUserBySession` — без `db:getWorkspace`,
+      `db:getLead` і `db:appendLeadNote`, тобто дія зупинилась на першій перевірці. ✅
+    - від користувача іншого воркспейсу й з підміненим `leadId` — нічого не записується (за звітом
+      агента, без JS).
   - Журнал сервера — у коді дії лише `console.error("lead.note_add failed", { leadId, code })`, без
     тексту. Але `next dev` сам журналює аргументи Server Action (`└─ ƒ addLeadNote({…})`), і після
     помилки туди потрапляють `values`; у `next start` цього рядка немає. ⚠️ Не вимикали

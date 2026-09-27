@@ -143,8 +143,9 @@ const values = state.status === "invalid" ? state.values : {};
 - [ ] `npm run lint` і `npm run build` без помилок.
 - [ ] Порожня відправка: помилки біля полів, підсумок у `role="alert"`, у DevTools → Elements
       поле має `aria-invalid="true"` і `aria-describedby` на текст помилки; введене не зникло.
-- [ ] Відправка з вимкненим JS (DevTools → Ctrl+Shift+P → «Disable JavaScript») доходить до
-      сервера й показує результат.
+- [ ] Відправка з вимкненим JS (DevTools → Ctrl+Shift+P → «Disable JavaScript» → **F5**) доходить
+      до сервера й показує результат. Без перезавантаження форма лишається гідрованою
+      (`action="javascript:throw …"`) і нічого не відправляє.
 - [ ] Дія без сесії: у DevTools → Application → Cookies **змініть** значення cookie сесії на
       вигадане й повторіть відправку — форма показує `unauthorized`, у журналі немає запису
       (`db:<запис>`). Якщо cookie **видалити**, `proxy.ts` перенаправить POST на `/login`, і в dev
