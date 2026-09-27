@@ -453,6 +453,10 @@ export const db = {
         match.requestIdempotencyKey ? q.idempotencyKey === match.requestIdempotencyKey : q.jobId === match.jobId,
       );
       if (!quote) return "not_found" as const;
+      // Found by the request key, but the callback reports another n8n execution than the one the
+      // 202 named: not this quote's result. Either jobId missing (callback before the 202 was
+      // saved, or the trigger timed out) — accept as before.
+      if (quote.jobId && match.jobId && quote.jobId !== match.jobId) return "not_found" as const;
       if (quote.status === "ready") return "already_final" as const;
       Object.assign(quote, patch, { jobId: quote.jobId ?? match.jobId, updatedAt: new Date().toISOString() });
       return "updated" as const;
