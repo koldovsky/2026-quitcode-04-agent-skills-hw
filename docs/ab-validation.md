@@ -35,7 +35,13 @@
   питаннями, у кожній лише одне повідомлення користувача (запит). B лишив три запитання у фінальній
   відповіді, коли все вже зробив; на них не відповідали
 - **Мок, однаковий для обох** (з робочого репозиторію, термінал у теці копії):
-  <`node --env-file=.env.local ../2026-quitcode-04-agent-skills-hw/tools/mock-n8n.mjs --mode respond-202 --delay 5000` [+ `--callback-url …`]>
+  `node --env-file=.env.local ../2026-quitcode-04-agent-skills-hw/tools/mock-n8n.mjs --mode respond-202 --delay 5000`,
+  без `--callback-url` (обидва застосунки передають `callbackUrl` у тілі). Застосунок копії —
+  `npm run build && npm start` на :3000 (перед цим зупинено `next-server` робочого репозиторію, що
+  займав :3000). Журнали — `../ab-logs/{a,b}-{mock,server}.log` (`tee`). У `.env.local` обох копій —
+  ті самі значення токена й секрету мока (`change-me-…` з `.env.example` копії B). Зараховані запуски:
+  A — 2026-09-27 21:54–21:55 UTC і повтор о 22:05 (для заміру часу; журнали — з нього), B — 21:57 UTC; мок на старті обох: `header auth: x-n8n-token required`,
+  `callbacks: signed`. Перша спроба A (21:41) — без змінних мока, не враховується (див. розділ A)
 - **Базова лінія `check-contract.mjs` на копії до прогону** (увесь код, без `--changed-since`): однакова
   в A і B — 14 перевірок: 2 PASS · 7 FAIL · 5 SKIP. FAIL: C1, C3, C4, C6, C7, C8, C14 (усі —
   `app/actions.ts:61`/`:67` і `.env.example:6`); PASS: C2, C9; SKIP: C5, C10–C13 (немає `lib/n8n/` і
@@ -160,14 +166,42 @@
 
   Прогалину в скрипті виправити окремим комітом скіла після прогону B і перезапустити перевірку на обох
   копіях тією самою версією (запис — у висновку)
-- Журнал мока (форма → колбек → `/quotes/<id>`): ⏳ крок 3.4 ще не виконано. (Власний мок агента в його
-  сесії — не протокольний і сюди не рахується.)
+- Змінні в `.env.local` копії A: `N8N_QUOTE_WEBHOOK_URL`, `APP_URL` (змінні агента) + `N8N_WEBHOOK_TOKEN`,
+  `N8N_CALLBACK_SECRET` (змінні мока — відповідників серед змінних агента немає)
+- Журнал мока (форма → колбек → `/quotes/<id>`), 2026-09-27 22:05 UTC, `../ab-logs/a-mock.log`.
+  (Власний мок агента в його сесії — не протокольний і сюди не рахується.)
   ```
-  <рядки>
+  [mock-n8n] 2026-09-27T22:05:08.161Z listening on http://127.0.0.1:5678  mode=respond-202  delay=5000 ms  cloud-timeout=off
+  [mock-n8n] 2026-09-27T22:05:08.162Z production URLs: POST http://127.0.0.1:5678/webhook/<path>
+  [mock-n8n] 2026-09-27T22:05:08.162Z test URLs: not registered (start with --listen to open them for 120 s)
+  [mock-n8n] 2026-09-27T22:05:08.162Z header auth: x-n8n-token required (N8N_WEBHOOK_TOKEN is set)
+  [mock-n8n] 2026-09-27T22:05:08.162Z callbacks: signed, sent to the request's callbackUrl after 5000 ms (async modes)
+  [mock-n8n] 2026-09-27T22:05:28.903Z POST /webhook/quote-request -> 403 in 4 ms auth=missing | headers: accept,accept-language,content-type,user-agent | body 314 B sha256=db1cf46ec0549da0b795304461ffad0fa465d9655525e5c3188938b360d8b339
   ```
-- Час від «Надіслати» до відповіді форми: ⏳ крок 3.4
-- Що показала `/quotes/<id>`: ⏳ крок 3.4
-- Журнал сервера: чи є тіла запитів, email, телефони, токени, підписи: ⏳ крок 3.4
+  Застосунок не надіслав `x-n8n-token`, `idempotency-key` і `x-correlation-id` — n8n з Header Auth
+  відхилив запит (`403 auth=missing`). Воркфлоу не запустився, колбеку не було. Повторів з боку
+  застосунку теж не було (один `POST`). Запуск о 21:54–21:55 UTC дав те саме (`403 in 4 ms auth=missing`,
+  `quote.start_failed … http_403`); о 22:05 A перезапущено, щоб виміряти час форми в DevTools
+  > **Перша спроба, 2026-09-27 21:41–21:44 UTC, не враховується:** у `.env.local` копії A не було
+  > змінних мока `N8N_WEBHOOK_TOKEN` і `N8N_CALLBACK_SECRET`, тож мок працював м'якше, ніж у B
+  > (`header auth: none`, `callbacks: off`). Що встигло видно: `POST /webhook/quote-request -> 202 in 4 ms
+  > auth=none idempotency=absent | headers: accept,accept-language,content-type,user-agent | body 295 B`,
+  > `callback skipped: N8N_CALLBACK_SECRET is not set`; сторінка статусу опитувала сервер (29 × `db:getQuote`),
+  > колбеку не було. Повторено о 21:54 з обома змінними — результат вище.
+- Час від «Надіслати» до відповіді форми: **271,41 мс** (DevTools → Network → `POST` `new` → Timing:
+  очікування відповіді сервера 265,98 мс, завантаження 3,10 мс). Швидко лише тому, що мок відхилив
+  запит за 4 мс: Server Action A **чекає** відповіді n8n (`await startQuoteWorkflow`, C8), тож з
+  повільним n8n форма чекала б до 10 с таймауту
+- Що показала `/quotes/<id>`: **до сторінки статусу не дійшло.** За журналом сервера: запис створено
+  (`db:insertQuote: 1`), запуск упав (`quote.start_failed … reason: 'http_403'`), запис переведено у
+  `failed` (`db:settleQuote: 1`), `redirect` не було (жодного `db:getQuote`) — форма повертає помилку
+  з введеними значеннями (у коді — «Не вдалося надіслати запит. Спробуйте ще раз за хвилину.»)
+- Журнал сервера (`../ab-logs/a-server.log`): **тіл, email, телефонів, токенів і підписів немає** — лише
+  `db:*` і один рядок:
+  ```
+  quote.start_failed { quoteId: 'b4609621-93b6-4074-8a71-abdb453bbec3', reason: 'http_403' }
+  ```
+  (Email, компанія й опис при цьому пішли в тілі запиту до n8n — це видно з коду, мок тіл не логує.)
 
 ## B — зі скілом
 
@@ -314,13 +348,38 @@
   посилання `https://files.example.test/n8n/5f4d2266-….pdf`. Журнал сервера (`preview_logs`): лише
   `n8n.request {event, correlationId, attempt, status, ms, bytes, sha256}` і `n8n.callback {path,
   correlationId, status, ms, bytes, sha256}`, плюс лічильники `db:*` — без тіл, email, токенів, підписів
-- Журнал мока (форма → колбек → `/quotes/<id>`): ⏳ крок 3.4 ще не виконано
+- Змінні в `.env.local` копії B: чотири змінні агента з `.env.example` — `N8N_WEBHOOK_BASE_URL`,
+  `N8N_WEBHOOK_TOKEN`, `N8N_CALLBACK_SECRET`, `APP_BASE_URL`; змінні мока збігаються з двома з них за назвою
+- Журнал мока (форма → колбек → `/quotes/<id>`), 2026-09-27 21:57 UTC, `../ab-logs/b-mock.log`:
   ```
-  <рядки>
+  [mock-n8n] 2026-09-27T21:57:05.602Z listening on http://127.0.0.1:5678  mode=respond-202  delay=5000 ms  cloud-timeout=off
+  [mock-n8n] 2026-09-27T21:57:05.603Z production URLs: POST http://127.0.0.1:5678/webhook/<path>
+  [mock-n8n] 2026-09-27T21:57:05.603Z test URLs: not registered (start with --listen to open them for 120 s)
+  [mock-n8n] 2026-09-27T21:57:05.603Z header auth: x-n8n-token required (N8N_WEBHOOK_TOKEN is set)
+  [mock-n8n] 2026-09-27T21:57:05.603Z callbacks: signed, sent to the request's callbackUrl after 5000 ms (async modes)
+  [mock-n8n] 2026-09-27T21:57:33.517Z POST /webhook/quote-request -> 202 in 7 ms auth=ok idempotency=new | headers: accept,accept-language,content-type,idempotency-key,user-agent,x-correlation-id,x-n8n-token | body 235 B sha256=ee2bc2d8edbb615ae5c7f8dec9274fe8ab067f6942911d7dd7aa86ca8c5c5382
+  [mock-n8n] 2026-09-27T21:57:33.517Z workflow de9ad5a9-8ef5-4666-8425-c7133f219b2a running for 5000 ms, then callback event=quote-request.completed
+  [mock-n8n] 2026-09-27T21:57:38.634Z callback POST http://127.0.0.1:3000/api/n8n/quote-request -> 202 in 114 ms (try 1/3) event=quote-request.completed body 382 B sha256=7442a2566654562fd34fcec49c78ad26b2913b719ba7e643249b2be1fc72c9ce
   ```
-- Час від «Надіслати» до відповіді форми: ⏳ крок 3.4 (у самоперевірці агента — 261 мс проти 2007 мс мока)
-- Що показала `/quotes/<id>`: ⏳ крок 3.4
-- Журнал сервера: чи є тіла запитів, email, телефони, токени, підписи: ⏳ крок 3.4
+  Запит — з усіма заголовками контракту (`auth=ok idempotency=new`), колбек дійшов з першої спроби
+  через ≈ 5,1 с, застосунок відповів 202. `callbackUrl` застосунок передав сам. (Попередній запуск B о
+  21:48–21:49 UTC дав той самий результат: `202 … auth=ok idempotency=new`, колбек `-> 202 in 118 ms`.)
+- Час від «Надіслати» до відповіді форми: **308,18 мс** (DevTools → Network → `POST` `new` → Timing:
+  очікування відповіді сервера 220,19 мс, завантаження 84,56 мс — відповідь уже несе сторінку статусу
+  після `redirect`). Server Action не чекає n8n: запит до n8n (16 мс) іде в `after()`, уже після
+  відповіді. Цей час не залежить від n8n — у самоперевірці агента з моком `last-node` (відповідь
+  через 2007 мс) форма відповіла за 261 мс
+- Що показала `/quotes/<id>` (`/quotes/q_f269a54c-dd21-4799-a6e6-6f5842ffae1a`, скріншот): бейдж
+  «Готово», «Кошторис готовий», «PDF відкриється в новій вкладці.», кнопка «Завантажити кошторис (PDF)»;
+  блок «Ваш запит» — компанія, бюджет «4 500 USD», «Надіслано 28 вер. 2026 р., 00:57», опис задачі.
+  Email не показано. Сторінка перейшла з очікування в «Готово» сама (3 × `db:getQuote`, `db:completeQuote: 1`).
+  Примітка для кроку 4: публічна (за випадковим id) сторінка показує **опис задачі** — у A опису на ній немає
+- Журнал сервера (`../ab-logs/b-server.log`): **тіл, email, телефонів, токенів і підписів немає.** Є лише
+  лічильники `db:*` і два записи n8n з тим самим `correlationId` — запит і колбек зв'язані наскрізно:
+  ```
+  n8n.request  { event: 'quote-request', correlationId: '667ce2c9-86ff-4437-9a1c-00a41308bada', attempt: 1, status: 202, ms: 16, bytes: 235, sha256: 'ee2bc2d8…' }
+  n8n.callback { path: 'quote-request',  correlationId: '667ce2c9-86ff-4437-9a1c-00a41308bada', status: 202, ms: 82, bytes: 382, sha256: '7442a256…' }
+  ```
 
 ## Порівняння
 
@@ -329,10 +388,10 @@
 | Скіл викликано | — | так: `Skill` першою дією + 6 довідок і скрипти скіла |
 | `check-contract.mjs` на коді прогону (`--changed-since base` або без FAIL базової лінії): FAIL (id) | скрипт: 6 FAIL — C3, C4, C10, C11, C12, C13; після ручної поправки — 8 FAIL: + C7, C8 | 0 FAIL (14 PASS, підтверджено вручну) |
 | URL вебхука: `/webhook/` чи `/webhook-test/` | `/webhook/quote-request` | `/webhook/quote-request` (`N8N_WEBHOOK_BASE_URL` + event) |
-| `auth=` / `idempotency=` у журналі мока | ⏳ крок 3.4 (заголовків контракту в запиті немає) | ⏳ крок 3.4 (у самоперевірці агента — `auth=ok idempotency=new`) |
-| Колбек дійшов; код відповіді застосунку | ⏳ крок 3.4 | ⏳ крок 3.4 (у самоперевірці — `-> 202`) |
-| Час відповіді форми | ⏳ крок 3.4 | ⏳ крок 3.4 (у самоперевірці — 261 мс при 2007 мс мока) |
-| Тіла чи персональні дані в журналі сервера | ⏳ крок 3.4 | ⏳ крок 3.4 (у самоперевірці — немає) |
+| `auth=` / `idempotency=` у журналі мока | `403 auth=missing`; заголовків `idempotency-key`, `x-correlation-id` немає | `202 auth=ok idempotency=new` |
+| Колбек дійшов; код відповіді застосунку | ні — воркфлоу не запустився (403); форма — помилка, запис `failed` | так, з 1-ї спроби; `-> 202` (114 мс); сторінка — «Кошторис готовий» |
+| Час відповіді форми | 271 мс — але лише тому, що мок відповів 403 за 4 мс: форма чекає n8n (до 10 с) | 308 мс — не залежить від n8n: запит до n8n іде в `after()` (з моком на 2 с — 261 мс) |
+| Тіла чи персональні дані в журналі сервера | немає (`quote.start_failed {quoteId, reason}`) | немає (`n8n.request`/`n8n.callback`: correlationId, status, ms, bytes, sha256) |
 | Персональні дані в запиті до n8n | email, компанія, опис + `callbackToken` | компанія, опис, бюджет; email — ні |
 | Колбек: автентифікація | Bearer-токен на запит (свій, не за контрактом) | HMAC `sha256=` над `${timestamp}.${raw}`, ±300 с, `idempotency-key` |
 | Старий виклик у `submitLead` | не чіпав, не згадав | не чіпав, виніс питання про міграцію з переліком порушень |
