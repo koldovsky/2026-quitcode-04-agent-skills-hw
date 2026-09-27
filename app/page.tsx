@@ -25,6 +25,12 @@ export default function Home() {
             <li>• Кошторис за 2 робочі дні</li>
             <li>• Працюємо з Україною та ЄС</li>
           </ul>
+          <p className="text-sm text-slate-600">
+            Потрібна швидка оцінка?{" "}
+            <Link href="/quotes/new" className="font-medium text-indigo-600 hover:text-indigo-700">
+              Запросіть PDF-кошторис →
+            </Link>
+          </p>
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
