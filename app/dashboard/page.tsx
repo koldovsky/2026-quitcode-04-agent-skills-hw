@@ -12,7 +12,7 @@ import {
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const workspace = await getWorkspace({ slug: user.workspaceSlug });
+  const workspace = await getWorkspace(user.workspaceSlug);
   const leads = await getLeads(workspace.id);
   const stats = await getLeadStats(workspace.id);
   const sources = await getSourceBreakdown(workspace.id);
@@ -29,7 +29,15 @@ export default async function DashboardPage() {
       <StatsCards stats={stats} />
       <LeadsToolbar sources={sources} />
       <LeadSearch />
-      <LeadsTable leads={leads} />
+      <LeadsTable
+        leads={leads.map(({ id, fullName, company, status, createdAt }) => ({
+          id,
+          fullName,
+          company,
+          status,
+          createdAt,
+        }))}
+      />
     </div>
   );
 }

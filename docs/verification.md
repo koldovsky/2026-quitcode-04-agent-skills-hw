@@ -1,0 +1,211 @@
+# Перевірка (Task A–C, бонус E3)
+
+> Скопіюйте в `docs/verification.md` і заповніть. Сюди — лише те, що справді сталося: цитати,
+> числа, імена файлів, SHA комітів. Порядок дій — у `docs/walkthrough.md`.
+> Прогони A/B і фіча «запит на кошторис» — в окремому звіті `docs/ab-validation.md` (Task D).
+
+- **Інструмент і версія, модель:** Claude Code (desktop app) · Sonnet 5
+- **ОС і термінал, Node:** Windows 11 · Git Bash · Node ≥ 20.9 (з `package.json` engines)
+
+## Скіли видно у свіжій сесії
+
+- Як перевіряли: нова сесія Claude Code (desktop app), відкрита саме в теці
+  `D:\Work\Github\2026-quitcode-04-agent-skills-hw` (окремо від сесії, де скіл встановлювався),
+  запит «Чи є в `.claude/skills/` якісь власні skills цього проєкту?» — `claude -p "/context"`
+  недоступний: бінарник `claude` CLI не на `PATH` у цьому середовищі (використовується лише
+  desktop-застосунок).
+
+| Skill | Звідки (Project / Personal / вбудований) | Примітка |
+|---|---|---|
+| `vercel-react-best-practices` | Project (`.claude/skills/vercel-react-best-practices/`) | Сесія сама визначила його як «завендорений сторонній», не власний скіл проєкту — за коммітом `5a201d9 skills: vendor vercel-react-best-practices pinned to agent-skills-063bee9` |
+| `building-client-form` | Project (`.claude/skills/building-client-form/`) | Спрацював на звичайний запит без згадки скіла в Task B — див. розділ Task B нижче |
+| `integrating-n8n-webhooks` | Project (`.claude/skills/integrating-n8n-webhooks/`) | Створено в Task C, комітом `b1d587c`; окрему перевірку видимості у свіжій сесії не робили тут — саме її спрацювання на звичайний запит без згадки скіла і є прогін B у Task D |
+
+- Особисті скіли, які теж видно (`~/.claude/skills/`…), і чи можуть вони вплинути на перевірки:
+  не перевірялось окремо на цьому кроці — буде перевірено перед прогонами Task D
+  (`ls ~/.claude/skills ~/.cursor/skills ~/.agents/skills ~/.codex/skills`), де це критично для
+  чистоти A/B.
+
+## Task A — виправлення за скілом Vercel
+
+Рев'ю зробив субагент (свіжий контекст) за запитом, близьким до прикладу з інструкції: «Зроби рев'ю
+app/, components/, lib/ за скілом vercel-react-best-practices. Для кожної проблеми — рядок таблиці:
+файл:рядок | id правила | що не так | виправлення для Next.js 16. Файли не змінюй.» — з додатковою
+вимогою звірити кожну пораду з `node_modules/next/dist/docs/` нашої версії (16.3.5) перед тим, як
+пропонувати її як застосовну. Знайдено 7 порушень у 5 категоріях правил; застосовано 2.
+
+**Як міряли (для виправлення з числами):** продакшн-збірка (`npm run build && npm start -- -p
+3001`, окремий порт, щоб не займати dev-сервер користувача); cookie сесії демо-користувача Olena
+(`leaddesk_session=demo-u_olena`); один прогрівний запит `curl -b "$C" http://localhost:3001/dashboard`,
+далі очищення лог-файлу сервера і рівно один вимірюваний запит; лічильники `db:<запит>` рахувались
+через `grep -c` по логу між очищенням і виміром.
+
+| Правило (id) | Коміт | Файли | Що змінилось | Було | Стало | Як міряли |
+|---|---|---|---|---|---|---|
+| `server-cache-react` | `4c644c9` | `lib/data.ts`, `app/dashboard/layout.tsx`, `app/dashboard/page.tsx`, `app/dashboard/leads/[id]/page.tsx`, `components/dashboard-header.tsx` | `getCurrentUser` обгорнуто в `cache()`; `getWorkspace` тепер приймає рядок `slug` замість інлайн-об'єкта `{ slug }` (об'єкт — нова ідентичність щоразу, тому `cache()` не спрацьовував) | `db:getUserBySession` = 3, `db:getWorkspace` = 3 за один запит `/dashboard` | `db:getUserBySession` = 1, `db:getWorkspace` = 1 | лічильники `db:…` у логу продакшн-сервера на один `curl /dashboard` (до і після — окремі прогони з чистим логом) |
+| `server-serialization` | `cd54048` | `lib/types.ts`, `components/leads-table.tsx`, `app/dashboard/page.tsx` | У `LeadsTable` («use client») передавався повний `Lead[]` (email, phone, `internalNotes`, `ipAddress`, `userAgent`, `rawPayload` з UTM/gclid/fbclid, `consentMarketing`, `budget`, `message`…) для всіх 200 лідів, хоч рендериться лише 5 полів. Додано `LeadSummary` (`Pick` цих 5 полів) і мапінг перед передачею в компонент | (без заміру чисел — перевірено бінарно) | `grep -o "internalNotes\|rawPayload\|ipAddress\|userAgent"` по HTML і RSC-відповіді `/dashboard` — 0 збігів після фіксу | те саме `curl`, з `\| grep -o … \| sort \| uniq -c` замість `wc -c` |
+
+- Чому обрали для заміру саме `server-cache-react`: ефект — точне ціле число (кількість викликів
+  `db:<запит>`), яке легко зняти одним `curl` і `grep -c` без парсингу HTML; дає однозначний
+  до/після без шуму вимірювання часу (мережа, JIT-прогрів тощо).
+- `server-serialization` (друге виправлення): не вимірювали числами розмір payload (для одного
+  заміру з таблиці Task A досить одного), але перевірили бінарно — цільові поля зникли з HTML і
+  RSC-відповіді повністю (0 збігів `grep`), при цьому дані, потрібні `LeadSearch`, і далі йдуть
+  окремим шляхом через `/api/leads`, який їх і так уже звужував.
+- Порада скіла, яку звірили з документацією Next.js 16 і **не** застосували (розбіжність версії):
+  `bundle-barrel-imports` для іменованих імпортів з `recharts` у `components/sources-chart.tsx` —
+  за замовчуванням `recharts` вже входить у список `optimizePackageImports` Next.js 16.3.5
+  (`node_modules/next/dist/docs/.../optimizePackageImports.md`), тобто фреймворк сам оптимізує ці
+  імпорти без втручання; застосування поради додало б код, який нічого не змінює на практиці.
+  Записано в `docs/skill-review.md`, розділ 5.
+- Порада, яку розглянули, але свідомо не застосували (не через версію, а через масштаб): дублювання
+  ще й у `getLeads`/`getLeadStats`/`getSourceBreakdown` (правило `async-parallel`, послідовні
+  `await` замість `Promise.all`) — реальна знахідка, але залишена за межами двох обраних виправлень,
+  щоб не розширювати діф понад необхідне; занотовано для можливого майбутнього виправлення.
+- `npm run lint`, `npm run build` після кожного з двох виправлень: обидва пройшли без помилок
+  (build — Turbopack, TypeScript-перевірка, генерація сторінок — успішно на обох прогонах).
+
+## Task B — `building-client-form`
+
+- Запит у свіжій сесії (Claude Code desktop app, тека `2026-quitcode-04-agent-skills-hw`, скіл
+  не названо):
+  > На сторінці ліда в дашборді (/dashboard/leads/[id]) додай форму «Додати нотатку»: одне текстове
+  > поле до 500 символів; нотатка дописується до внутрішніх нотаток ліда.
+- Чи спрацював скіл і як це видно: **спрацював з першого разу.** У транскрипті сесії — явний рядок
+  виклику інструмента: `Ran skill` → `/building-client-form` → `skill: building-client-form` →
+  `Launching skill: building-client-form`. Додатково сама сесія в своєму описі роботи явно
+  посилалась на id правил `server-auth-actions`/`server-after-nonblocking`/`server-serialization`
+  саме в контексті форми — ці id є лише в тілі `SKILL.md` цього скіла, тобто підтверджує, що вона
+  й справді керувалась його інструкціями, а не загальними знаннями.
+- Що зроблено (файли, перевірено діфом самостійно — не лише за описом сесії):
+  - `lib/db.ts` — `appendLeadNote(id, note)`: дописує рядок до `internalNotes` через `\n`.
+  - `app/actions.ts` — Server Action `addLeadNote`: валідація (непорожньо, ≤500 символів) на
+    сервері; сесія й належність ліда до воркспейсу перевіряються **всередині дії**
+    (`getCurrentUser()`/`getWorkspace()`/`getLead()`) до будь-якого запису в базу; аудит-лог —
+    через `after()`, лише `(action, leadId)`, без тексту нотатки.
+  - `components/lead-note-form.tsx` — `useActionState` + `<form action={formAction}>` (без
+    `preventDefault`/клієнтського `fetch`); `aria-invalid`/`aria-describedby` на `textarea`; помилка
+    в `role="alert"`; введений текст не зникає при помилці (форма перемонтовується лише на
+    `status: "ok"`, не на помилці).
+  - `app/dashboard/leads/[id]/page.tsx` — секція «Внутрішні нотатки» тепер завжди показує форму
+    (раніше ховалась, якщо нотаток ще не було).
+  - Побічно: `.claude/launch.json` — конфіг для запуску dev-сервера у вбудованому браузері агента
+    (інструмент для перевірки, не частина фічі).
+- Пункти Verify зі скіла — результат кожного:
+  - `npm run lint`, `npm run build` — без помилок (перевірено в сесії й повторно самостійно).
+  - Порожня відправка → помилка «Введіть текст нотатки» біля поля, текст інших полів не зникає —
+    перевірено в браузері в тій самій сесії.
+  - Відправка без JavaScript → підтверджено користувачем окремо: сторінка й далі працює через
+    повний reload після вимкнення JS у DevTools.
+  - Виклик дії без сесії → перевірено незалежно: анонімний `curl` на сторінку ліда без cookie сесії
+    отримує `307` редірект на `/login`; за кодом дії `getCurrentUser()` виконується (і кидає
+    redirect) до будь-якого виклику `db.appendLeadNote`, тобто запис у базу недосяжний без сесії.
+  - Журнал сервера без персональних даних → підтверджено за кодом: `after(() => logAudit("lead.note_added", leadId))`
+    передає лише назву події та id ліда, тексту нотатки в журналі немає.
+- Код із перевірки залишено в гілці (проходить усі пункти Verify, відповідає патерну скіла).
+
+## Task C — `integrating-n8n-webhooks`
+
+Тут скіл лише пакують. Застосовує його агент у прогоні **B** (Task D) — доказ спрацювання, журнал
+мока й час відповіді форми — у `docs/ab-validation.md`.
+
+- Що лишили в `SKILL.md`, а що винесли в `references/`: `SKILL.md` (126 рядків) має лише
+  стиснутий контракт (env vars за назвою й призначенням без прикладів; заголовки й
+  конверт виклику одним абзацом; повний нумерований порядок обробки колбеку — бо саме
+  порядок і є найважливішим і найлегше зламати); повний текст «чому саме так»
+  (пояснення для кожного рішення — таймаут 10с, вікно 300с, HMAC замість `===`,
+  запис-до-відповіді тощо), таблиці режимів відповіді, покрокове налаштування n8n
+  словами, і розділ «відомі пастки документації» — все це в 5 файлах `references/`, по
+  одному на тему, з прямими посиланнями з `SKILL.md` (без ланцюжків файл→файл).
+- Правила зупинки — перелік:
+  1. Тестовий URL (`/webhook-test/`) з'являється деінде, крім тимчасово в `.env.local`.
+  2. Секрет (`N8N_WEBHOOK_TOKEN`/`N8N_CALLBACK_SECRET`) опиняється там, де міг би
+     потрапити в клієнтський код, query string чи журнал.
+  3. Задача вимагає синхронно чекати відповідь воркфлоу довше кількох секунд.
+  4. Незрозуміло, який шлях/подія — production, а який — тестовий/випадковий.
+  5. Задача просить змінити порядок обробки колбеку.
+- SHA коміту зі скілом (**BASE для Task D**): `b1d587c` (`skills: add
+  integrating-n8n-webhooks (contract, references, scripts)`) — фіча «запит на
+  кошторис» у гілці ще відсутня.
+- Що скіл змінив у собі після прогонів Task D: **нічого** — прогін B (Task D) відтворив контракт
+  практично точно (7/8 перевірок `check-contract.mjs` PASS одразу, 1 FAIL — передіснуючий, не новий);
+  скіл не редагувався. Повний розбір прогонів A/B — `docs/ab-validation.md`.
+
+**`check-contract.mjs` на коді `main`** (свіжий `git archive main` в `../leaddesk-main`):
+
+```
+[C1] no test webhook URL (/webhook-test/) outside .env.local: FAIL
+  .env.example:6 — test webhook URL (/webhook-test/) outside .env.local
+[C2] no NEXT_PUBLIC_-prefixed N8N_* variable: PASS
+[C3] n8n calls confined to lib/n8n/: FAIL
+  app/actions.ts:54 — call to n8n outside lib/n8n/ (should live in one server-only module)
+[C4] lib/n8n module starts with import "server-only": PASS (nothing to check yet — no matching file in this root)
+[C5] fetch() to n8n has AbortSignal.timeout(...): FAIL
+  app/actions.ts:54 — fetch() to n8n without AbortSignal.timeout(...)
+[C6] callback route reads raw body before JSON-parsing it: PASS (nothing to check yet — no matching file in this root)
+[C7] callback signature compared via crypto.timingSafeEqual: PASS (nothing to check yet — no matching file in this root)
+[C8] no secret/signature values in console logs: PASS
+
+3 FAIL(s)
+exit=1
+```
+
+3 реальні порушення (C1, C3, C5) — саме ті, що вже описані в Task 0 (тестовий URL у
+`.env.example`, прямий `fetch` в `app/actions.ts` без таймауту, поза окремим модулем).
+
+**Що скрипт побачив на навмисно поганому коді** (C2/C4/C6/C7/C8 на `main` нічого не
+знаходять, бо відповідного коду ще нема — перевірено на тимчасовому знімку поза
+репозиторієм, видаленому після перевірки):
+
+```
+[C1] no test webhook URL (/webhook-test/) outside .env.local: PASS
+[C2] no NEXT_PUBLIC_-prefixed N8N_* variable: FAIL
+  .env.example:1 — N8N_* variable with NEXT_PUBLIC_ prefix (ships to the client bundle)
+[C3] n8n calls confined to lib/n8n/: PASS
+[C4] lib/n8n module starts with import "server-only": FAIL
+  lib/n8n/client.ts:1 — lib/n8n module missing `import "server-only";` as its first line
+[C5] fetch() to n8n has AbortSignal.timeout(...): FAIL
+  lib/n8n/client.ts:5 — fetch() to n8n without AbortSignal.timeout(...)
+[C6] callback route reads raw body before JSON-parsing it: FAIL
+  app/api/n8n/[event]/route.ts:4 — body parsed as JSON before the signature is verified (re-serialization breaks the HMAC)
+[C7] callback signature compared via crypto.timingSafeEqual: FAIL
+  app/api/n8n/[event]/route.ts:5 — signature compared without crypto.timingSafeEqual
+[C8] no secret/signature values in console logs: FAIL
+  lib/n8n/client.ts:4 — console.* call appears to log a secret/signature identifier
+
+6 FAIL(s)
+exit=1
+```
+
+Усі 8 перевірок (C1–C8) підтверджено як такі, що справді щось знаходять — 3 на `main`,
+решта 5 на навмисно поганому знімку.
+
+**`check-contract.mjs` на фінальному коді (після Task D, 0 FAIL, увесь код, без прапорця):**
+
+```
+[C1] no test webhook URL (/webhook-test/) outside .env.local: PASS
+[C2] no NEXT_PUBLIC_-prefixed N8N_* variable: PASS
+[C3] n8n calls confined to lib/n8n/: PASS
+[C4] lib/n8n module starts with import "server-only": PASS
+[C5] fetch() to n8n has AbortSignal.timeout(...): PASS
+[C6] callback route reads raw body before JSON-parsing it: PASS
+[C7] callback signature compared via crypto.timingSafeEqual: PASS
+[C8] no secret/signature values in console logs: PASS
+
+0 FAIL
+```
+
+Деталі прогонів A/B і що довелось доробити руками — `docs/ab-validation.md`.
+
+**Бонус, реалізовано:** `--changed-since <git-ref>` — фільтрує файли на рівні файлів (не
+рядків) за `git diff --name-only` + `git ls-files --others --exclude-standard`; перевірено
+на `--changed-since HEAD~3` в цьому репозиторії — коректно звузило скан до змінених
+файлів. `send-signed-callback.mjs` (матриця колбеків) — не реалізовано, поза межами
+Task C.
+
+## Task E3 (бонус) — ті самі скіли в Cursor
+
+- Версія Cursor, модель: <…>
+- Які скіли Cursor побачив: <…>
+- Ті самі запити, що в Task B, і запит із `materials/ab-task.md`: спрацювали скіли чи ні: <…>
+- Чим поведінка відрізнялась від Claude Code: <…>

@@ -1,13 +1,19 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
+import { sendN8nEvent } from "@/lib/n8n/client";
 import type { LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
+const MAX_NOTE_LENGTH = 500;
+const LEAD_CREATED_EVENT = "lead-created";
 
 export type SubmitLeadState =
   | { status: "idle" }
@@ -50,17 +56,24 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
+  after(() =>
+    sendN8nEvent({
+      event: LEAD_CREATED_EVENT,
+      data: {
+        leadId: lead.id,
+        fullName: lead.fullName,
+        email: lead.email,
+        phone: lead.phone,
+        company: lead.company,
+        source: lead.source,
+        message: lead.message,
+      },
+      idempotencyKey: randomUUID(),
+      correlationId: lead.id,
+    }),
+  );
 
-  await logAudit("lead.created", lead.id);
+  after(() => logAudit("lead.created", lead.id));
 
   return { status: "ok" };
 }
@@ -74,4 +87,43 @@ export async function updateLeadStatus(id: string, status: LeadStatus) {
 export async function deleteLead(id: string) {
   await db.deleteLead(id);
   revalidatePath("/dashboard");
+}
+
+export type AddLeadNoteState =
+  | { status: "idle" }
+  | { status: "invalid"; error: string }
+  | { status: "ok"; addedAt: string };
+
+export async function addLeadNote(
+  _prevState: AddLeadNoteState,
+  formData: FormData,
+): Promise<AddLeadNoteState> {
+  const leadId = String(formData.get("leadId") ?? "");
+  const note = String(formData.get("note") ?? "").trim();
+
+  if (!note) {
+    return { status: "invalid", error: "Введіть текст нотатки" };
+  }
+  if (note.length > MAX_NOTE_LENGTH) {
+    return { status: "invalid", error: `Нотатка занадто довга (максимум ${MAX_NOTE_LENGTH} символів)` };
+  }
+
+  const user = await getCurrentUser();
+  const workspace = await getWorkspace(user.workspaceSlug);
+  const lead = await getLead(leadId);
+
+  if (!lead || lead.workspaceId !== workspace.id) {
+    return { status: "invalid", error: "Лід не знайдено" };
+  }
+
+  const saved = await db.appendLeadNote(leadId, note);
+  if (!saved) {
+    return { status: "invalid", error: "Не вдалося зберегти нотатку" };
+  }
+
+  revalidatePath(`/dashboard/leads/${leadId}`);
+
+  after(() => logAudit("lead.note_added", leadId));
+
+  return { status: "ok", addedAt: new Date().toISOString() };
 }

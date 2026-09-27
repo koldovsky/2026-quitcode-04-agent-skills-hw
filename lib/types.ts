@@ -51,6 +51,8 @@ export type Lead = {
   updatedAt: string;
 };
 
+export type LeadSummary = Pick<Lead, "id" | "fullName" | "company" | "status" | "createdAt">;
+
 export type NewLead = Omit<
   Lead,
   | "id"
@@ -98,3 +100,22 @@ export type AuditEntry = {
   leadId: string;
   at: string;
 };
+
+export const QUOTE_STATUSES = ["queued", "completed", "failed"] as const;
+
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
+export type QuoteRequest = {
+  id: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  documentUrl: string | null;
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuoteRequest = Pick<QuoteRequest, "company" | "email" | "description" | "budget">;

@@ -5,6 +5,8 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuoteRequest,
+  QuoteRequest,
   SourceCount,
   User,
   Workspace,
@@ -20,6 +22,9 @@ type Store = {
   leads: Lead[];
   audit: AuditEntry[];
   nextLeadNumber: number;
+  quoteRequests: QuoteRequest[];
+  nextQuoteNumber: number;
+  callbackKeys: Set<string>;
 };
 
 const LATENCY_MS = {
@@ -31,10 +36,14 @@ const LATENCY_MS = {
   getLead: 80,
   insertLead: 120,
   updateLeadStatus: 80,
+  appendLeadNote: 80,
   deleteLead: 80,
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuoteRequest: 120,
+  getQuoteRequest: 80,
+  updateQuoteRequestResult: 80,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -161,6 +170,10 @@ function leadId(n: number) {
   return `lead_${String(n).padStart(4, "0")}`;
 }
 
+function quoteRequestId(n: number) {
+  return `quote_${String(n).padStart(4, "0")}`;
+}
+
 function seedLeads(count: number, workspaces: Workspace[], users: User[]): Lead[] {
   const random = mulberry32(20260921);
   const pick = <T,>(items: readonly T[]) => items[Math.floor(random() * items.length)];
@@ -261,7 +274,16 @@ function createStore(): Store {
     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
   ];
   const leads = seedLeads(200, workspaces, users);
-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
+  return {
+    workspaces,
+    users,
+    leads,
+    audit: [],
+    nextLeadNumber: leads.length + 1,
+    quoteRequests: [],
+    nextQuoteNumber: 1,
+    callbackKeys: new Set(),
+  };
 }
 
 // One store per server process (also survives module reloads in `next dev`).
@@ -369,6 +391,16 @@ export const db = {
     });
   },
 
+  appendLeadNote(id: string, note: string) {
+    return query("appendLeadNote", () => {
+      const lead = store.leads.find((l) => l.id === id);
+      if (!lead) return false;
+      lead.internalNotes = lead.internalNotes ? `${lead.internalNotes}\n${note}` : note;
+      lead.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
   deleteLead(id: string) {
     return query("deleteLead", () => {
       const index = store.leads.findIndex((l) => l.id === id);
@@ -382,5 +414,57 @@ export const db = {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
     });
+  },
+
+  insertQuoteRequest(input: NewQuoteRequest) {
+    return query("insertQuoteRequest", (): QuoteRequest => {
+      const now = new Date().toISOString();
+      const quote: QuoteRequest = {
+        ...input,
+        id: quoteRequestId(store.nextQuoteNumber++),
+        status: "queued",
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      store.quoteRequests.push(quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuoteRequest(id: string) {
+    return query("getQuoteRequest", () => {
+      const quote = store.quoteRequests.find((q) => q.id === id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  updateQuoteRequestResult(
+    id: string,
+    result: { status: "completed"; documentUrl: string } | { status: "failed"; errorCode: string },
+  ) {
+    return query("updateQuoteRequestResult", () => {
+      const quote = store.quoteRequests.find((q) => q.id === id);
+      if (!quote) return false;
+      quote.status = result.status;
+      quote.documentUrl = result.status === "completed" ? result.documentUrl : null;
+      quote.errorCode = result.status === "failed" ? result.errorCode : null;
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  // Guards against re-processing the same n8n callback (retries, replay within
+  // the signature's validity window). Claim before handling; release only if
+  // handling fails after the claim, so a genuine retry is not lost forever.
+  claimCallbackKey(key: string) {
+    if (store.callbackKeys.has(key)) return false;
+    store.callbackKeys.add(key);
+    return true;
+  },
+
+  releaseCallbackKey(key: string) {
+    store.callbackKeys.delete(key);
   },
 };
