@@ -13,7 +13,7 @@ description: >-
   чистої верстки без відправки.
 metadata:
   owner: LeadDesk / QuitCode agency
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # Клієнтська форма: Server Action + useActionState
@@ -41,14 +41,14 @@ metadata:
 дії**, у такому порядку:
 
 1. **Сесія:** прочитати cookie сесії й знайти користувача хелпером, який повертає `null`, а не
-   робить `redirect` (у LeadDesk — `getSessionUser()` з `lib/data.ts`; `getCurrentUser()` для
-   сторінок перенаправляє на `/login`). Немає — `return { status: "unauthorized" }`.
+   робить `redirect` (хелпер для сторінок, що перенаправляє на вхід, у дії не підходить: форма
+   отримала б сторінку входу замість стану). Немає — `return { status: "unauthorized" }`.
    Для публічної форми (заявка з сайту) сесії немає — натомість обмеження розміру полів і
    антиспам.
 2. **Права:** ресурс належить воркспейсу користувача (`lead.workspaceId === workspace.id`), роль
    дозволяє дію. Ні — `{ status: "forbidden" }` (не `not_found` з подробицями).
-3. **Валідація на сервері:** розбір `FormData` окремою чистою функцією в `lib/<форма>-form.ts`
-   (як `parseLeadForm` у `lib/lead-form.ts`): `trim`, обмеження довжини, перелічувані значення —
+3. **Валідація на сервері:** розбір `FormData` окремою чистою функцією в `lib/<форма>-form.ts`:
+   `trim`, обмеження довжини, перелічувані значення —
    лише зі списку; `id` з прихованого поля — теж вхідні дані, перевіряємо як усе інше. `required`
    і `maxLength` в HTML — лише підказка користувачу.
 4. Лише потім — запис у базу.
@@ -123,11 +123,8 @@ const values = "values" in state ? state.values : {};
 - Службові дані (`leadId`) — прихованим полем, як у прикладі; на сервері це звичайний вхід,
   права перевіряємо (крок 1.2). Документація Next.js 16 (`02-guides/forms.md`, «Passing
   additional arguments») допускає і приховане поле, і `.bind()`. Команда бере приховане поле:
-  у LeadDesk (Next.js 16.3.5, React 19.2.8) варіант
-  `useActionState(addNote.bind(null, leadId), initial)` у Client Component без JavaScript
-  записав нотатку, але не повернув сторінку (POST без відповіді 20 с). Відтворення:
-  `npm run build && npm start`, форму надіслати звичайним multipart POST з полями
-  `$ACTION_*` із серверного HTML.
+  `.bind()` у Client Component з `useActionState` без JavaScript у нас зависав (відтворення —
+  розділ «У LeadDesk» нижче).
 
 ## Чекліст
 
@@ -172,3 +169,16 @@ const values = "values" in state ? state.values : {};
 - [ ] Журнал сервера (`npm run build && npm start`) після успішної й помилкової відправки — лише
       id і коди, без введених даних.
 - [ ] Відповідь приходить одразу: DevTools → Network → POST не чекає на лист / n8n / аудит.
+
+## У LeadDesk
+
+Патерн вище — для будь-якого проєкту агенції. У LeadDesk він уже має свої назви:
+
+- Сесія в дії — `getSessionUser()` з `lib/data.ts` (повертає `null`); `getCurrentUser()` — лише
+  для сторінок, перенаправляє на `/login`.
+- Права на лід — `authorizeLead()` в `app/actions.ts` (сесія → воркспейс → лід).
+- Розбір форм — `lib/lead-form.ts`, `lib/note-form.ts`, `lib/quote-form.ts`.
+- `.bind()` без JS (Next.js 16.3.5, React 19.2.8): `useActionState(addNote.bind(null, leadId), …)`
+  записав нотатку, але не повернув сторінку (POST без відповіді 20 с). Відтворення:
+  `npm run build && npm start`, форму надіслати звичайним multipart POST з полями `$ACTION_*` із
+  серверного HTML.
