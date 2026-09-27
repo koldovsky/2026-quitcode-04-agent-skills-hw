@@ -159,6 +159,8 @@ const values = "values" in state ? state.values : {};
   для сторінок, перенаправляє на `/login`.
 - Права на лід — `authorizeLead()` в `app/actions.ts` (сесія → воркспейс → лід).
 - Розбір форм — `lib/lead-form.ts`, `lib/note-form.ts`, `lib/quote-form.ts`.
+- Антиспам публічних форм — honeypot: `components/honeypot-field.tsx` у формі, `isHoneypotFilled()`
+  з `lib/honeypot.ts` у дії після валідації й до запису (`submitLead`, `requestQuote`).
 - `.bind()` без JS (Next.js 16.3.5, React 19.2.8): `useActionState(addNote.bind(null, leadId), …)`
   записав нотатку, але не повернув сторінку (POST без відповіді 20 с). Відтворення:
   `npm run build && npm start`, форму надіслати звичайним multipart POST з полями `$ACTION_*` із
@@ -174,7 +176,10 @@ const values = "values" in state ? state.values : {};
 - [ ] Відправка з вимкненим JS (DevTools → Ctrl+Shift+P → «Disable JavaScript» → **F5**) доходить
       до сервера й показує результат. Без перезавантаження форма лишається гідрованою
       (`action="javascript:throw …"`) і нічого не відправляє.
-- [ ] Дія без сесії: у DevTools → Application → Cookies **змініть** значення cookie сесії на
+- [ ] Публічна форма (без сесії): заповніть у DevTools приховане антиспам-поле й надішліть — запису
+      немає (у журналі без `db:<запис>`), `role="alert"` із загальним повідомленням, введене лишилось;
+      з порожнім полем — звичайний успіх.
+- [ ] Дія з сесією без сесії: у DevTools → Application → Cookies **змініть** значення cookie сесії на
       вигадане й повторіть відправку — форма показує `unauthorized`, введене лишилось, у журналі
       немає запису (`db:<запис>`). Якщо cookie **видалити**, `proxy.ts` перенаправить POST на
       `/login`, і в dev буде «An unexpected response was received from the server» — дію це не
