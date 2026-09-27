@@ -31,6 +31,8 @@ export async function triggerWorkflow(
   const appBaseUrl = process.env.APP_BASE_URL;
   // Without APP_BASE_URL the callback would go to "undefined/api/n8n/…" and never arrive.
   if (!baseUrl || !token || (options.callbackPath && !appBaseUrl)) throw new Error("n8n is not configured");
+  // Rejected before any request: the token must not travel over plain http to another host.
+  if (!isSafeWebhookBase(baseUrl)) throw new Error("N8N_WEBHOOK_BASE_URL must be https (http only for localhost)");
 
   const correlationId = options.correlationId ?? randomUUID();
   const payload = JSON.stringify({
@@ -73,6 +75,19 @@ export async function triggerWorkflow(
     const retryable = typeof status !== "number" || status >= 500; // network, timeout, 5xx, 524
     if (!retryable || attempt > RETRY_DELAYS_MS.length) return { ok: false, status, attempts: attempt };
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt - 1]));
+  }
+}
+
+// x-n8n-token goes in a header: https for n8n anywhere else, plain http only on this machine
+// (the local mock).
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+function isSafeWebhookBase(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname));
+  } catch {
+    return false;
   }
 }
 

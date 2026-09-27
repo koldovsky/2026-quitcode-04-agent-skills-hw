@@ -12,6 +12,10 @@ Next.js вбудовує в клієнтський бандл лише змін�
 | `N8N_CALLBACK_SECRET` | ключ HMAC колбеків; те саме, що Hmac Secret у Crypto credential в n8n | `change-me-callback-secret` |
 | `APP_BASE_URL` | адреса застосунку, яку бачить n8n (для `callbackUrl`) | `http://127.0.0.1:3000` |
 
+- `N8N_WEBHOOK_BASE_URL` поза цією машиною — лише `https://`: токен іде в заголовку.
+  `http://` — тільки `127.0.0.1` / `localhost` (мок). `lib/n8n/client.ts` відмовляє до запиту.
+  n8n у приватній мережі без TLS (наприклад `http://n8n:5678` у Docker Compose) — рішення людини,
+  не винятку в коді (правило зупинки).
 - Справжні значення — лише `.env.local` (у `.gitignore`) і налаштування хостингу.
 - Секрет генерує людина: `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
 - Секрет не йде в query string, Client Component, журнал чи відповідь.
