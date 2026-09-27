@@ -1,9 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import ExcelJS from "exceljs";
+import dynamic from "next/dynamic";
 import type { SourceCount } from "@/lib/types";
-import { SourcesChart } from "./sources-chart";
+
+// exceljs and recharts are large and only needed after a click, so they load on demand instead of
+// with the dashboard; hover/focus starts the download early so the click itself rarely waits.
+const SourcesChart = dynamic(() => import("./sources-chart").then((m) => m.SourcesChart), {
+  ssr: false,
+  loading: () => <div className="h-64 w-full" />,
+});
+
+const preloadExcel = () => void import("exceljs");
+const preloadChart = () => void import("./sources-chart");
 
 type ExportRow = {
   id: string;
@@ -23,7 +32,10 @@ export function LeadsToolbar({ sources }: { sources: SourceCount[] }) {
   async function handleExport() {
     setExporting(true);
     try {
-      const response = await fetch("/api/leads");
+      const [response, { default: ExcelJS }] = await Promise.all([
+        fetch("/api/leads"),
+        import("exceljs"),
+      ]);
       const { leads } = (await response.json()) as { leads: ExportRow[] };
 
       const workbook = new ExcelJS.Workbook();
@@ -62,6 +74,8 @@ export function LeadsToolbar({ sources }: { sources: SourceCount[] }) {
         <button
           type="button"
           onClick={handleExport}
+          onMouseEnter={preloadExcel}
+          onFocus={preloadExcel}
           disabled={exporting}
           className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
         >
@@ -70,6 +84,8 @@ export function LeadsToolbar({ sources }: { sources: SourceCount[] }) {
         <button
           type="button"
           onClick={() => setShowChart(!showChart)}
+          onMouseEnter={preloadChart}
+          onFocus={preloadChart}
           className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
         >
           {showChart ? "Сховати графік" : "Показати графік джерел"}

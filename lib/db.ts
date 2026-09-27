@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   Lead,
@@ -5,6 +6,8 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
   SourceCount,
   User,
   Workspace,
@@ -19,6 +22,7 @@ type Store = {
   users: User[];
   leads: Lead[];
   audit: AuditEntry[];
+  quotes: Quote[];
   nextLeadNumber: number;
 };
 
@@ -31,8 +35,13 @@ const LATENCY_MS = {
   getLead: 80,
   insertLead: 120,
   updateLeadStatus: 80,
+  appendLeadNote: 80,
   deleteLead: 80,
   insertAuditEntry: 250,
+  insertQuote: 120,
+  getQuote: 80,
+  markQuoteTriggered: 80,
+  completeQuote: 80,
   listUsers: 50,
   createSession: 50,
 } as const;
@@ -261,12 +270,14 @@ function createStore(): Store {
     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
   ];
   const leads = seedLeads(200, workspaces, users);
-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
+  return { workspaces, users, leads, audit: [], quotes: [], nextLeadNumber: leads.length + 1 };
 }
 
 // One store per server process (also survives module reloads in `next dev`).
 const globalForStore = globalThis as unknown as { leadDeskStore?: Store };
 const store = (globalForStore.leadDeskStore ??= createStore());
+// A store created by `next dev` before quotes existed survives reloads without them.
+store.quotes ??= [];
 
 const SESSION_PREFIX = "demo-";
 
@@ -369,6 +380,16 @@ export const db = {
     });
   },
 
+  appendLeadNote(id: string, note: string) {
+    return query("appendLeadNote", () => {
+      const lead = store.leads.find((l) => l.id === id);
+      if (!lead) return false;
+      lead.internalNotes = lead.internalNotes ? `${lead.internalNotes}\n\n${note}` : note;
+      lead.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
   deleteLead(id: string) {
     return query("deleteLead", () => {
       const index = store.leads.findIndex((l) => l.id === id);
@@ -381,6 +402,65 @@ export const db = {
   insertAuditEntry(entry: AuditEntry) {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
+    });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        // /quotes/[id] is public, so the id must not be guessable.
+        id: `q_${randomUUID()}`,
+        status: "queued",
+        jobId: null,
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      store.quotes.push(quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  // queued → processing | failed. Only a queued quote changes: a fast callback may already have
+  // set the final state (UPDATE … WHERE status = 'queued').
+  markQuoteTriggered(id: string, update: { status: "processing" | "failed"; jobId: string | null }) {
+    return query("markQuoteTriggered", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      if (!quote || quote.status !== "queued") return false;
+      quote.status = update.status;
+      quote.jobId = update.jobId ?? quote.jobId;
+      quote.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
+  // The workflow's result, found by the idempotency-key the app sent. A ready quote stays ready: a
+  // later callback is acknowledged but changes nothing. A failed one may still become ready (the
+  // trigger timed out, yet n8n got the request and finished). false = no such quote.
+  completeQuote(
+    idempotencyKey: string,
+    result: { status: "ready" | "failed"; jobId: string; documentUrl: string | null; errorCode: string | null },
+  ) {
+    return query("completeQuote", () => {
+      const quote = store.quotes.find((q) => q.idempotencyKey === idempotencyKey);
+      if (!quote) return false;
+      if (quote.status === "ready") return true;
+      quote.status = result.status;
+      quote.jobId = result.jobId;
+      quote.documentUrl = result.documentUrl;
+      quote.errorCode = result.errorCode;
+      quote.updatedAt = new Date().toISOString();
+      return true;
     });
   },
 };

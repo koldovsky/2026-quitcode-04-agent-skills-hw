@@ -36,3 +36,15 @@ export async function getSourceBreakdown(workspaceId: string) {
 export async function getLead(id: string) {
   return db.getLead(id);
 }
+
+// Server Actions are public POST endpoints: every mutation re-checks the session and that the lead
+// belongs to the caller's workspace, regardless of what proxy.ts or the page already checked.
+export async function requireLeadAccess(id: string) {
+  const user = await getCurrentUser();
+  const [workspace, lead] = await Promise.all([
+    getWorkspace({ slug: user.workspaceSlug }),
+    db.getLead(id),
+  ]);
+  if (!lead || lead.workspaceId !== workspace.id) throw new Error("Forbidden");
+  return lead;
+}

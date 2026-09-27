@@ -47,6 +47,10 @@ export type Lead = {
   userAgent: string;
   rawPayload: Record<string, unknown>;
   internalNotes: string;
+  // Leads from the public form: the keys of their lead-created event to n8n, created once and
+  // reused on every retry.
+  idempotencyKey?: string;
+  correlationId?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -98,3 +102,27 @@ export type AuditEntry = {
   leadId: string;
   at: string;
 };
+
+export const QUOTE_STATUSES = ["queued", "processing", "ready", "failed"] as const;
+
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
+export type Quote = {
+  id: string;
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  // n8n contract (skill integrating-n8n-webhooks): both keys are created once, when the request is
+  // saved, and reused on every retry. The callback finds the quote by idempotencyKey.
+  idempotencyKey: string;
+  correlationId: string;
+  jobId: string | null;
+  documentUrl: string | null;
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Pick<Quote, "company" | "email" | "description" | "budget" | "idempotencyKey" | "correlationId">;
