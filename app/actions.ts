@@ -2,10 +2,12 @@
 
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, getWorkspace } from "@/lib/data";
 import { logAudit } from "@/lib/audit";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
+import { parseNoteForm, type NoteFormState } from "@/lib/note-form";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
@@ -69,10 +71,38 @@ export async function submitLead(
 // Server Actions are public POST endpoints: proxy.ts only guards page routes and
 // only checks that a cookie exists, so every action verifies the session and
 // that the lead belongs to the caller's workspace.
-async function requireOwnLead(id: string) {
+async function isOwnLead(id: string) {
   const user = await getCurrentUser();
   const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), db.getLead(id)]);
-  if (!lead || lead.workspaceId !== workspace.id) throw new Error("Lead not found");
+  return lead !== null && lead.workspaceId === workspace.id;
+}
+
+async function requireOwnLead(id: string) {
+  if (!(await isOwnLead(id))) throw new Error("Lead not found");
+}
+
+export async function addLeadNote(
+  leadId: string,
+  _prevState: NoteFormState,
+  formData: FormData,
+): Promise<NoteFormState> {
+  if (typeof leadId !== "string" || !(await isOwnLead(leadId))) {
+    return { status: "error", message: "Лід не знайдено" };
+  }
+
+  const parsed = parseNoteForm(formData);
+  if (!parsed.ok) {
+    return { status: "invalid", errors: parsed.errors, values: parsed.values };
+  }
+
+  if (!(await db.appendInternalNote(leadId, parsed.data.text))) {
+    return { status: "error", message: "Лід не знайдено" };
+  }
+
+  after(() => logAudit("lead.note_added", leadId));
+
+  revalidatePath(`/dashboard/leads/${leadId}`);
+  return { status: "ok" };
 }
 
 export async function updateLeadStatus(id: string, status: LeadStatus) {
