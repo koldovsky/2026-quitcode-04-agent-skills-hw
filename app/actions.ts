@@ -7,7 +7,7 @@ import { logAudit } from "@/lib/audit";
 import { getSessionUser } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
 import { parseNoteForm, type NoteField } from "@/lib/note-form";
-import type { LeadStatus } from "@/lib/types";
+import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -67,10 +67,33 @@ export async function submitLead(
   return { status: "ok" };
 }
 
-export async function updateLeadStatus(id: string, status: LeadStatus) {
-  await db.updateLeadStatus(id, status);
+export type LeadMutationResult = { status: "ok" | "unauthorized" | "forbidden" | "invalid" };
+
+// Server Actions are public POST endpoints: proxy.ts only checks that a session cookie exists,
+// so every action that changes a lead checks the session and the lead's workspace itself.
+async function authorizeLead(leadId: unknown) {
+  const user = await getSessionUser();
+  if (!user) return { status: "unauthorized" } as const;
+
+  const [workspace, lead] = await Promise.all([
+    db.getWorkspace(user.workspaceSlug),
+    typeof leadId === "string" ? db.getLead(leadId) : null,
+  ]);
+  if (!workspace || !lead || lead.workspaceId !== workspace.id) return { status: "forbidden" } as const;
+
+  return { status: "ok", lead } as const;
+}
+
+export async function updateLeadStatus(id: string, status: LeadStatus): Promise<LeadMutationResult> {
+  const auth = await authorizeLead(id);
+  if (auth.status !== "ok") return { status: auth.status };
+  // Arguments come from the client as-is: the type annotation is not a runtime check.
+  if (!(LEAD_STATUSES as readonly unknown[]).includes(status)) return { status: "invalid" };
+
+  await db.updateLeadStatus(auth.lead.id, status);
   revalidatePath("/dashboard");
-  revalidatePath(`/dashboard/leads/${id}`);
+  revalidatePath(`/dashboard/leads/${auth.lead.id}`);
+  return { status: "ok" };
 }
 
 export type NoteFormState =
@@ -87,20 +110,15 @@ export async function addLeadNote(
   _prevState: NoteFormState,
   formData: FormData,
 ): Promise<NoteFormState> {
-  const user = await getSessionUser();
-  if (!user) {
+  // leadId comes from a hidden field, so it is checked against the user's workspace like any input.
+  const auth = await authorizeLead(formData.get("leadId"));
+  if (auth.status === "unauthorized") {
     return { status: "unauthorized", message: "Сесія завершилась. Увійдіть знову." };
   }
-
-  // leadId comes from a hidden field, so it is checked against the user's workspace like any input.
-  const leadId = formData.get("leadId");
-  const [workspace, lead] = await Promise.all([
-    db.getWorkspace(user.workspaceSlug),
-    typeof leadId === "string" ? db.getLead(leadId) : null,
-  ]);
-  if (!workspace || !lead || lead.workspaceId !== workspace.id) {
+  if (auth.status === "forbidden") {
     return { status: "forbidden", message: "Немає доступу до цього ліда." };
   }
+  const { lead } = auth;
 
   const parsed = parseNoteForm(formData);
   if (!parsed.ok) {
@@ -117,7 +135,11 @@ export async function addLeadNote(
   return { status: "ok", message: "Нотатку додано." };
 }
 
-export async function deleteLead(id: string) {
-  await db.deleteLead(id);
+export async function deleteLead(id: string): Promise<LeadMutationResult> {
+  const auth = await authorizeLead(id);
+  if (auth.status !== "ok") return { status: auth.status };
+
+  await db.deleteLead(auth.lead.id);
   revalidatePath("/dashboard");
+  return { status: "ok" };
 }
