@@ -9,7 +9,9 @@ type SortKey = "createdAt" | "fullName" | "company";
 
 const dateFormat = new Intl.DateTimeFormat("uk-UA", { dateStyle: "medium" });
 
-export function LeadsTable({ leads }: { leads: Lead[] }) {
+export type LeadRow = Pick<Lead, "id" | "fullName" | "company" | "status" | "createdAt">;
+
+export function LeadsTable({ leads }: { leads: LeadRow[] }) {
   const router = useRouter();
   const [sortKey, setSortKey] = useState<SortKey>("createdAt");
   const [descending, setDescending] = useState(true);
