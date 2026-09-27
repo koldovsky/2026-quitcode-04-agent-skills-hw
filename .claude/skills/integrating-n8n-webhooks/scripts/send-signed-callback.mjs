@@ -20,7 +20,8 @@ Environment:
 Cases and expected codes: valid 202 · same callback again 200 {"duplicate":true} ·
 unknown event in the path 404 · "constructor" as the event 404 · wrong content-type 415 ·
 wrong signature 401 · timestamp 10 min old 401 · body reformatted after signing 401 ·
-new idempotency-key for the same body 400 · signed body of the wrong shape 400 · body > 64 KB 413.
+new idempotency-key for the same body 400 · signed body of the wrong shape 400 · body > 64 KB 413 ·
+body > 64 KB sent chunked without content-length 413 (the cap must work while reading).
 Note: the "valid" case really saves a result for a random jobId in your app.
 
 Exit code: 0 — every case as expected, 1 — at least one mismatch, 2 — usage error.`;
@@ -39,6 +40,11 @@ const opt = (name) => {
   if (!value || value.startsWith("-")) fail(`${name} needs a value`);
   return value;
 };
+// Only --url <v> and --event <v>: a typo such as --evnt is an error, not the default event.
+for (let i = 0; i < args.length; i += 2) {
+  if (args[i] !== "--url" && args[i] !== "--event") fail(`unknown argument: ${args[i]}`);
+  opt(args[i]);
+}
 const url = opt("--url");
 const secret = process.env.N8N_CALLBACK_SECRET;
 if (!url || !/^https?:\/\//.test(url)) fail("--url <callback url> is required");
@@ -67,10 +73,11 @@ const sibling = (segment) => {
 };
 
 let mismatches = 0;
-async function send(name, expected, { to = url, raw = body, ts = now(), signature, key = `${jobId}:${event}`, contentType = "application/json" } = {}) {
+async function send(name, expected, { to = url, raw = body, ts = now(), signature, key = `${jobId}:${event}`, contentType = "application/json", chunked = false } = {}) {
   const res = await fetch(to, {
     method: "POST",
-    body: raw,
+    // chunked: a stream body goes without content-length, so only a cap while reading can stop it
+    ...(chunked ? { body: new Blob([raw]).stream(), duplex: "half" } : { body: raw }),
     headers: {
       "content-type": contentType,
       "x-n8n-timestamp": String(ts),
@@ -102,6 +109,7 @@ await send("new key for the same signed body", 400, { key: `${randomUUID()}:${ev
   await send("signed body of the wrong shape", 400, { raw: wrongShape, key: `${otherJob}:${event}` });
 }
 await send("body > 64 KB", 413, { raw: body + " ".repeat(70_000) });
+await send("body > 64 KB, chunked (no length)", 413, { raw: body + " ".repeat(70_000), chunked: true });
 console.log(mismatches ? `\n${mismatches} case(s) differ` : "\nall cases as expected");
 // exitCode, not process.exit(): exiting while fetch keep-alive sockets are open can abort Node on
 // Windows (libuv "Assertion failed … async.c") and turn the result into exit code 127.
