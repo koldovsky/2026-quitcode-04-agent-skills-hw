@@ -103,7 +103,7 @@
 - **Правила зупинки — перелік:** тестовий URL у коді чи `.env.example`; секрет/токен у Client Component, `NEXT_PUBLIC_*`, query string, відповіді дії чи журналі; синхронна відповідь для довгого воркфлоу або воркфлоу невідомої тривалості; невідомо, які поля потрібні в `data` (спокуса слати весь запис чи персональні дані); зміна самого воркфлоу n8n, шляху, режиму чи credential; колбек без підпису; `runtime = "edge"` або інший рантайм без `node:crypto`.
 - **Шаблони перевірено до коміту** (у тимчасовій копії проєкту поза репозиторієм, потім видалено): `next build` без помилок; `check-contract.mjs` на шаблонних файлах — жодного FAIL (FAIL лише у старому `app/actions.ts`); повний цикл з моком `--mode respond-202 --delay 3000`: `POST /webhook/quote-request -> 202 auth=ok idempotency=new`, через 3 с `callback … -> 202`, статус `processing` → `ready`; `send-signed-callback.mjs` — 13/13 PASS. Дві правки скриптів після цієї перевірки: C14 давав хибний FAIL на дозволеному `bytes=${Buffer.byteLength(raw)}` і `${body.event}`; `send-signed-callback.mjs` на Node 23 / Windows падав з `UV_HANDLE_CLOSING` (код 127) через `process.exit()` після `fetch` — замінено на `process.exitCode`.
 - **SHA коміту зі скілом (BASE для Task D):** `2f6e85f`
-- Що скіл змінив у собі після прогонів (коміти й чому): _допишемо після Task D_
+- Що скіл змінив у собі після прогонів (коміти й чому): `bbbf5f1` — сліпа пляма `check-contract.mjs`, знайдена на коді прогону A (нестандартні `N8N_QUOTE_WEBHOOK_URL` і `app/api/quotes/[id]/callback` не впізнавались: 2 FAIL замість 10); `515f48b` — 2 попередження ESLint у скрипті (помітив агент B); `5a77b97` — чекліст `SKILL.md` 0.1.1: наявні виклики n8n привести до контракту або явно винести в окрему задачу, 0 FAIL на всьому проєкті. Деталі — `docs/ab-validation.md`, «Що змінилось у скілі».
 
 **`check-contract.mjs` на коді `main`** (`git archive main` → `../leaddesk-main`, `--root ../leaddesk-main`):
 
@@ -186,10 +186,45 @@ PASS  C12  Callback uses idempotency-key and checks it against jobId from the si
 **`check-contract.mjs` на фінальному коді** (після перенесення прогону B — 0 FAIL):
 
 ```
-_після Task D_
+check-contract · root: . (ws04 branch) · 15 checks
+PASS  C1   No test webhook URL (/webhook-test/) in code or .env.example
+PASS  C2   No NEXT_PUBLIC_ prefix on N8N_* variables
+PASS  C3   Requests to n8n only from lib/n8n/client.ts
+PASS  C4   lib/n8n/client.ts starts with import "server-only"
+PASS  C5   Every fetch to n8n has signal: AbortSignal.timeout(...)
+PASS  C6   Requests send x-n8n-token, idempotency-key and x-correlation-id
+PASS  C7   Request body is the envelope { version, event, data }
+PASS  C8   Server Actions do not await n8n: calls to n8n run inside after()
+PASS  C9   Callback route reads the raw body and parses JSON only after the signature check
+PASS  C10  Callback signature: HMAC-SHA256, length check + timingSafeEqual, no === on signatures
+PASS  C11  Callback checks x-n8n-timestamp within a 300 s window
+PASS  C12  Callback uses idempotency-key and checks it against jobId from the signed body
+PASS  C13  No runtime = "edge"
+PASS  C14  No request bodies or personal data in logs of n8n / Server Action code
+PASS  C15  .env.example has the contract variables
+
+0 FAIL, 15 PASS
+exit=0
 ```
 
-**Додатково: матриця колбеків** (`send-signed-callback.mjs`) — на шаблонному роуті до коміту — 13/13 PASS; на фінальному коді — _після Task D_.
+**Додатково: матриця колбеків** (`send-signed-callback.mjs`) — на шаблонному роуті до коміту — 13/13 PASS; на фінальному коді (гілка, `npm start` + мок):
+
+```
+send-signed-callback · http://127.0.0.1:3000/api/n8n/quote-request · event quote-request.completed · 10 cases
+PASS  unknown event path                       expected 404, got 404
+PASS  wrong content-type                       expected 415, got 415
+PASS  body over 64 KB                          expected 413, got 413
+PASS  timestamp 10 min old                     expected 401, got 401
+PASS  timestamp 10 min ahead                   expected 401, got 401
+PASS  wrong signature                          expected 401, got 401
+PASS  signature without sha256= prefix         expected 401, got 401
+PASS  body reformatted after signing           expected 401, got 401
+PASS  valid signature, key != jobId:event      expected 400, got 400
+PASS  valid signature, event of another path   expected 400, got 400
+
+0 FAIL, 10 PASS
+exit=0
+```
 
 ## Task E3 (бонус) — ті самі скіли в Cursor
 
