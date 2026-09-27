@@ -4,7 +4,7 @@
 > репозиторієм (`../review-agent-skills`); нічого з них не виконувалось, тека не відкривалась як
 > проєкт в агенті.
 
-**Дата, інструмент, ОС:** 27.09.2026 · Claude Code (розширення VS Code) · Windows 11 + Git Bash
+**Дата, інструмент, ОС:** 27.09.2026 · Claude Code 2.1.283 (розширення VS Code) · Windows 11 + Git Bash
 
 ## Що рев'юємо
 
@@ -50,6 +50,15 @@
 
 ## 3. Аудити
 
+> **Хронологія (чесно).** Розділи 1, 2, 4, 5 (перші три поради) і вердикт закомічено до
+> встановлення — `7b49586` (14:39), встановлення — `8bc9f78` (14:49). Аудити нижче я переглянув
+> **до** встановлення: на skills.sh і в блоці «Security Risk Assessments» того самого запуску
+> `npx skills@1.7.0 add …` — до відповіді «Yes» на «Proceed with installation?». Але в документ
+> вніс їх уже після встановлення, разом з його результатом (розділ 6), — комітом `d6de971`: у
+> `7b49586` цей розділ лишився порожнім шаблоном. Так само внесено пізніше рядок `Found 9 skills`
+> (розділ 1) і кількість встановлень (розділ 4). Аудити вердикту не змінили: основа рішення —
+> власна перевірка файлів тега (розділ 2), а аудит прив'язаний не до нашого тега (див. нижче).
+
 | Аудит | skills.sh | CLI («Security Risk Assessments») | Дата аналізу |
 |---|---|---|---|
 | Gen (Agent Trust Hub) | Pass | Safe | Sep 14, 2026, 10:49 PM |
@@ -88,12 +97,13 @@
 | `async-parallel` | незалежні запити — через `Promise.all()` | `01-app/01-getting-started/06-fetching-data.md`, «Parallel data fetching»: layout і page рендеряться паралельно, але всередині компонента `await` один за одним — послідовні; рекомендовано `Promise.all` | діє → застосовуємо в `app/dashboard/page.tsx` |
 | `server-serialization` | передавати в Client Component лише поля, які він використовує | `05-server-and-client-components.md`: props клієнтських компонентів серіалізуються в RSC Payload; `02-guides/data-security.md`: повертати «safe, minimal DTO» | діє → застосовуємо до `LeadsTable` (зараз отримує весь `Lead` з `rawPayload`, `ipAddress`, `internalNotes`) |
 | `bundle-barrel-imports` | імпортувати напряму, не з barrel-файлів (серед прикладів — `lodash`) | `03-api-reference/05-config/01-next-config-js/optimizePackageImports.md`: `recharts` і `lodash-es` Next.js 16 оптимізує **автоматично**; CJS `lodash` у цьому списку немає, але `node_modules/next/dist/server/config.js:1117` за замовчуванням додає `modularizeImports: { lodash: { transform: "lodash/{{member}}" } }` | у 16.3.5 порада зайва і для `recharts`, і для `lodash` — не застосовуємо (спершу вважали, що для `lodash` актуальна; рев'ю зі скілом показало `modularizeImports`, перевірили в `config.js`) |
-| `server-cache-react` | `React.cache()` для дедуплікації в межах запиту | `02-guides/data-security.md`: приклад DAL з `cache` з `react` | діє, але з пасткою: `cache()` порівнює аргументи через `Object.is`, тож `getWorkspace({ slug })` з inline-об'єктом у `lib/data.ts:18` кешу не дає (у журналі `db:getWorkspace` ×3 на запит). Скіл про це попереджає; у цій домашці не виправляли |
-| `rendering-hydration-suppress-warning` | глушити очікувані розбіжності гідрації через `suppressHydrationWarning` | для дат у Client Component розбіжність виникає через різний часовий пояс сервера й браузера | не застосовуємо: краще прибрати причину (`timeZone` у `Intl.DateTimeFormat` або форматувати на сервері), ніж глушити попередження |
+| `server-cache-react` | `React.cache()` для дедуплікації в межах запиту | `02-guides/data-security.md`: приклад DAL з `cache` з `react` | діє, але з пасткою: `cache()` порівнює аргументи через `Object.is`, тож `getWorkspace({ slug })` з inline-об'єктом у `lib/data.ts:20` кешу не дає (у журналі `db:getWorkspace` ×3 на запит). Скіл про це попереджає; у цій домашці не виправляли |
+| `rendering-hydration-suppress-warning` | глушити очікувані розбіжності гідрації через `suppressHydrationWarning` | `02-guides/preventing-flash-before-hydration.md:57-113` («Fixing it with an inline script», «Understanding `suppressHydrationWarning`»: «The DOM wins»): атрибут для дат — легітимний, але **лише разом з inline-скриптом**, який ще до гідрації ставить у DOM правильне значення; без скрипта React просто лишає серверний текст | не застосовуємо: у `LeadsTable` такого скрипта немає, тож атрибут сховав би неправильну дату. Прибираємо причину — `timeZone` у `Intl.DateTimeFormat` або форматування на сервері |
+| `server-auth-actions` | автентифікація й авторизація — всередині кожної Server Action | `01-getting-started/07-mutating-data.md:32`: «Server Functions are reachable via direct POST requests… Always verify authentication and authorization inside every Server Function»; `02-guides/production-checklist.md:102`: «Do not rely on Proxy or layout or page level checks alone» | діє → застосовано до `updateLeadStatus` і `deleteLead` (`app/actions.ts`), які покладались лише на `proxy.ts` (той перевіряє тільки наявність cookie) |
 
 Рев'ю застосунку зі скілом (нова сесія Claude Code, файли не змінювались) дало 17 знахідок;
-застосовано `async-parallel` (`a829fe1`) і `server-serialization` (`08725c4`) — числа до/після в
-`docs/verification.md`.
+застосовано `async-parallel` (`a829fe1`), `server-serialization` (`08725c4`) і
+`server-auth-actions` (`8fe89ee`) — числа до/після й перевірки в `docs/verification.md`.
 
 ## 6. Закріплення версії й коміт
 
