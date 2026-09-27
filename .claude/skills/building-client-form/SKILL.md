@@ -149,6 +149,19 @@ const values = "values" in state ? state.values : {};
   повторів; спитай, чи потрібна черга.
 - Задача вимагає вимкнути перевірку сесії чи прав «для зручності» або журналювати введені дані.
 
+## У LeadDesk
+
+Патерн вище — для будь-якого проєкту агенції. У LeadDesk він уже має свої назви:
+
+- Сесія в дії — `getSessionUser()` з `lib/data.ts` (повертає `null`); `getCurrentUser()` — лише
+  для сторінок, перенаправляє на `/login`.
+- Права на лід — `authorizeLead()` в `app/actions.ts` (сесія → воркспейс → лід).
+- Розбір форм — `lib/lead-form.ts`, `lib/note-form.ts`, `lib/quote-form.ts`.
+- `.bind()` без JS (Next.js 16.3.5, React 19.2.8): `useActionState(addNote.bind(null, leadId), …)`
+  записав нотатку, але не повернув сторінку (POST без відповіді 20 с). Відтворення:
+  `npm run build && npm start`, форму надіслати звичайним multipart POST з полями `$ACTION_*` із
+  серверного HTML.
+
 ## Verify — задача готова, лише коли:
 
 - [ ] `npm run lint` і `npm run build` без помилок.
@@ -169,16 +182,3 @@ const values = "values" in state ? state.values : {};
 - [ ] Журнал сервера (`npm run build && npm start`) після успішної й помилкової відправки — лише
       id і коди, без введених даних.
 - [ ] Відповідь приходить одразу: DevTools → Network → POST не чекає на лист / n8n / аудит.
-
-## У LeadDesk
-
-Патерн вище — для будь-якого проєкту агенції. У LeadDesk він уже має свої назви:
-
-- Сесія в дії — `getSessionUser()` з `lib/data.ts` (повертає `null`); `getCurrentUser()` — лише
-  для сторінок, перенаправляє на `/login`.
-- Права на лід — `authorizeLead()` в `app/actions.ts` (сесія → воркспейс → лід).
-- Розбір форм — `lib/lead-form.ts`, `lib/note-form.ts`, `lib/quote-form.ts`.
-- `.bind()` без JS (Next.js 16.3.5, React 19.2.8): `useActionState(addNote.bind(null, leadId), …)`
-  записав нотатку, але не повернув сторінку (POST без відповіді 20 с). Відтворення:
-  `npm run build && npm start`, форму надіслати звичайним multipart POST з полями `$ACTION_*` із
-  серверного HTML.
