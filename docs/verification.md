@@ -40,7 +40,10 @@ vercel-react-best-practices… Файли не змінюй»: 17 знахідо
 продуктивності, третє (`server-auth-actions`) — безпека, з вимірюваним «було/стало» за журналом `db:*`.
 Після рев'ю домашки — ще два (`server-cache-react` — знахідка того самого рев'ю, яку спершу
 відклали; `server-after-nonblocking` — аудит у публічній формі), обидва з числами; «було» для них —
-коміт `91f6305`.
+коміт `91f6305`. Звірено з документацією 16.3.5: `React.cache` —
+`01-app/01-getting-started/06-fetching-data.md:546-604` (нижче); `after()` —
+`01-app/03-api-reference/04-functions/after.md:8` (дозволений у Server Functions) і `:64-66`
+(«useful for logging activity after a mutation» — саме випадок аудиту).
 
 **Як міряли:** продакшн-збірка (`npm run build`, потім `npx next start -p 3001` — на `:3000` працював
 `npm run dev`); cookie `leaddesk_session=demo-u_olena`; `curl` на `/dashboard`: 1 прогрів + 5 прогонів
