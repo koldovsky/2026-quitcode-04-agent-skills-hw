@@ -25,6 +25,9 @@ const N8N_LIB = /(^|\/)(src\/)?lib\/n8n\//;
 const ROUTE_FILE = /(^|\/)(src\/)?app\/(.+\/)?route\.(ts|tsx|js|jsx|mjs)$/;
 const N8N_ROUTE_DIR = /(^|\/)(src\/)?app\/api\/n8n\//;
 const N8N_HINT = /N8N_|\bn8n\b|\/webhook(-test)?\//i;
+// An N8N_* variable that holds a webhook address or token: N8N_WEBHOOK_BASE_URL, but also names
+// outside the contract such as N8N_QUOTE_WEBHOOK_URL (not N8N_CALLBACK_SECRET).
+const N8N_ENDPOINT_ENV = /\bN8N_[A-Z0-9_]*(?:WEBHOOK|URL|TOKEN)[A-Z0-9_]*/g;
 const LENGTH_COMPARE = /\.(?:byteLength|length)\s*(?:===|!==|==|!=)|(?:===|!==|==|!=)\s*[\w$.]+\.(?:byteLength|length)\b/;
 
 // ---------------------------------------------------------------------------
@@ -254,7 +257,7 @@ function checkOneClient(project) {
   let outbound = false;
   for (const file of project.files) {
     if (CLIENT_MODULE.test(file.rel)) continue;
-    for (const m of file.nocomment.matchAll(/\bN8N_WEBHOOK_[A-Z0-9_]*/g)) {
+    for (const m of file.nocomment.matchAll(N8N_ENDPOINT_ENV)) {
       outbound = true;
       findings.push(at(file, m.index, `${m[0]} is read outside lib/n8n/client.ts`));
     }
@@ -554,22 +557,48 @@ function isN8nFile(file) {
   return N8N_LIB.test(file.rel) || /x-n8n-|N8N_|\bcreateHmac\b|\btimingSafeEqual\b/.test(file.nocomment);
 }
 
-function n8nCallSites(project, file) {
+// Calls that reach n8n: a fetch to n8n, anything imported from an n8n module, and the functions of
+// a helper module that call n8n themselves (a Server Action → startQuote() in lib/quotes.ts → fetch).
+function n8nCallSites(project, file, depth = 0) {
   const sites = file.n8nFetches.map((call) => ({ offset: call.start, label: "fetch" }));
   for (const imp of file.imports) {
     if (imp.typeOnly) continue;
     const target = resolveImport(project, file, imp.spec);
-    if (!/n8n/i.test(imp.spec) && !(target && N8N_LIB.test(target.rel))) continue;
+    const n8nModule = /n8n/i.test(imp.spec) || Boolean(target && N8N_LIB.test(target.rel));
+    if (!n8nModule && !(target && depth < 3)) continue;
+    const reaching = n8nModule ? null : n8nFunctions(project, target, depth + 1);
+    if (reaching && !reaching.size) continue;
     for (const name of imp.names) {
+      if (reaching && !reaching.has(name)) continue;
       for (const call of findCalls(file, escapeRe(name))) sites.push({ offset: call.start, label: `${name}()` });
     }
     if (imp.namespace) {
-      for (const call of findCalls(file, `${escapeRe(imp.namespace)}\\.[\\w$]+`)) {
+      const members = reaching ? [...reaching].map(escapeRe).join("|") : "[\\w$]+";
+      for (const call of findCalls(file, `${escapeRe(imp.namespace)}\\.(?:${members})`)) {
         sites.push({ offset: call.start, label: `${imp.namespace}.…()` });
       }
     }
   }
   return sites;
+}
+
+// Exported top-level functions of a module whose body reaches n8n (see n8nCallSites).
+function n8nFunctions(project, file, depth) {
+  if (file.n8nFns) return file.n8nFns;
+  file.n8nFns = new Set(); // an import cycle resolves to "no n8n calls"
+  const sites = n8nCallSites(project, file, depth);
+  if (!sites.length) return file.n8nFns;
+  const { decls, depth: level } = topLevelDeclarations(file);
+  for (const site of sites) {
+    if (level[site.offset] === 0) continue;
+    let fn = null;
+    for (const decl of decls) {
+      if (decl.start < site.offset) fn = decl;
+      else break;
+    }
+    if (fn?.exported) file.n8nFns.add(fn.name);
+  }
+  return file.n8nFns;
 }
 
 // "body" of a fetch call: the envelope, a bare record, or something we can't resolve.
@@ -962,7 +991,7 @@ function loadProject(root) {
     file.directive = /^\s*(?:#![^\n]*\n\s*)?(['"])use (server|client)\1/.exec(file.nocomment)?.[2] ?? null;
     file.imports = parseImports(file);
     const fetches = findCalls(file, "(?:globalThis\\.|window\\.)?fetch|axios(?:\\.[\\w$]+)?");
-    const webhookEnv = /\bN8N_WEBHOOK_\w*/.test(file.nocomment);
+    const webhookEnv = new RegExp(N8N_ENDPOINT_ENV.source).test(file.nocomment);
     file.n8nFetches = CLIENT_MODULE.test(file.rel)
       ? fetches
       : fetches.filter((call) => webhookEnv || N8N_HINT.test(call.argsNc));
