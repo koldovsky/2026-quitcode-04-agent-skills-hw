@@ -45,7 +45,8 @@
 - **Базова лінія `check-contract.mjs` на копії до прогону** (увесь код, без `--changed-since`): однакова
   в A і B — 14 перевірок: 2 PASS · 7 FAIL · 5 SKIP. FAIL: C1, C3, C4, C6, C7, C8, C14 (усі —
   `app/actions.ts:61`/`:67` і `.env.example:6`); PASS: C2, C9; SKIP: C5, C10–C13 (немає `lib/n8n/` і
-  роуту колбеку) — це старий код, в оцінку прогонів він не йде
+  роуту колбеку) — це старий код, в оцінку прогонів він не йде. Скрипт після виправлення `c54ba70` дає на
+  BASE те саме
 
 ## A — без скіла
 
@@ -121,7 +122,8 @@
 - Змінні середовища, які додав агент: `N8N_QUOTE_WEBHOOK_URL` (у `.env.example` —
   `http://127.0.0.1:5678/webhook/quote-request`) і `APP_URL` (`http://localhost:3000`). Змінних для
   токена запиту й секрету колбеку немає; старий `N8N_WEBHOOK_URL` з `/webhook-test/` не чіпав
-- `check-contract.mjs --root ../leaddesk-ab-a --changed-since base` — лише код прогону, код виходу 1:
+- `check-contract.mjs --root ../leaddesk-ab-a --changed-since base` — лише код прогону, скрипт після
+  виправлення `c54ba70`, код виходу 1:
   ```
   check-contract (integrating-n8n-webhooks) · root …/leaddesk-ab-a · 39 source files · scope: changes since base (14 files)
 
@@ -133,10 +135,14 @@
           lib/quotes.ts:35  N8N_QUOTE_WEBHOOK_URL is not a contract variable (N8N_WEBHOOK_BASE_URL, N8N_WEBHOOK_TOKEN, N8N_CALLBACK_SECRET, APP_BASE_URL)
   FAIL  C4  one-client            n8n is called only from lib/n8n/client.ts; callback routes live under app/api/n8n/ (2 more in unchanged code)
           app/api/quotes/[id]/callback/route.ts  n8n callback route outside app/api/n8n/: use app/api/n8n/[event]/route.ts
+          lib/quotes.ts:35  N8N_QUOTE_WEBHOOK_URL is read outside lib/n8n/client.ts
+          lib/quotes.ts:41  request to n8n outside lib/n8n/client.ts: call triggerWorkflow() from the client module
   SKIP  C5  server-only           lib/n8n modules that hold config start with import "server-only" (no lib/n8n/ modules)
   PASS  C6  fetch-timeout         every fetch to n8n has signal: AbortSignal.timeout(…) (1 more in unchanged code)
-  PASS  C7  request-contract      requests send x-n8n-token (from env), idempotency-key, x-correlation-id and the {version, event, data} envelope (1 more in unchanged code)
-  PASS  C8  no-waiting            Server Actions start n8n only inside after() (1 more in unchanged code)
+  FAIL  C7  request-contract      requests send x-n8n-token (from env), idempotency-key, x-correlation-id and the {version, event, data} envelope (1 more in unchanged code)
+          lib/quotes.ts:41  request to n8n without the x-n8n-token, idempotency-key, x-correlation-id headers; the body is not the envelope {version, event, data}: send only what the workflow needs
+  FAIL  C8  no-waiting            Server Actions start n8n only inside after() (1 more in unchanged code)
+          app/quotes/actions.ts:32  Server Action requestQuote() waits for n8n (startQuoteWorkflow()): save the record, return, call n8n inside after()
   PASS  C9  no-edge               no runtime = "edge" (deprecated in Next.js 16; the contract needs node:crypto)
   FAIL  C10 callback-raw-body     callback route: 404/415 checks, raw text body, 413, no JSON parsing before the signature check
           app/api/quotes/[id]/callback/route.ts:6  the raw body is never read: const raw = await request.text(); content-type is never checked (415 for anything but application/json); no 404 for an unknown event; no 415 for a non-JSON content-type; no 413 for bodies over 64 KB
@@ -150,22 +156,20 @@
           app/api/quotes/[id]/callback/route.ts  idempotency-key is never read; no 200 {duplicate: true} for a repeated idempotency-key; idempotency-key is not matched to `${data.jobId}:${event}` of the signed body; the claimed key is never released when processing fails (n8n's retry would get "duplicate")
   PASS  C14 log-hygiene           n8n code logs no bodies, personal data, secrets, env or whole error objects (1 more in unchanged code)
 
-  14 checks: 7 PASS · 6 FAIL · 1 SKIP
+  14 checks: 5 PASS · 8 FAIL · 1 SKIP
   ```
-  **Поправка після ручної перевірки коду — 5 PASS · 8 FAIL · 1 SKIP.** Скрипт не розпізнав виклик n8n у
-  `lib/quotes.ts:41`: виклики він шукає за `N8N_WEBHOOK_*` у файлі або за підказкою в аргументах `fetch`,
-  а тут змінна — `N8N_QUOTE_WEBHOOK_URL`, і `fetch` отримує просто `webhookUrl`; Server Action імпортує
-  `@/lib/quotes`, а не модуль n8n. Тому цей виклик не потрапив у C4, C6, C7, C8, C14:
-  - C4 — насправді FAIL і для `lib/quotes.ts:41`: `fetch` до n8n поза `lib/n8n/client.ts`;
-  - C6 — PASS підтверджено: `AbortSignal.timeout(10_000)` є;
-  - C7 — насправді **FAIL**: немає `x-n8n-token`, `idempotency-key`, `x-correlation-id` і конверта
-    `{version, event, data}`; у тілі — email, компанія, опис і `callbackToken`;
-  - C8 — насправді **FAIL**: `await startQuoteWorkflow(...)` в `app/quotes/actions.ts:32`, не в `after()`;
-  - C14 — PASS підтверджено: у журналі лише `quoteId` і `status`/`reason`;
+  **Скрипт виправлено після цього прогону.** Перший запуск — версією з BASE (до `c54ba70`) — дав
+  **7 PASS · 6 FAIL · 1 SKIP**: C7 і C8 пройшли, а C4 не бачив `lib/quotes.ts`. Скрипт не розпізнав виклик
+  n8n у `lib/quotes.ts:41`: `fetch` вважався запитом до n8n лише за `N8N_WEBHOOK_*` у файлі або за
+  підказкою в аргументах, а тут змінна — `N8N_QUOTE_WEBHOOK_URL`, і `fetch` отримує просто `webhookUrl`;
+  до того ж Server Action імпортує `startQuoteWorkflow()` з `@/lib/quotes`, а виклики n8n шукались лише
+  серед імпортів з модулів n8n. Ручна перевірка коду дала 5 PASS · 8 FAIL · 1 SKIP; виправлення в скілі —
+  окремий коміт `c54ba70` (`N8N_*` з `WEBHOOK`/`URL`/`TOKEN` у назві + функції допоміжних модулів, що
+  доходять до n8n), і тепер скрипт дає рівно це. На B, робочій гілці, `main` і BASE результати нового
+  скрипта ті самі, що старого. Що ще видно з коду, поза скриптом:
+  - C6 і C14 — PASS справді: `AbortSignal.timeout(10_000)` є; у журналі лише `quoteId` і `status`/`reason`;
+  - C7 — у тілі запиту до n8n email, компанія, опис і `callbackToken`;
   - C11, зауваження до `lib/quotes.ts:28`, — спірне: порівнюються два SHA-256, довжини завжди однакові.
-
-  Прогалину в скрипті виправити окремим комітом скіла після прогону B і перезапустити перевірку на обох
-  копіях тією самою версією (запис — у висновку)
 - Змінні в `.env.local` копії A: `N8N_QUOTE_WEBHOOK_URL`, `APP_URL` (змінні агента) + `N8N_WEBHOOK_TOKEN`,
   `N8N_CALLBACK_SECRET` (змінні мока — відповідників серед змінних агента немає)
 - Журнал мока (форма → колбек → `/quotes/<id>`), 2026-09-27 22:05 UTC, `../ab-logs/a-mock.log`.
@@ -304,7 +308,8 @@
   `N8N_WEBHOOK_TOKEN` (`change-me-webhook-token`), `N8N_CALLBACK_SECRET` (`change-me-callback-secret`),
   `APP_BASE_URL` (`http://127.0.0.1:3000`) — рівно чотири змінні контракту. Старий `N8N_WEBHOOK_URL` з
   `/webhook-test/` не чіпав
-- `check-contract.mjs --root ../leaddesk-ab-b --changed-since base` — лише код прогону, код виходу 0:
+- `check-contract.mjs --root ../leaddesk-ab-b --changed-since base` — лише код прогону, код виходу 0
+  (той самий результат і до, і після виправлення скрипта `c54ba70`):
   ```
   check-contract (integrating-n8n-webhooks) · root …/leaddesk-ab-b · 42 source files · scope: changes since base (17 files)
 
@@ -325,9 +330,9 @@
 
   14 checks: 14 PASS · 0 FAIL · 0 SKIP
   ```
-  **Ручна перевірка підтверджує 14 PASS.** Прогалина скрипта з прогону A тут не діє: виклик — у
-  `lib/n8n/client.ts` (для клієнтського модуля скрипт бере всі `fetch`), змінні — `N8N_WEBHOOK_*`, а
-  Server Action імпортує `@/lib/n8n/client`. Код прочитано: `lib/n8n/client.ts`, `lib/n8n/callback.ts`,
+  **Ручна перевірка підтверджує 14 PASS.** Прогалина скрипта з прогону A (виправлена в `c54ba70`) тут не
+  діяла й до виправлення: виклик — у `lib/n8n/client.ts` (для клієнтського модуля скрипт бере всі `fetch`),
+  змінні — `N8N_WEBHOOK_*`, а Server Action імпортує `@/lib/n8n/client`. Код прочитано: `lib/n8n/client.ts`, `lib/n8n/callback.ts`,
   `lib/n8n/callback-keys.ts`, `app/api/n8n/[event]/route.ts`, `app/quotes/actions.ts`, `lib/quotes.ts`,
   `.env.example` — усе, що перевіряють C1–C14, у коді справді є
 - **Самоперевірка агента** з його сесії (мок і скрипти скіла, змінні з `.env.example`, застосунок на
@@ -386,7 +391,7 @@
 | Що дивимось | A — без скіла | B — зі скілом |
 |---|---|---|
 | Скіл викликано | — | так: `Skill` першою дією + 6 довідок і скрипти скіла |
-| `check-contract.mjs` на коді прогону (`--changed-since base` або без FAIL базової лінії): FAIL (id) | скрипт: 6 FAIL — C3, C4, C10, C11, C12, C13; після ручної поправки — 8 FAIL: + C7, C8 | 0 FAIL (14 PASS, підтверджено вручну) |
+| `check-contract.mjs` на коді прогону (`--changed-since base` або без FAIL базової лінії): FAIL (id) | 8 FAIL — C3, C4, C7, C8, C10, C11, C12, C13 (скрипт після `c54ba70`; до виправлення — 6, без C7 і C8) | 0 FAIL (14 PASS, підтверджено вручну; до і після `c54ba70`) |
 | URL вебхука: `/webhook/` чи `/webhook-test/` | `/webhook/quote-request` | `/webhook/quote-request` (`N8N_WEBHOOK_BASE_URL` + event) |
 | `auth=` / `idempotency=` у журналі мока | `403 auth=missing`; заголовків `idempotency-key`, `x-correlation-id` немає | `202 auth=ok idempotency=new` |
 | Колбек дійшов; код відповіді застосунку | ні — воркфлоу не запустився (403); форма — помилка, запис `failed` | так, з 1-ї спроби; `-> 202` (114 мс); сторінка — «Кошторис готовий» |
@@ -456,7 +461,8 @@
   14 checks: 14 PASS · 0 FAIL · 0 SKIP
   ```
   (Для порівняння: одразу після перенесення, на `4946c7f`, — 7 PASS · 7 FAIL, усі в старому `submitLead`
-  і `.env.example:6`; `--changed-since 04e8b58` — 14 PASS · 0 FAIL і тоді, і тепер.)
+  і `.env.example:6`; `--changed-since 04e8b58` — 14 PASS · 0 FAIL і тоді, і тепер. Вивід вище знято до
+  виправлення скрипта; скрипт після `c54ba70` на тому самому коді дає ті самі 14 PASS · 0 FAIL, код виходу 0.)
 - Сценарій «форма → колбек → `/quotes/<id>`» ще раз, уже на гілці: 2026-09-27 22:16 UTC, код доробок
   (до їхнього коміту, той самий, що в `c97f358` + `8a00f0b`). Порти 3000 і 5678 ще тримали процеси
   копії A, тож застосунок — `next start -p 3100`, мок — `tools/mock-n8n.mjs --port 5679 --mode
