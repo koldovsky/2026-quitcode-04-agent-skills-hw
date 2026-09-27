@@ -112,11 +112,17 @@ function stripComments(src) {
       continue;
     }
     if (c === "/" && n === "/") {
-      while (i < src.length && src[i] !== "\n") (out += " "), i++;
+      while (i < src.length && src[i] !== "\n") {
+        out += " ";
+        i++;
+      }
       continue;
     }
     if (c === "/" && n === "*") {
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) (out += src[i] === "\n" ? "\n" : " "), i++;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) {
+        out += src[i] === "\n" ? "\n" : " ";
+        i++;
+      }
       out += "  ";
       i += 2;
       continue;
