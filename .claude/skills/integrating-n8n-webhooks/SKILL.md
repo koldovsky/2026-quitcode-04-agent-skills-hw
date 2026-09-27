@@ -127,6 +127,6 @@ Ready-to-adapt code for the client module, the action and the callback route:
 - `references/code-templates.md` — `lib/n8n/client.ts`, the Server Action, `app/api/n8n/[event]/route.ts`, `.env.example`.
 - `references/n8n-setup.md` — the n8n side as text for the client (Webhook, Remove Duplicates, Crypto, HTTP Request).
 - `references/pitfalls.md` — contradictions between n8n docs, n8n's own code and third-party skills.
-- `scripts/check-contract.mjs` — static contract check (C1–C13), `--root`, `--changed-since`, `--help`; exit 1 on FAIL.
+- `scripts/check-contract.mjs` — static contract check (C1–C14), `--root`, `--changed-since`, `--help`; exit 1 on FAIL.
 - `scripts/send-signed-callback.mjs` — sends a matrix of signed/broken callbacks to a running route and compares status codes.
 - `scripts/mock-n8n.mjs` — offline n8n (Webhook, Respond to Webhook, Header Auth, signed callback); `--help`.

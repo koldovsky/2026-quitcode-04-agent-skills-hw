@@ -20,7 +20,7 @@ Options:
 Checks (each prints PASS or FAIL; FAIL lists file:line):
   C1   no test webhook URL (/webhook-test/) in code or .env.example
   C2   no NEXT_PUBLIC_N8N_* variables (n8n config stays server-only)
-  C3   n8n is called and N8N_WEBHOOK_* is read only inside lib/n8n/
+  C3   n8n is called and N8N_* (except N8N_CALLBACK_SECRET) is read only inside lib/n8n/
   C4   every lib/n8n/ module starts with import "server-only" (and exists if n8n is used)
   C5   every fetch to n8n has signal: AbortSignal.timeout(...)
   C6   callback route reads the raw body (req.text()); no req.json() / JSON.parse before the signature check
@@ -31,6 +31,7 @@ Checks (each prints PASS or FAIL; FAIL lists file:line):
   C11  requests to n8n send x-n8n-token, idempotency-key and x-correlation-id
   C12  Server Actions trigger n8n inside after(), not while the user waits
   C13  callback route deduplicates by the idempotency-key header
+  C14  N8N_CALLBACK_SECRET is used only in callback routes (never sent to n8n, rendered or logged)
 
 Skipped directories: node_modules, .next, .git, .claude, tools, docs, materials, .github, out, build, coverage.
 Exit code: 0 when there is no FAIL, 1 when there is at least one FAIL, 2 on usage errors.`;
@@ -144,7 +145,9 @@ function inScope(finding) {
 
 // ---------------------------------------------------------------- helpers
 
-const N8N_URL_HINT = /N8N_WEBHOOK|:5678|\/webhook(-test)?\//;
+// Any N8N_* variable except the callback secret (which only the callback route reads), the
+// default n8n port, or a webhook path. Covers ad-hoc names such as N8N_QUOTE_WEBHOOK_URL.
+const N8N_URL_HINT = /process\.env\.N8N_(?!CALLBACK_SECRET\b)\w+|:5678|\/webhook(-test)?\//;
 
 // Returns the text of a call starting at `openIndex` (the "(" after the callee), with balanced parens.
 function callText(text, openIndex) {
@@ -212,14 +215,14 @@ check("C1", "no test webhook URL (/webhook-test/) in code or .env.example", () =
 check("C2", "no NEXT_PUBLIC_N8N_* variables", () =>
   grepLines([...code, ...(envExample ? [envExample] : [])], /NEXT_PUBLIC_N8N/));
 
-check("C3", "n8n is called and N8N_WEBHOOK_* is read only inside lib/n8n/", () => {
+check("C3", "n8n is called and N8N_* (except N8N_CALLBACK_SECRET) is read only inside lib/n8n/", () => {
   const found = [];
   for (const f of code) {
     if (inN8nModule(f.rel)) continue;
     for (const { line } of n8nFetches(f)) found.push({ file: f.rel, line, text: `fetch to n8n outside lib/n8n/: ${f.lines[line - 1].trim()}` });
     f.lines.forEach((l, i) => {
-      if (!isComment(l) && /process\.env\.N8N_WEBHOOK/.test(l) && !found.some((x) => x.file === f.rel && x.line === i + 1)) {
-        found.push({ file: f.rel, line: i + 1, text: `N8N_WEBHOOK_* read outside lib/n8n/: ${l.trim()}` });
+      if (!isComment(l) && /process\.env\.N8N_(?!CALLBACK_SECRET\b)\w+/.test(l) && !found.some((x) => x.file === f.rel && x.line === i + 1)) {
+        found.push({ file: f.rel, line: i + 1, text: `N8N_* read outside lib/n8n/: ${l.trim()}` });
       }
     });
   }
@@ -356,6 +359,12 @@ check("C13", "callback route deduplicates by the idempotency-key header", () =>
     .filter(isCallbackRoute)
     .filter((f) => !/idempotency-key/i.test(f.text))
     .map((f) => ({ file: f.rel, line: 1, text: "callback route never reads idempotency-key" })));
+
+check("C14", "N8N_CALLBACK_SECRET is used only in callback routes", () =>
+  grepLines(code.filter((f) => !isCallbackRoute(f)), /N8N_CALLBACK_SECRET/).map((x) => ({
+    ...x,
+    text: `callback secret used outside the callback route: ${x.text}`,
+  })));
 
 // ---------------------------------------------------------------- report
 
