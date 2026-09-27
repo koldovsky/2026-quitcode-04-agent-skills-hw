@@ -22,9 +22,9 @@ Options:
 
 Cases: main-like code (C1 C3 C5 C6 C11 C13 FAIL), deliberately bad code (all 13 FAIL, the secret
 value is not printed), the templates from references/code-templates.md (LF, CRLF, src/ layout:
-0 FAIL), C5 with a timeout elsewhere in the file (FAIL) or in a variable (PASS), --changed-since
-(only the new file's FAILs; also with Cyrillic file names; needs git), CLI exit codes (--help,
-unknown option, missing --root, unknown ref).
+0 FAIL), C5 with a timeout elsewhere in the file or on another name (FAIL) or in a variable
+(PASS), --changed-since (only the new file's FAILs; also with Cyrillic names and spaces in names;
+needs git), CLI exit codes (--help, unknown option, missing --root, unknown ref).
 
 Exit code: 0 — every case as expected, 1 — at least one case differs.
 `;
@@ -154,6 +154,40 @@ export function pong() {
   ".env.example": GOOD_ENV,
 };
 
+// C5: a typed declaration of the same name without a timeout, next to a timeout for another name.
+const TIMEOUT_TYPED_NAME = {
+  "lib/n8n/client.ts": `import "server-only";
+
+let signal: AbortSignal | undefined;
+const other = AbortSignal.timeout(10_000);
+
+export function ping() {
+  void other;
+  return fetch(\`\${process.env.N8N_WEBHOOK_BASE_URL}/ping\`, { method: "POST", headers: ${HEADERS_OK}, signal });
+}
+`,
+  ".env.example": GOOD_ENV,
+};
+
+// --changed-since with spaces in file names: git ends such "+++ " lines with a TAB, and quotes the
+// name if it is also non-ASCII ("+++ \\"b/lib/n8n/\\320… \\320…\\"<TAB>").
+const SPACES_BASE = {
+  ...MAIN_LIKE,
+  "lib/n8n/with space.ts": `import "server-only";\n\nexport const version = 1;\n`,
+  "lib/n8n/з пробілом.ts": `import "server-only";\n\nexport const version = 1;\n`,
+};
+const SPACES_CHANGES = {
+  // the new line: a fetch without a timeout → C5
+  "lib/n8n/with space.ts": `import "server-only";
+
+export const version = 1;
+export const send = () =>
+  fetch(\`\${process.env.N8N_WEBHOOK_BASE_URL}/x\`, { method: "POST", headers: ${HEADERS_OK} });
+`,
+  // import "server-only" removed → C4
+  "lib/n8n/з пробілом.ts": "export const version = 2;\n",
+};
+
 // --changed-since with non-ASCII file names: git prints them quoted ("lib/n8n/\\320…").
 const CYRILLIC_BASE = { ...MAIN_LIKE, "lib/n8n/відправка.ts": `import "server-only";\n\nexport const version = 1;\n` };
 const CYRILLIC_CHANGES = {
@@ -272,6 +306,7 @@ try {
     ["templates (src/ layout)", underSrc(templateFiles()), []],
     ["C5: timeout elsewhere in the file", TIMEOUT_ELSEWHERE, ["C5"]],
     ["C5: timeout in a variable", TIMEOUT_VARIABLE, []],
+    ["C5: typed name, timeout for another", TIMEOUT_TYPED_NAME, ["C5"]],
   ];
   for (const [name, files, expectFail, options] of cases) {
     const dir = join(root, name.replace(/[^a-z0-9]+/gi, "-"));
@@ -300,6 +335,15 @@ try {
     git(cyr, "tag", "base");
     writeProject(cyr, CYRILLIC_CHANGES);
     expectCase("--changed-since, Cyrillic file names", cyr, ["C4", "C5"], { args: ["--changed-since", "base"], env: QUOTED_PATHS_ENV });
+
+    const spaces = join(root, "changed-since-spaces");
+    writeProject(spaces, SPACES_BASE);
+    git(spaces, "init", "-q");
+    git(spaces, "add", "-A");
+    git(spaces, "commit", "-qm", "base");
+    git(spaces, "tag", "base");
+    writeProject(spaces, SPACES_CHANGES);
+    expectCase("--changed-since, spaces in file names", spaces, ["C4", "C5"], { args: ["--changed-since", "base"], env: QUOTED_PATHS_ENV });
   } else {
     console.log("skip  --changed-since                     git not found");
   }

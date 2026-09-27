@@ -25,8 +25,9 @@ Checks (each prints PASS or FAIL; FAIL lists file:line):
   C4  Modules that call n8n (lib/n8n/ and any other) start with import "server-only"
   C5  Every fetch to n8n has a timeout: signal: AbortSignal.timeout(...)
   C6  Requests to n8n set the headers x-n8n-token, idempotency-key and x-correlation-id
-  C7  Callback route reads the raw body (request.text()); no .json(), no JSON.parse
-      before the signature is verified
+  C7  Callback route reads the raw body once with .text(); no .json(), no JSON.parse
+      before the signature is verified (the 64 KB cap while reading is not static:
+      send-signed-callback.mjs checks it with a chunked body)
   C8  Callback signature: length check, then crypto.timingSafeEqual; never ===, ==, .equals()
   C9  Callback route compares x-n8n-timestamp with Date.now() (300 s) and checks
       idempotency-key against data.jobId from the signed body
@@ -42,7 +43,8 @@ node_modules, .next, .git, .claude, .agents, .cursor, .codex, tools, docs, mater
 Both app/ + lib/ and src/app/ + src/lib/ layouts. A callback route is app/api/n8n/**/route.*
 or any route.* that mentions x-n8n-signature, or a POST route that mentions n8n and does not call it.
 A fetch is a call to n8n when its URL mentions n8n or is a variable named or assigned like a
-webhook URL. Helpers imported from local modules are followed one level. Secret values are
+webhook URL. Helpers imported from local modules are followed one level. A variable (e.g. a
+signal) is matched to its declaration by name within the file, not by scope. Secret values are
 never printed.
 
 Exit code: 0 — no FAIL, 1 — at least one FAIL, 2 — usage error.`;
@@ -219,7 +221,8 @@ function changedLines(root, ref) {
   let current = null;
   for (const l of git(["diff", "-U0", "--no-color", "--no-ext-diff", ref, "--"]).split("\n")) {
     if (l.startsWith("+++ ")) {
-      const path = gitPath(l.slice(4));
+      // git ends the line with a TAB when the name contains a space
+      const path = gitPath(l.slice(4).replace(/\t$/, ""));
       current = path === "/dev/null" ? null : path.replace(/^b\//, "");
       if (current && !changed.has(current)) changed.set(current, new Set());
     } else if (current && l.startsWith("@@")) {
@@ -481,7 +484,7 @@ function runChecks(files, envExample) {
         const signalName = /\bsignal\s*:\s*([\w$]+)(?![\w$.])/.exec(call.args)?.[1] ?? (/[{,]\s*signal\s*[,}]/.test(call.args) ? "signal" : null);
         const viaVariable =
           signalName !== null &&
-          new RegExp(`(?:const|let|var)\\s+${escapeRe(signalName)}\\s*(?::[^=]+)?=[^;\\n]*AbortSignal\\.timeout\\s*\\(`).test(f.code);
+          new RegExp(`(?:const|let|var)\\s+${escapeRe(signalName)}\\s*(?::[^=;\\n]+)?=[^;\\n]*AbortSignal\\.timeout\\s*\\(`).test(f.code);
         if (!direct && !viaVariable) findings.push({ ...at(f, call.index), text: `${f.snippet(f.line(call.index))}  ← немає signal: AbortSignal.timeout(…)` });
       }
     const total = [...fetchesByFile.values()].reduce((s, v) => s + v.length, 0);
@@ -511,7 +514,7 @@ function runChecks(files, envExample) {
       for (const m of f.bare.matchAll(/\.json\s*\(\s*\)/g)) findings.push({ ...at(f, m.index), text: `${f.snippet(f.line(m.index))}  ← .json() замість request.text()` });
       for (const m of f.bare.matchAll(/JSON\.parse\s*\(/g))
         if (m.index >= start && m.index < first) findings.push({ ...at(f, m.index), text: `${f.snippet(f.line(m.index))}  ← JSON.parse до перевірки підпису` });
-      if (!/\.text\s*\(\s*\)/.test(f.bare)) findings.push(whole(f, "немає request.text() — сире тіло не читається"));
+      if (!/\.text\s*\(\s*\)/.test(f.bare)) findings.push(whole(f, "немає .text() — сире тіло не читається"));
     }
     add("C7", "Колбек читає сире тіло й не парсить JSON до перевірки підпису", findings, callbacks.length ? null : "колбек-роутів немає");
   }
