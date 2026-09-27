@@ -5,14 +5,14 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { requireLeadAccess } from "@/lib/data";
-import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
+import { parseLeadForm, type LeadFormField, type LeadFormValues } from "@/lib/lead-form";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
 export type SubmitLeadState =
   | { status: "idle" }
-  | { status: "invalid"; errors: Partial<Record<LeadFormField, string>> }
+  | { status: "invalid"; errors: Partial<Record<LeadFormField, string>>; values: LeadFormValues }
   | { status: "ok" };
 
 export async function submitLead(
@@ -21,7 +21,7 @@ export async function submitLead(
 ): Promise<SubmitLeadState> {
   const parsed = parseLeadForm(formData);
   if (!parsed.ok) {
-    return { status: "invalid", errors: parsed.errors };
+    return { status: "invalid", errors: parsed.errors, values: parsed.values };
   }
 
   const requestHeaders = await headers();

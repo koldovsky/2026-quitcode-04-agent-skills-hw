@@ -12,6 +12,7 @@ const inputClass =
 export function LeadForm() {
   const [state, formAction, pending] = useActionState(submitLead, initialState);
   const errors = state.status === "invalid" ? state.errors : {};
+  const values = state.status === "invalid" ? state.values : undefined;
 
   if (state.status === "ok") {
     return (
@@ -27,12 +28,12 @@ export function LeadForm() {
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-sm font-medium">
           Ім&apos;я
-          <input name="firstName" autoComplete="given-name" className={inputClass} />
+          <input name="firstName" autoComplete="given-name" defaultValue={values?.firstName} className={inputClass} />
           {errors.firstName && <span className="mt-1 block text-xs text-red-600">{errors.firstName}</span>}
         </label>
         <label className="block text-sm font-medium">
           Прізвище
-          <input name="lastName" autoComplete="family-name" className={inputClass} />
+          <input name="lastName" autoComplete="family-name" defaultValue={values?.lastName} className={inputClass} />
           {errors.lastName && <span className="mt-1 block text-xs text-red-600">{errors.lastName}</span>}
         </label>
       </div>
@@ -40,12 +41,12 @@ export function LeadForm() {
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-sm font-medium">
           Email
-          <input name="email" type="email" autoComplete="email" className={inputClass} />
+          <input name="email" type="email" autoComplete="email" defaultValue={values?.email} className={inputClass} />
           {errors.email && <span className="mt-1 block text-xs text-red-600">{errors.email}</span>}
         </label>
         <label className="block text-sm font-medium">
           Телефон
-          <input name="phone" type="tel" autoComplete="tel" className={inputClass} />
+          <input name="phone" type="tel" autoComplete="tel" defaultValue={values?.phone} className={inputClass} />
           {errors.phone && <span className="mt-1 block text-xs text-red-600">{errors.phone}</span>}
         </label>
       </div>
@@ -53,17 +54,29 @@ export function LeadForm() {
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-sm font-medium">
           Компанія
-          <input name="company" autoComplete="organization" className={inputClass} />
+          <input name="company" autoComplete="organization" defaultValue={values?.company} className={inputClass} />
         </label>
         <label className="block text-sm font-medium">
           Сайт
-          <input name="website" type="url" placeholder="https://" className={inputClass} />
+          <input
+            name="website"
+            type="url"
+            placeholder="https://"
+            defaultValue={values?.website}
+            className={inputClass}
+          />
         </label>
       </div>
 
       <label className="block text-sm font-medium">
         Бюджет
-        <select name="budget" defaultValue="" className={inputClass}>
+        {/* A select ignores defaultValue changes after mount: the key remounts it with the returned value. */}
+        <select
+          key={values?.budget ?? ""}
+          name="budget"
+          defaultValue={values?.budget ?? ""}
+          className={inputClass}
+        >
           {BUDGET_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
@@ -75,12 +88,18 @@ export function LeadForm() {
 
       <label className="block text-sm font-medium">
         Що потрібно зробити?
-        <textarea name="message" rows={4} className={inputClass} />
+        <textarea name="message" rows={4} defaultValue={values?.message} className={inputClass} />
         {errors.message && <span className="mt-1 block text-xs text-red-600">{errors.message}</span>}
       </label>
 
       <label className="flex items-center gap-2 text-sm text-slate-600">
-        <input name="consentMarketing" type="checkbox" className="h-4 w-4 rounded border-slate-300" />
+        <input
+          key={values?.consentMarketing ?? ""}
+          name="consentMarketing"
+          type="checkbox"
+          defaultChecked={values?.consentMarketing === "on"}
+          className="h-4 w-4 rounded border-slate-300"
+        />
         Хочу отримувати корисні матеріали від Studio Nova
       </label>
 

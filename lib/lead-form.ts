@@ -29,9 +29,12 @@ export type LeadFormData = {
   consentMarketing: boolean;
 };
 
+// What the user typed, echoed back on a validation error so the form keeps it.
+export type LeadFormValues = Record<LeadFormField, string>;
+
 export type ParseResult =
   | { ok: true; data: LeadFormData }
-  | { ok: false; errors: Partial<Record<LeadFormField, string>> };
+  | { ok: false; errors: Partial<Record<LeadFormField, string>>; values: LeadFormValues };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^\+?[0-9 ()-]{7,20}$/;
@@ -42,16 +45,28 @@ function text(formData: FormData, name: LeadFormField, max = 200) {
 }
 
 export function parseLeadForm(formData: FormData): ParseResult {
-  const data: LeadFormData = {
+  const values: LeadFormValues = {
     firstName: text(formData, "firstName", 80),
     lastName: text(formData, "lastName", 80),
-    email: text(formData, "email", 200).toLowerCase(),
+    email: text(formData, "email", 200),
     phone: text(formData, "phone", 20),
     company: text(formData, "company", 120),
     website: text(formData, "website", 200),
-    budget: null,
+    budget: text(formData, "budget", 10),
     message: text(formData, "message", 2000),
-    consentMarketing: formData.get("consentMarketing") === "on",
+    consentMarketing: formData.get("consentMarketing") === "on" ? "on" : "",
+  };
+
+  const data: LeadFormData = {
+    firstName: values.firstName,
+    lastName: values.lastName,
+    email: values.email.toLowerCase(),
+    phone: values.phone,
+    company: values.company,
+    website: values.website,
+    budget: null,
+    message: values.message,
+    consentMarketing: values.consentMarketing === "on",
   };
 
   const errors: Partial<Record<LeadFormField, string>> = {};
@@ -62,7 +77,7 @@ export function parseLeadForm(formData: FormData): ParseResult {
   if (data.phone && !PHONE_RE.test(data.phone)) errors.phone = "Перевірте номер телефону";
   if (data.message.length < 10) errors.message = "Опишіть задачу хоча б одним реченням";
 
-  const budget = text(formData, "budget", 10);
+  const budget = values.budget;
   if (budget) {
     if (!BUDGET_OPTIONS.some((option) => option.value === budget)) {
       errors.budget = "Оберіть бюджет зі списку";
@@ -71,5 +86,5 @@ export function parseLeadForm(formData: FormData): ParseResult {
     }
   }
 
-  return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, data };
+  return Object.keys(errors).length > 0 ? { ok: false, errors, values } : { ok: true, data };
 }
