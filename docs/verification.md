@@ -126,13 +126,19 @@
   воркфлоу потребує повний запис, зайві персональні дані чи файли замість посилань; прохання
   створити/змінити/експортувати воркфлоу чи писати код для вузла Code; потреба в `runtime = "edge"`,
   новій залежності чи несумісній зміні конверта.
-- **Скрипти:** `scripts/check-contract.mjs` (13 перевірок C1–C13, `--root`, `--changed-since`,
+- **Скрипти:** `scripts/check-contract.mjs` (14 перевірок C1–C14 — C14 додано після прогону A, `--root`, `--changed-since`,
   `--help`, код виходу 1 при FAIL і 2 при помилці аргументів), `scripts/send-signed-callback.mjs`
   (матриця з 12 колбеків проти запущеного роуту: неправильний/відсутній підпис, прострочений і
   майбутній час, переформатоване тіло, content-type, невідома подія, ключ ≠ тіло, битий JSON,
   > 64 КБ, повтор), `scripts/mock-n8n.mjs` (копія `tools/mock-n8n.mjs`).
-- SHA коміту зі скілом (BASE для Task D): _див. нижче, «BASE»_.
-- Що скіл змінив у собі після прогонів (коміти й чому): _заповнюється після Task D_.
+- SHA коміту зі скілом: `eb134c8`; **BASE для Task D** — `0d9556c` (HEAD після Task C і запису Task B; фічі ще немає).
+- Що скіл змінив у собі після прогонів (коміти й чому):
+  - `60f0f34 fix(skill): check-contract detects any N8N_* call site and leaked callback secret` — на коді
+    прогону A скрипт давав PASS для C3/C5/C11/C12, бо агент назвав змінну `N8N_QUOTE_WEBHOOK_URL`, а
+    евристика шукала лише `N8N_WEBHOOK`; нова перевірка C14 ловить `N8N_CALLBACK_SECRET` поза колбек-роутом
+    (прогін A слав його в n8n у тілі).
+  - `f2a3e83 fix(skill): Verify asks to report pre-existing n8n calls outside the contract` — прогін B лишив
+    старий виклик `lead-created` поза контрактом, згадавши його лише наприкінці.
 
 **`check-contract.mjs` на коді `main`** (`git archive main | tar -x -C ../leaddesk-main`):
 
@@ -141,7 +147,7 @@ check-contract — root: ../leaddesk-main
 C1   FAIL  no test webhook URL (/webhook-test/) in code or .env.example
        .env.example:6  N8N_WEBHOOK_URL=http://127.0.0.1:5678/webhook-test/lead-created
 C2   PASS  no NEXT_PUBLIC_N8N_* variables
-C3   FAIL  n8n is called and N8N_WEBHOOK_* is read only inside lib/n8n/
+C3   FAIL  n8n is called and N8N_* (except N8N_CALLBACK_SECRET) is read only inside lib/n8n/
        app/actions.ts:54  fetch to n8n outside lib/n8n/: await fetch(process.env.N8N_WEBHOOK_URL!, {
 C4   FAIL  lib/n8n/ modules start with import "server-only"
        app/actions.ts:54  n8n is used but there is no lib/n8n/ client module
@@ -162,8 +168,9 @@ C11  FAIL  requests to n8n send x-n8n-token, idempotency-key and x-correlation-i
 C12  FAIL  Server Actions trigger n8n inside after()
        app/actions.ts:54  n8n called outside after(): await fetch(process.env.N8N_WEBHOOK_URL!, {
 C13  PASS  callback route deduplicates by the idempotency-key header
+C14  PASS  N8N_CALLBACK_SECRET is used only in callback routes
 
-6 PASS, 7 FAIL
+7 PASS, 7 FAIL
 exit=1
 ```
 
@@ -180,7 +187,7 @@ C1   FAIL  no test webhook URL (/webhook-test/) in code or .env.example
        .env.example:1  N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook-test
 C2   FAIL  no NEXT_PUBLIC_N8N_* variables
        lib/quotes.ts:3  const res = await fetch(`${process.env.NEXT_PUBLIC_N8N_URL}/webhook-test/quote-request`, { method: "POST", body: JSON.stringify(Object.fromEntries(formData)) })
-C3   FAIL  n8n is called and N8N_WEBHOOK_* is read only inside lib/n8n/
+C3   FAIL  n8n is called and N8N_* (except N8N_CALLBACK_SECRET) is read only inside lib/n8n/
        lib/quotes.ts:3  fetch to n8n outside lib/n8n/: const res = await fetch(`${process.env.NEXT_PUBLIC_N8N_URL}/webhook-test/quote-request`, { method: "POST", body: JSON.stringify(O
 C4   FAIL  lib/n8n/ modules start with import "server-only"
        lib/quotes.ts:3  n8n is used but there is no lib/n8n/ client module
@@ -205,8 +212,9 @@ C12  FAIL  Server Actions trigger n8n inside after()
        lib/quotes.ts:3  n8n called outside after(): const res = await fetch(`${process.env.NEXT_PUBLIC_N8N_URL}/webhook-test/quote-request`, { method: "POST", body: JSON.stringify(Obje
 C13  FAIL  callback route deduplicates by the idempotency-key header
        app/api/n8n/[event]/route.ts:1  callback route never reads idempotency-key
+C14  PASS  N8N_CALLBACK_SECRET is used only in callback routes
 
-0 PASS, 13 FAIL
+1 PASS, 13 FAIL
 exit=1
 ```
 
@@ -219,7 +227,7 @@ exit=1
 check-contract — root: ../good-fixture-tmp
 C1   PASS  no test webhook URL (/webhook-test/) in code or .env.example
 C2   PASS  no NEXT_PUBLIC_N8N_* variables
-C3   PASS  n8n is called and N8N_WEBHOOK_* is read only inside lib/n8n/
+C3   PASS  n8n is called and N8N_* (except N8N_CALLBACK_SECRET) is read only inside lib/n8n/
 C4   PASS  lib/n8n/ modules start with import "server-only"
 C5   PASS  every fetch to n8n has signal: AbortSignal.timeout(...)
 C6   PASS  callback route reads the raw body and parses it only after the signature check
@@ -230,8 +238,9 @@ C10  PASS  .env.example: contract keys, change-me-… secrets, /webhook base URL
 C11  PASS  requests to n8n send x-n8n-token, idempotency-key and x-correlation-id
 C12  PASS  Server Actions trigger n8n inside after()
 C13  PASS  callback route deduplicates by the idempotency-key header
+C14  PASS  N8N_CALLBACK_SECRET is used only in callback routes
 
-13 PASS, 0 FAIL
+14 PASS, 0 FAIL
 exit=0
 ```
 
@@ -241,4 +250,44 @@ exit=0
 
 **`check-contract.mjs` на фінальному коді** (після перенесення прогону B — 0 FAIL):
 
-_(заповнюється в Task D)_
+```
+check-contract — root: /Users/taras-vasylhaioshko/Claude COde/2026-quitcode-04-agent-skills-hw
+C1   PASS  no test webhook URL (/webhook-test/) in code or .env.example
+C2   PASS  no NEXT_PUBLIC_N8N_* variables
+C3   PASS  n8n is called and N8N_* (except N8N_CALLBACK_SECRET) is read only inside lib/n8n/
+C4   PASS  lib/n8n/ modules start with import "server-only"
+C5   PASS  every fetch to n8n has signal: AbortSignal.timeout(...)
+C6   PASS  callback route reads the raw body and parses it only after the signature check
+C7   PASS  callback signature compared with timingSafeEqual, never === / !==
+C8   PASS  no export const runtime = "edge"
+C9   PASS  no bodies, form data, personal data or secrets in console.* calls
+C10  PASS  .env.example: contract keys, change-me-… secrets, /webhook base URL, no legacy key
+C11  PASS  requests to n8n send x-n8n-token, idempotency-key and x-correlation-id
+C12  PASS  Server Actions trigger n8n inside after()
+C13  PASS  callback route deduplicates by the idempotency-key header
+C14  PASS  N8N_CALLBACK_SECRET is used only in callback routes
+
+14 PASS, 0 FAIL
+exit=0
+```
+
+**Матриця колбеків** (`send-signed-callback.mjs`) на фінальному коді — випадок → очікуваний → отриманий код:
+
+```
+callback matrix → http://127.0.0.1:3000/api/n8n/quote-request  event=quote-request.completed  (no --request-key: valid/replay skipped)
+case                    expected  got   result
+valid                   202       -     SKIP
+replay                  200       -     SKIP
+bad-signature           401       401    OK
+missing-signature       401       401    OK
+expired-timestamp       401       401    OK
+future-timestamp        401       401    OK
+reformatted-body        401       401    OK
+wrong-content-type      415       415    OK
+unknown-event           404       404    OK
+key-not-matching-body   400       400    OK
+malformed-json          400       400    OK
+too-large               413       413    OK
+
+all cases as expected
+```
