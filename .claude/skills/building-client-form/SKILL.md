@@ -13,7 +13,7 @@ description: >-
   чистої верстки без відправки.
 metadata:
   owner: LeadDesk / QuitCode agency
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Клієнтська форма: Server Action + useActionState
@@ -40,7 +40,9 @@ metadata:
 Будь-хто може викликати Server Action напряму, в обхід сторінки й `proxy.ts`. Тому **всередині
 дії**, у такому порядку:
 
-1. **Сесія:** прочитати cookie сесії й знайти користувача. Немає — `return { status: "unauthorized" }`.
+1. **Сесія:** прочитати cookie сесії й знайти користувача хелпером, який повертає `null`, а не
+   робить `redirect` (у LeadDesk — `getSessionUser()` з `lib/data.ts`; `getCurrentUser()` для
+   сторінок перенаправляє на `/login`). Немає — `return { status: "unauthorized" }`.
    Для публічної форми (заявка з сайту) сесії немає — натомість обмеження розміру полів і
    антиспам.
 2. **Права:** ресурс належить воркспейсу користувача (`lead.workspaceId === workspace.id`), роль
@@ -54,15 +56,19 @@ metadata:
 ### 2. Відповідь дії — лише стан форми (`server-serialization`)
 
 ```ts
+type Values = Partial<Record<NoteField, string>>;
+
 export type NoteFormState =
   | { status: "idle" }
-  | { status: "invalid"; errors: Partial<Record<NoteField, string>>; values: Partial<Record<NoteField, string>> }
-  | { status: "unauthorized" | "forbidden" | "error"; message: string }
+  | { status: "invalid"; errors: Partial<Record<NoteField, string>>; values: Values }
+  | { status: "unauthorized" | "forbidden" | "error"; message: string; values: Values }
   | { status: "ok"; message: string };
 ```
 
-Не повертати рядок з бази (`lead`, `user`): він піде в RSC Payload і в браузер разом з IP,
-нотатками та іншими полями. Після успіху — `revalidatePath(...)` сторінки, яка показує дані.
+`values` — у **кожному** стані помилки: React 19 скидає форму після будь-якої дії, тож без них
+нотатка зникне й після «сесія завершилась» чи «не вдалося зберегти». Лише `ok` дає формі
+скинутись. Не повертати рядок з бази (`lead`, `user`): він піде в RSC Payload і в браузер разом
+з IP, нотатками та іншими полями. Після успіху — `revalidatePath(...)` сторінки, яка показує дані.
 
 ### 3. Повільне — після відповіді (`server-after-nonblocking`)
 
@@ -75,8 +81,9 @@ export type NoteFormState =
 Ні `console.log(formData)`, ні email, телефон, ім'я, текст повідомлення, IP. Лише id і коди:
 `console.error("note.create failed", { leadId, code })`.
 
-`next dev` сам журналює аргументи й результат кожної Server Action (`└─ ƒ addNote({…})`), тож
-введене видно в терміналі розробника; у `next start` цього немає. Перевіряй журнал на
+`next dev` сам журналює назву, аргументи й тривалість кожної Server Action (`└─ ƒ addNote({…})`;
+`logging.md` у документації Next.js 16), тож введене видно в терміналі розробника; у `next start`
+цього немає. Перевіряй журнал на
 продакшн-збірці; `logging: { serverFunctions: false }` у `next.config.ts` — налаштування всього
 проєкту, лише після «так» людини.
 
@@ -86,12 +93,14 @@ export type NoteFormState =
 "use client";
 const [state, formAction, pending] = useActionState(addNote, { status: "idle" });
 const errors = state.status === "invalid" ? state.errors : {};
-const values = state.status === "invalid" ? state.values : {};
+const values = "values" in state ? state.values : {};
 
 <form action={formAction} noValidate>
+  <input type="hidden" name="leadId" value={leadId} />
   {state.status === "invalid" && (
-    <div role="alert" tabIndex={-1}>Виправте поля: {Object.keys(errors).length}</div>
+    <p role="alert">Виправте поля: {Object.keys(errors).length}</p>
   )}
+  {"message" in state && state.status !== "ok" && <p role="alert">{state.message}</p>}
   <label htmlFor="note-text">Нотатка</label>
   <textarea
     id="note-text" name="text" maxLength={500} defaultValue={values.text}
@@ -106,15 +115,19 @@ const values = state.status === "invalid" ? state.values : {};
 - `action={formAction}` (не `onSubmit` + `fetch`): так форма надсилається й без JavaScript.
 - Кожне поле має `<label htmlFor>`; помилка поля пов'язана через `aria-describedby`, поле
   позначене `aria-invalid`; загальний підсумок — у `role="alert"`.
-- React 19 після дії скидає неконтрольовані поля — тому дія повертає введене у `values`, а поля
-  беруть його в `defaultValue`. Паролі й секрети назад не повертаємо.
+- React 19 після дії скидає неконтрольовані поля — тому дія повертає введене у `values` при
+  будь-якій помилці, а поля беруть його в `defaultValue`. Введене не обрізаємо: користувач сам
+  скоротить текст. Паролі й секрети назад не повертаємо.
 - `pending` з `useActionState` — для стану кнопки (`rendering-usetransition-loading`), без
   власного `useState` для завантаження.
-- Службові дані (`leadId`) — прихованим полем `<input type="hidden" name="leadId" value={leadId} />`;
-  на сервері це звичайний вхід, права перевіряємо (крок 1.2). **Не** `addNote.bind(null, leadId)`
-  усередині Client Component разом з `useActionState`: `bind()` на кожному рендері дає нову дію, і
-  без JavaScript POST зависає (нотатка вже записана, відповіді немає) — перевірено в LeadDesk.
-  `.bind()` лише в Server Component, звідки дія приходить пропом.
+- Службові дані (`leadId`) — прихованим полем, як у прикладі; на сервері це звичайний вхід,
+  права перевіряємо (крок 1.2). Документація Next.js 16 (`02-guides/forms.md`, «Passing
+  additional arguments») допускає і приховане поле, і `.bind()`. Команда бере приховане поле:
+  у LeadDesk (Next.js 16.3.5, React 19.2.8) варіант
+  `useActionState(addNote.bind(null, leadId), initial)` у Client Component без JavaScript
+  записав нотатку, але не повернув сторінку (POST без відповіді 20 с). Відтворення:
+  `npm run build && npm start`, форму надіслати звичайним multipart POST з полями
+  `$ACTION_*` із серверного HTML.
 
 ## Чекліст
 
@@ -126,7 +139,8 @@ const values = state.status === "invalid" ? state.values : {};
 - [ ] 5. У console.* немає FormData, email, телефону, імені, тексту повідомлення, IP.
 - [ ] 6. <form action={formAction}> з useActionState; немає onSubmit + fetch.
 - [ ] 7. label htmlFor, aria-invalid, aria-describedby, підсумок у role="alert".
-- [ ] 8. Після помилки введене лишається (values → defaultValue).
+- [ ] 8. Після будь-якої помилки (invalid / unauthorized / forbidden / error) введене лишається
+        (values → defaultValue).
 ```
 
 ## Правила зупинки — зупинись і спитай людину, якщо:
@@ -142,14 +156,19 @@ const values = state.status === "invalid" ? state.values : {};
 
 - [ ] `npm run lint` і `npm run build` без помилок.
 - [ ] Порожня відправка: помилки біля полів, підсумок у `role="alert"`, у DevTools → Elements
-      поле має `aria-invalid="true"` і `aria-describedby` на текст помилки; введене не зникло.
+      поле має `aria-invalid="true"` і `aria-describedby` на текст помилки.
+- [ ] Невалідне **непорожнє** значення (у DevTools прибрати `maxLength` і вставити на 1 символ
+      більше за ліміт): помилка біля поля, весь введений текст лишився в полі.
 - [ ] Відправка з вимкненим JS (DevTools → Ctrl+Shift+P → «Disable JavaScript» → **F5**) доходить
       до сервера й показує результат. Без перезавантаження форма лишається гідрованою
       (`action="javascript:throw …"`) і нічого не відправляє.
 - [ ] Дія без сесії: у DevTools → Application → Cookies **змініть** значення cookie сесії на
-      вигадане й повторіть відправку — форма показує `unauthorized`, у журналі немає запису
-      (`db:<запис>`). Якщо cookie **видалити**, `proxy.ts` перенаправить POST на `/login`, і в dev
-      буде «An unexpected response was received from the server» — дію це не перевіряє.
+      вигадане й повторіть відправку — форма показує `unauthorized`, введене лишилось, у журналі
+      немає запису (`db:<запис>`). Якщо cookie **видалити**, `proxy.ts` перенаправить POST на
+      `/login`, і в dev буде «An unexpected response was received from the server» — дію це не
+      перевіряє.
+- [ ] Чужий ресурс: увійти користувачем іншого воркспейсу й підмінити в DevTools приховане поле
+      (`leadId`) на id чужого запису — `forbidden`, у журналі немає запису.
 - [ ] Журнал сервера (`npm run build && npm start`) після успішної й помилкової відправки — лише
       id і коди, без введених даних.
 - [ ] Відповідь приходить одразу: DevTools → Network → POST не чекає на лист / n8n / аудит.
