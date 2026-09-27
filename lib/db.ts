@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   Lead,
@@ -5,6 +6,10 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
+  QuoteStatus,
+  QuoteUpdate,
   SourceCount,
   User,
   Workspace,
@@ -19,6 +24,7 @@ type Store = {
   users: User[];
   leads: Lead[];
   audit: AuditEntry[];
+  quotes: Quote[];
   nextLeadNumber: number;
 };
 
@@ -31,10 +37,15 @@ const LATENCY_MS = {
   getLead: 80,
   insertLead: 120,
   updateLeadStatus: 80,
+  appendLeadNote: 80,
   deleteLead: 80,
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuote: 120,
+  getQuote: 80,
+  getQuoteByIdempotencyKey: 80,
+  updateQuote: 80,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -261,12 +272,14 @@ function createStore(): Store {
     { id: "u_marta", name: "Marta Novak", email: "marta@brightline.example.test", role: "manager", workspaceSlug: "brightline" },
   ];
   const leads = seedLeads(200, workspaces, users);
-  return { workspaces, users, leads, audit: [], nextLeadNumber: leads.length + 1 };
+  return { workspaces, users, leads, audit: [], quotes: [], nextLeadNumber: leads.length + 1 };
 }
 
 // One store per server process (also survives module reloads in `next dev`).
 const globalForStore = globalThis as unknown as { leadDeskStore?: Store };
 const store = (globalForStore.leadDeskStore ??= createStore());
+// A store created before quotes existed (hot reload in `next dev`) has no `quotes` yet.
+store.quotes ??= [];
 
 const SESSION_PREFIX = "demo-";
 
@@ -369,6 +382,16 @@ export const db = {
     });
   },
 
+  appendLeadNote(id: string, note: string) {
+    return query("appendLeadNote", () => {
+      const lead = store.leads.find((l) => l.id === id);
+      if (!lead) return false;
+      lead.internalNotes = lead.internalNotes ? `${lead.internalNotes}\n${note}` : note;
+      lead.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
   deleteLead(id: string) {
     return query("deleteLead", () => {
       const index = store.leads.findIndex((l) => l.id === id);
@@ -381,6 +404,51 @@ export const db = {
   insertAuditEntry(entry: AuditEntry) {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
+    });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        // Unguessable: /quotes/[id] is public, so the id itself is the access check.
+        id: `q_${randomUUID()}`,
+        status: "queued",
+        idempotencyKey: randomUUID(),
+        correlationId: randomUUID(),
+        jobId: null,
+        documentUrl: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      store.quotes.push(quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  getQuoteByIdempotencyKey(key: string) {
+    return query("getQuoteByIdempotencyKey", () => {
+      const quote = store.quotes.find((q) => q.idempotencyKey === key);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  // `onlyIfStatus` makes the update conditional (compare-and-set), so a late
+  // "processing" can never overwrite a "ready" that the callback already wrote.
+  updateQuote(id: string, update: QuoteUpdate, onlyIfStatus?: QuoteStatus) {
+    return query("updateQuote", () => {
+      const quote = store.quotes.find((q) => q.id === id);
+      if (!quote || (onlyIfStatus && quote.status !== onlyIfStatus)) return false;
+      Object.assign(quote, update, { updatedAt: new Date().toISOString() });
+      return true;
     });
   },
 };

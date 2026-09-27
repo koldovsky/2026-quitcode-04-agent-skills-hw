@@ -1,11 +1,15 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import type { LeadStatus } from "@/lib/types";
+import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
+import { triggerWorkflow } from "@/lib/n8n/client";
+import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -50,28 +54,65 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
+  // One key per submitted lead: every retry inside triggerWorkflow reuses it.
+  const idempotencyKey = randomUUID();
+  const correlationId = randomUUID();
 
-  await logAudit("lead.created", lead.id);
+  // The visitor never waits for n8n or the audit log (server-after-nonblocking).
+  after(async () => {
+    await Promise.allSettled([
+      triggerWorkflow({
+        event: "lead-created",
+        // only what the workflow needs — no IP, user agent, raw payload or internal fields
+        data: {
+          leadId: lead.id,
+          fullName: lead.fullName,
+          email: lead.email,
+          phone: lead.phone,
+          company: lead.company,
+          website: lead.website,
+          budget: lead.budget,
+          message: lead.message,
+          consentMarketing: lead.consentMarketing,
+          source: lead.source,
+        },
+        idempotencyKey,
+        correlationId,
+      }),
+      logAudit("lead.created", lead.id),
+    ]);
+  });
 
   return { status: "ok" };
 }
 
-export async function updateLeadStatus(id: string, status: LeadStatus) {
-  await db.updateLeadStatus(id, status);
-  revalidatePath("/dashboard");
-  revalidatePath(`/dashboard/leads/${id}`);
+export type LeadMutationResult = { status: "ok" } | { status: "error" };
+
+// Server Actions are public POST endpoints (server-auth-actions): the session and
+// the lead's workspace are checked here, not only by proxy.ts and the page.
+async function findOwnLead(id: unknown) {
+  const user = await getCurrentUser(); // redirects to /login without a valid session
+  if (typeof id !== "string") return null;
+  const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), getLead(id)]);
+  return lead && lead.workspaceId === workspace.id ? lead : null;
 }
 
-export async function deleteLead(id: string) {
-  await db.deleteLead(id);
+export async function updateLeadStatus(id: string, status: LeadStatus): Promise<LeadMutationResult> {
+  const lead = await findOwnLead(id);
+  if (!lead || !LEAD_STATUSES.includes(status)) return { status: "error" };
+
+  // the lead may have been deleted in between: report it instead of claiming success
+  if (!(await db.updateLeadStatus(lead.id, status))) return { status: "error" };
   revalidatePath("/dashboard");
+  revalidatePath(`/dashboard/leads/${lead.id}`);
+  return { status: "ok" };
+}
+
+export async function deleteLead(id: string): Promise<LeadMutationResult> {
+  const lead = await findOwnLead(id);
+  if (!lead) return { status: "error" };
+
+  if (!(await db.deleteLead(lead.id))) return { status: "error" };
+  revalidatePath("/dashboard");
+  return { status: "ok" };
 }
