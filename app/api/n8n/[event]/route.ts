@@ -50,7 +50,7 @@ const HANDLERS: Record<string, (data: CallbackBody["data"], correlationId: strin
 
 export async function POST(request: Request, context: RouteContext<"/api/n8n/[event]">) {
   const { event } = await context.params;
-  const correlationId = request.headers.get("x-correlation-id") ?? "none";
+  const correlationId = readCorrelationId(request);
 
   // 1. Known event and JSON content type — before reading the body.
   // Object.hasOwn: "constructor", "toString" or "__proto__" in the path must be 404 too.
@@ -128,6 +128,16 @@ function safeHttpUrl(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+// The header arrives before anything is verified: log it only in the UUID shape the contract
+// promises, so a forged request cannot write arbitrary text into the logs.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readCorrelationId(request: Request) {
+  const value = request.headers.get("x-correlation-id");
+  if (value === null) return "none";
+  return UUID_RE.test(value) ? value : "invalid";
 }
 
 function reply(status: number, event: string, correlationId: string) {
