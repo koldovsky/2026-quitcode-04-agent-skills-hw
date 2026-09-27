@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { db } from "./db";
 import { SESSION_COOKIE } from "./session";
 
-export async function getCurrentUser() {
+export const getCurrentUser = cache(async () => {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(SESSION_COOKIE)?.value;
   if (!sessionId) redirect("/login");
@@ -13,7 +13,7 @@ export async function getCurrentUser() {
   if (!user) redirect("/login");
 
   return user;
-}
+});
 
 export const getWorkspace = cache(async ({ slug }: { slug: string }) => {
   const workspace = await db.getWorkspace(slug);
@@ -35,4 +35,8 @@ export async function getSourceBreakdown(workspaceId: string) {
 
 export async function getLead(id: string) {
   return db.getLead(id);
+}
+
+export async function getQuoteRequest(id: string) {
+  return db.getQuoteRequest(id);
 }
