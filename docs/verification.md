@@ -13,9 +13,9 @@
 |---|---|---|
 | `vercel-react-best-practices` | Project | ~120 токенів в індексі; встановлено в `.claude/skills/`, коміт `c8d53ce` |
 | `building-client-form` | Project | ~290 токенів в індексі; коміт `04d514b`; видно в `claude -p "/context"` і в `init` сесії Task B |
-| `integrating-n8n-webhooks` | | Task C |
+| `integrating-n8n-webhooks` | Project | ~330 токенів в індексі; коміт `2f6e85f`; видно в `claude -p "/context"` після коміту |
 
-- Особисті скіли, які теж видно: `find-skills` (Source: User, `~/.claude/skills/find-skills/SKILL.md`, створено 27.09.2026 о 20:44 — разом із запуском `npx skills@1.7.0`). Решта — вбудовані скіли Claude Code (`code-review`, `simplify`, `init`, …). Для Task A–C не заважає; перед Task D `find-skills` треба прибрати з `~/.claude/skills/`, бо за протоколом у копії A не має бути жодного скіла, а в копії B — лише `integrating-n8n-webhooks`.
+- Особисті скіли, які теж видно: `find-skills` (Source: User, `~/.claude/skills/find-skills/SKILL.md`, створено 27.09.2026 о 20:44 — разом із запуском `npx skills@1.7.0`). Решта — вбудовані скіли Claude Code (`code-review`, `simplify`, `init`, …). Для Task A–C не заважає; перед Task D `find-skills` треба прибрати з `~/.claude/skills/`, бо за протоколом у копії A не має бути жодного скіла, а в копії B — лише `integrating-n8n-webhooks`. **Оновлення перед Task D:** `find-skills` перенесено в `~/.claude/skills-disabled/`; після цього `/context` показує лише 3 скіли Project і вбудовані, особистих (User) — 0. У `~/.claude/skills/synced/` лишились синхронізовані застосунком скіли акаунта (`anthropic-skills:docs`, `docx`, `pdf`, `pptx`, `xlsx`, `skill-creator`…) — керує ними застосунок, до n8n/форм не стосуються й однакові для обох прогонів Task D.
 
 ## Task A — виправлення за скілом Vercel
 
