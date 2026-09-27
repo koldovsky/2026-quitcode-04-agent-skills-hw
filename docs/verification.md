@@ -17,7 +17,7 @@
 | Skill | Звідки (Project / Personal / вбудований) | Примітка |
 |---|---|---|
 | `vercel-react-best-practices` | Project (`.claude/skills/`) | видно у свіжій сесії, файли не відкривались |
-| `building-client-form` | | Task B |
+| `building-client-form` | Project (`.claude/skills/`) | у свіжій сесії `d4fdbaf5` агент викликав його сам на звичайний запит (Task B) |
 | `integrating-n8n-webhooks` | | Task C |
 
 - Інші скіли, які теж видно в тій сесії: вбудовані в Claude Code (`code-review`, `simplify`,
@@ -109,7 +109,52 @@ files yet.» Знахідки (номери рядків — на коді `main
 
 ## Task B — `building-client-form`
 
-_далі_
+Скіл закомічено в `71fdb25` (`name` = назва теки, `description` 871 символ, `SKILL.md` 128 рядків,
+лише інструкції — без `scripts/` і `references/`).
+
+- Запит у свіжій сесії (скіл не названо) — нова сесія Claude Code у VS Code, 27.09.2026 13:29 UTC,
+  модель `claude-opus-5-5`, журнал `~/.claude/projects/d--2026-quitcode-04-agent-skills-hw/d4fdbaf5-dafc-4787-baec-4babab20a7ce.jsonl`:
+  > На сторінці ліда в дашборді (/dashboard/leads/[id]) додай форму «Додати нотатку»: одне текстове
+  > поле до 500 символів; нотатка дописується до внутрішніх нотаток ліда.
+- Чи спрацював скіл і як це видно: **так, з першої спроби.** Перший же виклик інструмента в сесії,
+  ще до читання коду, — `"name":"Skill","input":{"skill":"building-client-form"}` (цитата з журналу);
+  далі в журналі — текст скіла («Base directory for this skill: …building-client-form»). Людина
+  бачила той самий виклик у чаті VS Code. У підсумку агент прямо написав «як описано в скілі
+  `building-client-form`».
+- Якщо не з першого разу — що змінили в `description`: не знадобилось.
+- Що зроблено (файли, коміт `9e3cf7d` — код агента без змін):
+  `lib/note-form.ts` (`parseNoteForm`: trim, порожньо / > 500 → помилка),
+  `app/dashboard/leads/[id]/actions.ts` (`addLeadNote`: `getCurrentUser` → лід з workspace
+  користувача → валідація → `db.appendLeadNote` → `after(() => logAudit(…))` → `revalidatePath`;
+  повертає лише `{ status, errors?, values? }`), `components/note-form.tsx` (`useActionState`, `label`,
+  `aria-invalid`, `aria-describedby`, `role="alert"`, `role="status"`, `defaultValue` зі `state.values`,
+  `disabled={pending}`), `lib/db.ts` (`appendLeadNote`), `app/dashboard/leads/[id]/page.tsx` (блок
+  нотаток видно завжди, форма під ним).
+
+**Пункти Verify зі скіла — результат кожного.** Автоматичні пункти перевірено на продакшн-збірці
+(`next start`); «без JS» — як це робить браузер без JavaScript: multipart POST на сторінку з прихованими
+полями `$ACTION_*`, які Next рендерить у формі (їх узято з HTML сторінки).
+
+| Пункт Verify | Код агента (`9e3cf7d`) | Після виправлення (`f24a664`) |
+|---|---|---|
+| `npm run lint`, `npm run build` | ✅ без помилок | ✅ без помилок |
+| Відправка без JS | ❌ дія виконується (`db:appendLeadNote: 1`, нотатка збереглась), але **відповідь не приходить**: curl — жодного заголовка за 10–20 с (`exit=28`). Для порівняння стартова публічна форма тим самим способом — `HTTP 200` за 0,05 с | ✅ `HTTP 200` за ~0,5 с, сторінка з результатом |
+| Порожня відправка | (не видно — відповідь зависає) | ✅ `aria-invalid="true"`, `aria-describedby="note-text-hint note-text-error"`, «Напишіть текст нотатки», підсумок `role="alert"`: «Перевірте поля: текст нотатки.» |
+| Помилка → введене лишилось | — | ✅ 501 символ → «Нотатка задовга: 501 із 500 символів», текст у полі збережено |
+| Дія без сесії / з чужого workspace | — | ✅ Marta (інший workspace) → 404, фейкова сесія `demo-u_none` → 303 на `/login`, без cookie → 307 (proxy); `db:appendLeadNote` за ці 3 запити: **0**; чужих нотаток на сторінці немає |
+| Журнал сервера без персональних даних | — | ✅ після відправки: лише `db:…` лічильники; тексту нотатки, email — 0 збігів у журналі |
+| Відповідь — `{ status … }`, повільне в `after()` | ✅ за кодом | ✅ `db:insertAuditEntry` (250 мс) з'являється **після** `db:appendLeadNote` і повторного рендеру — аудит в `after()` |
+| Успішна відправка | — | ✅ «Нотатку додано.» (`role="status"`), поле очищене, нотатка на сторінці |
+
+**Що довелось виправити і чому — межа скіла.** Причину зависання знайдено експериментом: та сама
+форма з `leadId` у прихованому полі замість `useActionState(addLeadNote.bind(null, leadId))` у Client
+Component відповідає без JS нормально. Варіант з `.bind` агенту **підказав сам скіл** («через
+`action.bind(null, id)` або приховане поле»). Тому виправлено обидва, окремими комітами:
+- код — `f24a664` `fix(note-form): pass lead id in a hidden field so the form works without JS`;
+- скіл — `39cb4c2` (версія `0.1.1`): лише приховане поле, пряма заборона `.bind` у клієнті для
+  таких форм, пункт чекліста й уточнений пункт Verify («перезавантажується з результатом за секунду»).
+
+_Ручна перевірка в браузері (людина) — нижче, після неї розділ буде доповнено._
 
 ## Task C — `integrating-n8n-webhooks`
 
