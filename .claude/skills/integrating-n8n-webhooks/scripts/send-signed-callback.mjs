@@ -98,4 +98,6 @@ await send("new key for the same signed body", 400, { key: `${randomUUID()}:${ev
 }
 await send("body > 64 KB", 413, { raw: body + " ".repeat(70_000) });
 console.log(mismatches ? `\n${mismatches} case(s) differ` : "\nall cases as expected");
-process.exit(mismatches ? 1 : 0);
+// exitCode, not process.exit(): exiting while fetch keep-alive sockets are open can abort Node on
+// Windows (libuv "Assertion failed … async.c") and turn the result into exit code 127.
+process.exitCode = mismatches ? 1 : 0;
