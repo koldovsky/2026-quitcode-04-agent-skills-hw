@@ -19,7 +19,7 @@
 
 - Як дивились: `git clone --depth 1 --branch agent-skills-063bee9… https://github.com/vercel-labs/agent-skills.git ../review-agent-skills`;
   `git rev-parse HEAD` → `063bee94c3f4df8453406c830b0a7df0f2860278`, `git describe --tags` → той самий тег.
-  <!-- TODO(людина): якщо запускали `npx skills@1.7.0 add "…#<тег>" --list` — додайте сюди, що він показав. -->
+  CLI на тезі показав `Found 9 skills` у репозиторії; нам потрібен лише `vercel-react-best-practices`.
 - Склад скіла (76 файлів у клоні; CLI копіює 75 — без `metadata.json`):
 
   | Файл / тека | Розмір | Що це |
@@ -53,16 +53,25 @@
 <!-- TODO(людина): заповніть з https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices
      або з блоку «Security Risk Assessments» CLI (запуск БЕЗ DISABLE_TELEMETRY у звичайному терміналі). -->
 
-| Аудит | Результат | Дата аналізу |
-|---|---|---|
-| Gen | | |
-| Socket | | |
-| Snyk | | |
+| Аудит | skills.sh | CLI («Security Risk Assessments») | Дата аналізу |
+|---|---|---|---|
+| Gen (Agent Trust Hub) | Pass | Safe | Sep 14, 2026, 10:49 PM |
+| Socket | Pass | 0 alerts | Sep 14, 2026, 10:49 PM |
+| Snyk | Pass | Low Risk | Sep 14, 2026, 10:48 PM |
 
-- Де взяли: <skills.sh / блок «Security Risk Assessments» у CLI>
-- Чому CLI показав або не показав блок: з `DISABLE_TELEMETRY=1` CLI аудити не завантажує; в
-  агентській сесії CLI сам вмикає `--yes`, тож встановлення запускали лише у звичайному терміналі.
-- До чого прив'язаний аудит: <до тега `agent-skills-063bee9…` чи лише до «репозиторій + назва скіла»>
+- Де взяли: сторінка https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices і
+  блок «Security Risk Assessments» у CLI (`npx skills@1.7.0 add …` без `DISABLE_TELEMETRY`, у
+  звичайному терміналі, перед «Proceed with installation?»).
+- Чому CLI показав блок: запуск без `DISABLE_TELEMETRY`/`DO_NOT_TRACK` і не з агентської сесії
+  (там CLI сам вмикає `--yes` і не чекає підтвердження). З `DISABLE_TELEMETRY=1` блоку немає.
+- Розбіжність: Snyk у CLI — «Low Risk», на skills.sh — «Pass»; конкретних знахідок ні CLI, ні
+  сторінка не розкривають.
+- До чого прив'язаний аудит: **не до нашого тега.** Дата аналізу (14.09.2026) пізніша за наш коміт
+  (28.08.2026); CLI посилається на `skills.sh/vercel-labs/agent-skills` (весь репозиторій), а
+  skills.sh показує команду без тега (`npx skills add https://github.com/vercel-labs/agent-skills
+  --skill …`). Тобто аудит — для «репозиторій + назва скіла» на момент аналізу, а не для
+  `agent-skills-063bee9…`. Тому він лише додатковий сигнал; основа рішення — власна перевірка
+  файлів тега (розділ 2).
 
 ## 4. Ліцензія й походження
 
@@ -70,7 +79,8 @@
   (розділ «License»). Окремого файлу `LICENSE` у корені тега немає.
 - Видавець і активність: організація `vercel-labs` (Vercel Engineering, `metadata.author: vercel`);
   закріплений коміт від 28.08.2026 (merge PR #328), репозиторій активно оновлюється.
-  <!-- TODO(людина): допишіть кількість встановлень / зірок зі skills.sh або GitHub. -->
+  За skills.sh: 746,9 тис. встановлень, 31,6 тис. зірок на GitHub, репозиторій верифікований,
+  уперше з'явився 19.01.2026.
 
 ## 5. Чи правдивий зміст для нашого стеку
 
@@ -86,11 +96,16 @@
 
 ## 6. Закріплення версії й коміт
 
-<!-- TODO(людина): заповніть після встановлення. -->
-
-- Команда встановлення: `npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 --skill vercel-react-best-practices -a claude-code --copy` (scope: Project)
-- Де лягли файли; справжні файли чи посилання: <`.claude/skills/vercel-react-best-practices/`, N файлів, справжні файли (`--copy`); `.agents/` немає>
-- Що потрапило в git: тека скіла і `skills-lock.json`
+- Команда встановлення (у звичайному терміналі Git Bash, не з агента):
+  `npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 --skill vercel-react-best-practices -a claude-code --copy`;
+  Installation scope → **Project**; «Installation Summary»: `copy → Claude Code`.
+- Де лягли файли; справжні файли чи посилання: `.claude/skills/vercel-react-best-practices/`,
+  75 файлів (`find … -type f | wc -l`; у клоні тега 76 — CLI не копіює `metadata.json`),
+  справжні файли завдяки `--copy`; `ls .agents` → теки немає, другої копії немає.
+- Що потрапило в git: тека скіла (75 файлів) і `skills-lock.json` — коміт `8bc9f78`. У lock-файлі:
+  `source: vercel-labs/agent-skills`, `ref: agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278`,
+  `computedHash: 6b526d01…60ca6b`.
+- Скіл видно: `/skills` у новій сесії Claude Code → `/vercel-react-best-practices` · project.
 - Як оновлювати: та сама команда з новим тегом → `git diff` → рев'ю змін за цим чеклістом → коміт
 
 ## Вердикт
