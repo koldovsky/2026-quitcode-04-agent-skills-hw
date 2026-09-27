@@ -1,0 +1,25 @@
+$ node .claude/skills/integrating-n8n-webhooks/scripts/selftest-check-contract.mjs   # v0.1.1
+ok   templates from code-templates.md: every check PASS, exit 0
+ok   C1 broken on purpose -> C1 FAIL, exit 1
+ok   C2 broken on purpose -> C2 FAIL, exit 1
+ok   C3 broken on purpose -> C3 FAIL, exit 1 (also FAIL: C4, C6, C7)
+ok   C4 broken on purpose -> C4 FAIL, exit 1
+ok   C5 broken on purpose -> C5 FAIL, exit 1
+ok   C6 broken on purpose -> C6 FAIL, exit 1
+ok   C7 broken on purpose -> C7 FAIL, exit 1
+ok   C8 broken on purpose -> C8 FAIL, exit 1
+ok   C9 broken on purpose -> C9 FAIL, exit 1
+ok   C10 broken on purpose -> C10 FAIL, exit 1 (also FAIL: C9)
+ok   C11 broken on purpose -> C11 FAIL, exit 1
+ok   C12 broken on purpose -> C12 FAIL, exit 1
+ok   C13 broken on purpose -> C13 FAIL, exit 1
+ok   C14 broken on purpose -> C14 FAIL, exit 1
+ok   C15 broken on purpose -> C15 FAIL, exit 1
+ok   C14 is not tripped by console.error(error.name)
+ok   C14 still FAILs on console.error(body.name)
+ok   --changed-since, nothing changed: old legacy.ts violations ignored, exit 0
+ok   --changed-since, new file with a test URL: C1 FAIL reported at app/new-feature.ts:2
+ok   same tree without --changed-since: legacy.ts reported too
+
+all expectations met
+exit=0

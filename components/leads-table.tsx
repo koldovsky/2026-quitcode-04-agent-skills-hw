@@ -7,9 +7,12 @@ import { StatusBadge } from "./status-badge";
 
 type SortKey = "createdAt" | "fullName" | "company";
 
+// Only what the table renders crosses the RSC boundary: no contacts, notes, IP or raw payload.
+export type LeadRow = Pick<Lead, "id" | "fullName" | "company" | "status" | "createdAt">;
+
 const dateFormat = new Intl.DateTimeFormat("uk-UA", { dateStyle: "medium" });
 
-export function LeadsTable({ leads }: { leads: Lead[] }) {
+export function LeadsTable({ leads }: { leads: LeadRow[] }) {
   const router = useRouter();
   const [sortKey, setSortKey] = useState<SortKey>("createdAt");
   const [descending, setDescending] = useState(true);

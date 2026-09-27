@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { db } from "./db";
 import { SESSION_COOKIE } from "./session";
 
-export async function getCurrentUser() {
+// cache(): layout, header and page each call this; one session lookup per request.
+export const getCurrentUser = cache(async () => {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(SESSION_COOKIE)?.value;
   if (!sessionId) redirect("/login");
@@ -13,9 +14,10 @@ export async function getCurrentUser() {
   if (!user) redirect("/login");
 
   return user;
-}
+});
 
-export const getWorkspace = cache(async ({ slug }: { slug: string }) => {
+// Primitive argument: cache() compares with Object.is, an inline { slug } object never hits.
+export const getWorkspace = cache(async (slug: string) => {
   const workspace = await db.getWorkspace(slug);
   if (!workspace) throw new Error(`Workspace "${slug}" not found`);
   return workspace;

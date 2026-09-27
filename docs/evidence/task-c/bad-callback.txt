@@ -1,0 +1,26 @@
+$ node check-contract.mjs --root <tmp>/bad-callback   # one hand-written bad route, nothing else
+check-contract · root <tmp>/bad-callback · full
+n8n callers: - · callback routes: app/api/n8n/[event]/route.ts
+C1   PASS no test webhook URL (/webhook-test/) in code or .env.example
+C2   PASS no NEXT_PUBLIC_ variable for n8n / webhook / callback settings
+C3   N/A  requests to n8n only from lib/n8n/client.ts
+C4   N/A  the module that calls n8n starts with import "server-only"
+C5   N/A  every fetch to n8n has signal: AbortSignal.timeout(...)
+C6   N/A  requests to n8n send x-n8n-token, idempotency-key, x-correlation-id
+C7   N/A  request body is the envelope { version: 1, event, data }
+C8   N/A  a Server Action that triggers n8n does it inside after()
+C9   FAIL callback route reads the raw body; no request.json(), no JSON.parse before the signature check
+       app/api/n8n/[event]/route.ts:5  JSON.parse before the signature check
+C10  FAIL callback signature: HMAC + length check + timingSafeEqual, never ===
+       app/api/n8n/[event]/route.ts:1  no timingSafeEqual
+       app/api/n8n/[event]/route.ts:7  signature compared with === / !==
+C11  FAIL callback timestamp checked against a 300 s window
+       app/api/n8n/[event]/route.ts:1  x-n8n-timestamp is not read
+C12  FAIL callback idempotency-key read and bound to data.jobId of the signed body
+       app/api/n8n/[event]/route.ts:1  idempotency-key is not read
+C13  PASS no export const runtime = "edge"
+C14  FAIL no bodies, form data, personal data, tokens or signatures in console.* of n8n code
+       app/api/n8n/[event]/route.ts:10  log call may print a body, personal data or a secret
+C15  N/A  .env.example: N8N_WEBHOOK_BASE_URL, N8N_WEBHOOK_TOKEN, N8N_CALLBACK_SECRET, APP_BASE_URL
+Summary: 3 PASS, 5 FAIL, 7 N/A
+exit=1

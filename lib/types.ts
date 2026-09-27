@@ -93,6 +93,26 @@ export type SourceCount = {
   count: number;
 };
 
+// queued: saved, n8n not called yet; sent: n8n accepted the request (202) and works on it;
+// ready: callback delivered the PDF; failed: n8n rejected the request or reported an error.
+export type QuoteStatus = "queued" | "sent" | "ready" | "failed";
+
+export type Quote = {
+  id: string; // randomUUID(): the status page is public, so the id must not be guessable
+  company: string;
+  email: string;
+  description: string;
+  budget: number | null;
+  status: QuoteStatus;
+  requestKey: string; // idempotency-key of the n8n trigger, stored with the record
+  correlationId: string;
+  documentUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NewQuote = Omit<Quote, "documentUrl" | "createdAt" | "updatedAt">;
+
 export type AuditEntry = {
   action: string;
   leadId: string;

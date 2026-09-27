@@ -1,0 +1,33 @@
+$ mkdir ../leaddesk-main && git archive main | tar -x -C ../leaddesk-main
+$ node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs --root ../leaddesk-main; echo "exit=$?"
+check-contract · root ../leaddesk-main · full
+n8n callers: app/actions.ts · callback routes: -
+C1   FAIL no test webhook URL (/webhook-test/) in code or .env.example
+       .env.example:6  test webhook URL
+C2   PASS no NEXT_PUBLIC_ variable for n8n / webhook / callback settings
+C3   FAIL requests to n8n only from lib/n8n/client.ts
+       app/actions.ts:54  fetch to n8n outside lib/n8n/client.ts
+       app/actions.ts:54  N8N_WEBHOOK_* read outside lib/n8n/client.ts
+C4   FAIL the module that calls n8n starts with import "server-only"
+       app/actions.ts:1  first statement is not import "server-only"
+C5   FAIL every fetch to n8n has signal: AbortSignal.timeout(...)
+       app/actions.ts:54  fetch without AbortSignal.timeout
+C6   FAIL requests to n8n send x-n8n-token, idempotency-key, x-correlation-id
+       app/actions.ts:54  missing header(s): x-n8n-token, idempotency-key, x-correlation-id
+C7   FAIL request body is the envelope { version: 1, event, data }
+       app/actions.ts:54  body is not the { version: 1, event, data } envelope
+C8   FAIL a Server Action that triggers n8n does it inside after()
+       app/actions.ts:54  Server Action waits for n8n: no after()
+C9   N/A  callback route reads the raw body; no request.json(), no JSON.parse before the signature check
+C10  N/A  callback signature: HMAC + length check + timingSafeEqual, never ===
+C11  N/A  callback timestamp checked against a 300 s window
+C12  N/A  callback idempotency-key read and bound to data.jobId of the signed body
+C13  PASS no export const runtime = "edge"
+C14  PASS no bodies, form data, personal data, tokens or signatures in console.* of n8n code
+C15  FAIL .env.example: N8N_WEBHOOK_BASE_URL, N8N_WEBHOOK_TOKEN, N8N_CALLBACK_SECRET, APP_BASE_URL
+       .env.example:1  N8N_WEBHOOK_BASE_URL is missing
+       .env.example:1  N8N_WEBHOOK_TOKEN is missing
+       .env.example:1  N8N_CALLBACK_SECRET is missing
+       .env.example:1  APP_BASE_URL is missing
+Summary: 3 PASS, 8 FAIL, 4 N/A
+exit=1
