@@ -50,9 +50,6 @@
 
 ## 3. Аудити
 
-<!-- TODO(людина): заповніть з https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices
-     або з блоку «Security Risk Assessments» CLI (запуск БЕЗ DISABLE_TELEMETRY у звичайному терміналі). -->
-
 | Аудит | skills.sh | CLI («Security Risk Assessments») | Дата аналізу |
 |---|---|---|---|
 | Gen (Agent Trust Hub) | Pass | Safe | Sep 14, 2026, 10:49 PM |

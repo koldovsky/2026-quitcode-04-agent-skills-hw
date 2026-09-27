@@ -4,8 +4,7 @@
 > числа, імена файлів, SHA комітів. Порядок дій — у `docs/walkthrough.md`.
 > Прогони A/B і фіча «запит на кошторис» — в окремому звіті `docs/ab-validation.md` (Task D).
 
-- **Інструмент і версія, модель:** Claude Code (розширення VS Code) 
-Version 2.1.283 · Opus 5.5
+- **Інструмент і версія, модель:** Claude Code 2.1.283 (розширення VS Code) · Opus 5.5
 - **ОС і термінал, Node:** Windows 11 Home · Git Bash · Node 24.12.0
 
 ## Скіли видно у свіжій сесії
