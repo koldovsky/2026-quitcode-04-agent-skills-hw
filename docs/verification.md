@@ -4,7 +4,8 @@
 > числа, імена файлів, SHA комітів. Порядок дій — у `docs/walkthrough.md`.
 > Прогони A/B і фіча «запит на кошторис» — в окремому звіті `docs/ab-validation.md` (Task D).
 
-- **Інструмент і версія, модель:** Claude Code (розширення VS Code) <!-- TODO: версія з /status --> · Opus 5.5
+- **Інструмент і версія, модель:** Claude Code (розширення VS Code) 
+Version 2.1.283 · Opus 5.5
 - **ОС і термінал, Node:** Windows 11 Home · Git Bash · Node 24.12.0
 
 ## Скіли видно у свіжій сесії
@@ -52,7 +53,7 @@ vercel-react-best-practices… Файли не змінюй»: 17 знахідо
   зламали: `npm run lint` і `npm run build` (TypeScript перевіряє, що таблиця не читає інших полів:
   сортування й рядки використовують лише `fullName`, `company`, `status`, `createdAt`, `id`);
   `/dashboard` віддає сторінку з таблицею (111 КБ HTML).
-  <!-- TODO: відкрийте /dashboard у браузері, клацніть заголовки для сортування й рядок ліда — допишіть результат. -->
+  Сортування і перехід на сторінку ліда працюють
 
 - Порада скіла, яку звірили з документацією Next.js 16 і **не** застосували або змінили — і чому:
   - `bundle-barrel-imports` для `import { debounce } from "lodash"` (`components/lead-search.tsx:5`) і
