@@ -248,7 +248,9 @@ localhost мережа не вузьке місце, а пряма метрик�
     Причину всередині React/Next не шукали. Варіант із `submitLeadNote.bind(null, lead.id)` у Server
     Component і пропом `action` дав ті самі приховані поля (`$ACTION_1:1` =
     `["lead_0001",{"status":"idle"}]`) і HTTP 200 за 0,63 с. Так і закомічено, з коментарем у
-    `components/lead-note-form.tsx`. Сам скіл ще не виправлено.
+    `components/lead-note-form.tsx`. Після цього скіл оновили до `0.1.1`: у кроці 2 приклад
+    переписано на bind у Server Component і проп `action`, заборону `.bind` у Client Component
+    додано в пункт 4 чекліста й у підказку пункту Verify «Without JS».
   - **Пункт 5 не проходив через `proxy.ts`, а не через форму.** Без cookie proxy відповідав на POST дії
     `307 → /login`, і браузер повторював POST уже на `/login`, де цієї дії немає. Без JS — HTTP 500 і в
     журналі `Failed to find Server Action "70f7…"`; з JS — «This page couldn't load» і в консолі

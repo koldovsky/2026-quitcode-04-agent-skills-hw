@@ -16,7 +16,7 @@ description: >-
   filters that never submit.
 metadata:
   owner: Pavlo M
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Client form: Server Action + useActionState
@@ -51,8 +51,10 @@ docs: `node_modules/next/dist/docs/01-app/02-guides/forms.md` and
   `parse<Name>Form(formData)` → `{ ok: true, data } | { ok: false, errors, values }`. No
   `"use server"`, no `db`.
 - `app/**/actions.ts` (`"use server"`): the action `submit<Name>(prevState, formData)` and the
-  `<Name>State` type.
-- `components/<name>-form.tsx` (`"use client"`): `useActionState`. A Server Component renders it.
+  `<Name>State` type. A form for an existing record takes its id first:
+  `submit<Name>(id, prevState, formData)`.
+- `components/<name>-form.tsx` (`"use client"`): `useActionState`. A Server Component renders it
+  and passes the action, already bound to the record id, as the `action` prop (step 2).
 
 ### 1. A Server Action is a public POST endpoint (`server-auth-actions`)
 
@@ -73,8 +75,9 @@ export async function submitX(leadId: string, _prev: XState, formData: FormData)
 
 - Session: `getCurrentUser()` from `lib/data.ts`. Permission on the record: `requireLeadAccess(id)`
   or the same `workspaceId` check for another entity. Permissions first, then validation.
-- An `id` from `.bind(null, leadId)`, `<input type="hidden">` or `formData` is user input. Check it
-  in the action. A new record's `workspaceId` comes from the session, not from the form.
+- An `id` from `.bind(null, leadId)`, `<input type="hidden">` or `formData` is user input: without
+  JS a bound id travels in a hidden `$ACTION_…` field of the form. Check it in the action. A new
+  record's `workspaceId` comes from the session, not from the form.
 - A public form without login (like `submitLead` on `/`) skips only the session check, and the
   code has the comment `// Public form: no session by design` above the action. `workspaceId`
   comes from a server-side constant. The remaining steps are the same.
@@ -82,12 +85,25 @@ export async function submitX(leadId: string, _prev: XState, formData: FormData)
 ### 2. `useActionState`: the form works without JavaScript
 
 ```tsx
-const [state, formAction, pending] = useActionState(submitX.bind(null, leadId), { status: "idle" });
-const errors = state.status === "invalid" ? state.errors : {};
-const values = state.status === "invalid" ? state.values : {};
-return <form action={formAction} noValidate>…</form>;
+// app/dashboard/leads/[id]/page.tsx (Server Component): bind the record id here
+<XForm action={submitX.bind(null, lead.id)} />
+
+// components/x-form.tsx ("use client")
+type XAction = (prevState: XState, formData: FormData) => Promise<XState>;
+
+export function XForm({ action }: { action: XAction }) {
+  const [state, formAction, pending] = useActionState(action, { status: "idle" });
+  const errors = state.status === "invalid" ? state.errors : {};
+  const values = state.status === "invalid" ? state.values : {};
+  return <form action={formAction} noValidate>…</form>;
+}
 ```
 
+- Bind the record id in the Server Component and pass the bound action as a prop. Never call
+  `.bind` on the action inside the Client Component: in LeadDesk (Next.js 16.3.5) a form built that
+  way hung on a no-JS submission. The action ran, but the server never sent a response
+  (`docs/verification.md`, Task B). A form without a record id (like `submitLead` in
+  `lead-form.tsx`) imports the action and passes it to `useActionState` directly.
 - Only `<form action={formAction}>`: no `onSubmit`, `preventDefault`, `fetch` or `useState` for
   fields. Before hydration the browser sends a regular POST, and the server returns the page with
   the same state.
@@ -158,7 +174,7 @@ return <form action={formAction} noValidate>…</form>;
 - [ ] 1. The action starts with getCurrentUser()/requireLeadAccess(), or has the «Public form» comment and workspaceId is a server-side constant.
 - [ ] 2. Every id from bind/hidden/formData is checked in the action against the user's workspace.
 - [ ] 3. Validation is in parse<Name>Form on the server; invalid data never reaches db.
-- [ ] 4. <form action={formAction}>, no onSubmit/preventDefault/fetch; every field has a name.
+- [ ] 4. <form action={formAction}>, no onSubmit/preventDefault/fetch; every field has a name; a record id is bound in the Server Component, never with .bind inside the client form.
 - [ ] 5. Every field has <label htmlFor>, id, aria-invalid, aria-describedby → the id of its error text.
 - [ ] 6. There is an error summary in role="alert".
 - [ ] 7. Input survives an error: defaultValue from state.values; select/checkbox/radio have a key.
@@ -190,7 +206,8 @@ return <form action={formAction} noValidate>…</form>;
       select and the checkbox.
 - [ ] Without JS (DevTools → Command Menu → «Disable JavaScript», then reload): an empty
       submission, a submission with an error and a successful submission behave the same, just
-      with a full page reload.
+      with a full page reload. If the page never comes back, check first that the action is not
+      bound inside the Client Component (step 2).
 - [ ] Action without a session: open the form in the dashboard, click «Вийти» in another tab, then
       submit the form in the first tab. You should land on `/login`, and the data is unchanged.
       For a public form this item doesn't apply, but the code must have the `Public form` comment.
