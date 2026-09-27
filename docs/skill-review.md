@@ -65,11 +65,13 @@
 
 ## 5. Чи правдивий зміст для нашого стеку
 
-_Допишемо після кроку 5 Task A (рев'ю застосунку й звірка з `node_modules/next/dist/docs/`)._
+Звіряли з `node_modules/next/dist/docs/` (Next.js 16.3.5) перед застосуванням:
 
 | Порада скіла (id) | Що каже скіл | Що каже документація нашої версії | Висновок |
 |---|---|---|---|
-| | | | |
+| `async-parallel` | незалежні `await` — через `Promise.all()` | `01-app/01-getting-started/06-fetching-data.md`, «Parallel data fetching»: layouts і pages рендеряться паралельно, але `await` підряд усередині компонента — послідовні; приклад з `Promise.all` | Правдива. Застосовано (коміт `6d3b885`), TTFB 2,27 → 1,45 с |
+| `server-cache-react` | `React.cache()` для дедуплікації в межах запиту; не передавати inline-об'єкти як аргументи (`Object.is`) | `06-fetching-data.md` (`cache` з `react` для `getUser`) і `02-guides/data-security.md` (`getCurrentUser = cache(async () => { await cookies() … })`) — той самий патерн | Правдива, включно з `cookies()` усередині `cache`. Застосовано (коміт `a6385fb`), запити до БД 3 → 1 |
+| `bundle-barrel-imports` | додати бібліотеки в `experimental.optimizePackageImports` (Next.js 13.5+) | `03-api-reference/05-config/01-next-config-js/optimizePackageImports.md`: `recharts` і `lodash-es` оптимізуються **за замовчуванням**; `lodash` (CJS) у списку немає | Частково застаріла: для `recharts` конфіг зайвий; для `lodash` конфіг не допоможе — потрібен прямий імпорт `lodash/debounce`. Не застосовано |
 
 ## 6. Закріплення версії й коміт
 
