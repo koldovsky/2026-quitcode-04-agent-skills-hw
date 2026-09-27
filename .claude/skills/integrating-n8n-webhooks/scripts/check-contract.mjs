@@ -185,11 +185,18 @@ const inScope = (file, line) => {
 // ---------------------------------------------------------------- facts about the project
 const CLIENT_RE = /^(src\/)?lib\/n8n\/client\.(ts|js|mjs)$/;
 const clientFile = codeFiles.find((f) => CLIENT_RE.test(f.path)) ?? null;
+// A callback route is any Route Handler n8n calls: under app/api/n8n/, or any route.ts with a POST
+// handler that uses the callback secret, x-n8n-* headers or mentions n8n (names vary by project).
 const callbackRoutes = codeFiles.filter(
-  (f) => /(^|\/)app\/api\/n8n\/.*route\.(ts|js)$/.test(f.path) || (/route\.(ts|js)$/.test(f.path) && /x-n8n-signature/.test(f.code)),
+  (f) =>
+    /(^|\/)app\/api\/n8n\/.*route\.(ts|js)$/.test(f.path) ||
+    (/(^|\/)route\.(ts|js)$/.test(f.path) &&
+      /\bexport\s+(async\s+)?(function|const)\s+POST\b/.test(f.code) &&
+      /N8N_\w*SECRET|x-n8n-|\bn8n\b/i.test(f.code)),
 );
-// A file talks to n8n if it reads the webhook URL/token or calls a /webhook path.
-const N8N_OUT_RE = /N8N_WEBHOOK_(URL|BASE_URL|TOKEN)|["'`][^"'`]*\/webhook(-test)?\//;
+// A file talks to n8n if it reads any N8N_* variable except the callback secret
+// (N8N_WEBHOOK_URL, N8N_QUOTE_WEBHOOK_URL, N8N_TOKEN…) or calls a /webhook path.
+const N8N_OUT_RE = /\bN8N_(?!CALLBACK_SECRET\b)\w+|["'`][^"'`]*\/webhook(-test)?\//;
 const n8nFetchFiles = codeFiles.filter((f) => N8N_OUT_RE.test(f.code) && /\bfetch\s*\(/.test(f.code));
 const fetchCalls = (file) =>
   [...file.code.matchAll(/\bfetch\s*\(/g)].map((m) => {
@@ -224,7 +231,7 @@ check("C3", "Requests to n8n only from lib/n8n/client.ts", (fail) => {
   }
   for (const f of codeFiles) {
     if (clientFile && f.path === clientFile.path) continue;
-    for (const m of f.code.matchAll(/process\.env\.(N8N_WEBHOOK_(?:URL|BASE_URL|TOKEN))\b/g)) {
+    for (const m of f.code.matchAll(/process\.env\.(N8N_(?!CALLBACK_SECRET\b)\w+)/g)) {
       fail(f.path, lineOf(f.code, m.index), `${m[1]} read outside lib/n8n/client.ts`);
     }
   }
@@ -311,6 +318,10 @@ check("C9", "Callback route reads the raw body and parses JSON only after the si
     const compare = f.code.search(/timingSafeEqual\s*\(/);
     const header = f.code.search(/["'`]x-n8n-signature["'`]/i);
     const verify = compare === -1 || header === -1 ? -1 : Math.max(compare, header);
+    if (header === -1) {
+      fail(f.path, 1, "x-n8n-signature is never read: the body is parsed without an HMAC check");
+      continue;
+    }
     for (const m of f.code.matchAll(/JSON\.parse\s*\(/g)) {
       if (verify === -1 || m.index < verify) fail(f.path, lineOf(f.code, m.index), "JSON.parse before the signature check");
     }
