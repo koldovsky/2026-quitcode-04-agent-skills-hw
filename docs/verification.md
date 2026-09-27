@@ -122,7 +122,7 @@ vercel-react-best-practices… Файли не змінюй»: 17 знахідо
     **перезавантаження** сторінки — у вже гідрованому DOM форма має
     `action="javascript:throw new Error('A React form was unexpectedly submitted…')"`, яку React
     ставить на клієнті, і без JS така форма нічого не відправляє.
-    <!-- TODO: якщо перевірите в браузері з перезавантаженням — допишіть результат. -->
+    Перевірено в браузері після F5: помилка й збереження працюють ✅
   - Без сесії:
     - cookie **видалено** — `proxy.ts` перенаправив POST на `/login` (`POST /login 200 in 61ms`), у
       dev — «An unexpected response was received from the server»; **запису немає** (після цього в
