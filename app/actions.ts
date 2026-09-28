@@ -1,11 +1,14 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
@@ -51,17 +54,16 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
-
-  await logAudit("lead.created", lead.id);
+  // Fire-and-forget event (n8n: Respond Immediately). The user does not wait for n8n or the audit.
+  const idempotencyKey = randomUUID(); // one per business operation; store it with the record in a real DB
+  after(async () => {
+    await triggerWorkflow(
+      "lead-created",
+      { leadId: lead.id, company: lead.company, budget: lead.budget, source: lead.source },
+      { idempotencyKey },
+    );
+    await logAudit("lead.created", lead.id);
+  });
 
   return { status: "ok" };
 }
