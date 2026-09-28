@@ -13,7 +13,7 @@ description: >-
   воркфлоу, коду для вузла Code в n8n.
 metadata:
   owner: studio-nova-dev
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Next.js ↔ n8n: контракт команди

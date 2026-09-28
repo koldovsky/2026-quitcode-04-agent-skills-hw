@@ -35,7 +35,10 @@ Checks (id  name):
   C13  no-edge            no runtime = "edge" in the project
   C14  logs               console.* in n8n code never logs bodies, form data, contacts, tokens or signatures
 
-Exit code: 0 if every check passes, 1 if any check fails, 2 on usage errors.
+Callback route = a route handler under app/api/n8n/, with "callback"/"webhook" in its path, or mentioning
+n8n in its code. Without one, C9-C12 print N/A (nothing to check), not PASS.
+
+Exit code: 0 if no check fails (N/A is not a failure), 1 if any check fails, 2 on usage errors.
 Scanned: *.ts, *.tsx, *.js, *.jsx, *.mjs, *.cjs and .env.example; skipped: node_modules, .next, .git,
 .claude, tools, docs, materials, coverage, out, build.
 `;
@@ -129,8 +132,13 @@ function findCalls(file, name) {
 const N8N_WEBHOOK_ENV = /process\.env\.N8N_WEBHOOK_(BASE_URL|URL|TOKEN)\b|process\.env\[["']N8N_WEBHOOK_(BASE_URL|URL|TOKEN)["']\]/;
 const isClientModule = (f) => /^(src\/)?lib\/n8n\/client\.(ts|js|mjs)$/.test(f.rel);
 const isRouteFile = (f) => /(^|\/)app\/.*\/route\.(ts|js|mjs)$/.test(f.rel);
+// A callback route is any route handler n8n may call: under app/api/n8n/, with "callback"/"webhook"
+// in its path, or mentioning n8n / the signature header in its code — wherever the author put it.
 const isCallbackRoute = (f) =>
-  isRouteFile(f) && (/(^|\/)app\/api\/n8n\//.test(f.rel) || /x-n8n-signature/i.test(f.text));
+  isRouteFile(f) &&
+  (/(^|\/)app\/api\/n8n\//.test(f.rel) ||
+    /(^|\/)(callbacks?|webhooks?)(\/|$)/i.test(path.posix.dirname(f.rel)) ||
+    /x-n8n-signature|\bn8n\b/i.test(f.text));
 const n8nFetches = (f) =>
   findCalls(f, "fetch").filter((c) => /N8N_|\/webhook|n8n/i.test(c.body) || (isClientModule(f) && true));
 const importsN8nClient = (f) => /from\s+["'][^"']*lib\/n8n(\/client)?["']/.test(f.text);
@@ -140,10 +148,10 @@ const isN8nFile = (f) => isN8nCaller(f) || isCallbackRoute(f) || importsN8nClien
 
 // ---------------------------------------------------------------------------- checks
 const results = [];
-function check(id, name, title, fn) {
+function check(id, name, title, fn, applies = true) {
   const findings = [];
-  fn((file, line, reason) => findings.push({ file, line, reason }));
-  results.push({ id, name, title, findings });
+  if (applies) fn((file, line, reason) => findings.push({ file, line, reason }));
+  results.push({ id, name, title, findings, applies });
 }
 
 check("C1", "test-url", "no /webhook-test/ URL in code or .env.example", (fail) => {
@@ -246,8 +254,9 @@ check("C8", "async-action", 'a Server Action ("use server") calls n8n only insid
 });
 
 const callbacks = files.filter(isCallbackRoute);
+const checkCallback = (id, name, title, fn) => check(id, name, title, fn, callbacks.length > 0);
 
-check("C9", "raw-body", "callback route reads req.text(), never req.json(); JSON.parse only after the signature check", (fail) => {
+checkCallback("C9", "raw-body", "callback route reads req.text(), never req.json(); JSON.parse only after the signature check", (fail) => {
   for (const f of callbacks) {
     f.lines.forEach((l, i) => {
       if (!isCommentLine(l) && /\b(req|request)\s*\.\s*json\s*\(/.test(l)) fail(f.rel, i + 1, "body parsed with .json() (signature needs the raw body)");
@@ -259,7 +268,7 @@ check("C9", "raw-body", "callback route reads req.text(), never req.json(); JSON
   }
 });
 
-check("C10", "signature", "callback compares signatures with a length check + crypto.timingSafeEqual, never ===/!==", (fail) => {
+checkCallback("C10", "signature", "callback compares signatures with a length check + crypto.timingSafeEqual, never ===/!==", (fail) => {
   for (const f of callbacks) {
     if (!/timingSafeEqual\s*\(/.test(f.text)) fail(f.rel, 1, "no crypto.timingSafeEqual");
     else if (!/\.length\s*(!==|===|!=|==)/.test(f.text)) fail(f.rel, 1, "no length check before timingSafeEqual");
@@ -271,14 +280,14 @@ check("C10", "signature", "callback compares signatures with a length check + cr
   }
 });
 
-check("C11", "replay-window", "callback checks x-n8n-timestamp against a 300 s window", (fail) => {
+checkCallback("C11", "replay-window", "callback checks x-n8n-timestamp against a 300 s window", (fail) => {
   for (const f of callbacks) {
     if (!/x-n8n-timestamp/i.test(f.text)) fail(f.rel, 1, "x-n8n-timestamp is not read");
     else if (!/\b300\b|300_?000|5\s*\*\s*60\b/.test(f.text)) fail(f.rel, 1, "no 300 s timestamp window");
   }
 });
 
-check("C12", "callback-idempotency", "callback reads idempotency-key and answers duplicates", (fail) => {
+checkCallback("C12", "callback-idempotency", "callback reads idempotency-key and answers duplicates", (fail) => {
   for (const f of callbacks) {
     if (!/["'`]idempotency-key["'`]/i.test(f.text)) fail(f.rel, 1, "idempotency-key header is not read");
     else if (!/duplicate/i.test(f.text)) fail(f.rel, 1, "no duplicate handling for a repeated idempotency-key");
@@ -340,12 +349,18 @@ const inScope = (fd) => {
 const scope = since ? `changed since ${since}` : "whole project";
 console.log(`check-contract: root=${root} | ${files.length} code files${envExample ? " + .env.example" : ""} | ${scope}`);
 let failed = 0;
+let notApplicable = 0;
 for (const r of results) {
   const findings = r.findings.filter(inScope);
   const ok = findings.length === 0;
   if (!ok) failed++;
-  console.log(`${r.id.padEnd(4)} ${ok ? "PASS" : "FAIL"}  ${r.name.padEnd(20)} ${r.title}`);
+  if (!r.applies) notApplicable++;
+  const status = !r.applies ? "N/A " : ok ? "PASS" : "FAIL";
+  console.log(`${r.id.padEnd(4)} ${status}  ${r.name.padEnd(20)} ${r.title}${r.applies ? "" : " (no callback route found)"}`);
   for (const fd of findings) console.log(`       ${fd.file}:${fd.line}  ${fd.reason}`);
 }
-console.log(`\nSummary: ${results.length - failed} PASS, ${failed} FAIL (${results.length} checks, ${scope})`);
+const passed = results.length - failed - notApplicable;
+console.log(
+  `\nSummary: ${passed} PASS, ${failed} FAIL${notApplicable ? `, ${notApplicable} N/A` : ""} (${results.length} checks, ${scope})`,
+);
 process.exit(failed > 0 ? 1 : 0);
