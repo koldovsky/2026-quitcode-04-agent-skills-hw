@@ -2,16 +2,16 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { triggerWorkflow } from "@/lib/n8n/client";
-import { parseQuoteForm, type QuoteFormField } from "@/lib/quote-form";
+import { parseQuoteForm, type QuoteFormField, type QuoteFormValues } from "@/lib/quote-form";
 
 const QUOTE_EVENT = "quote-request";
 
 export type RequestQuoteState =
   | { status: "idle" }
-  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>> }
-  | { status: "ok"; id: string };
+  | { status: "invalid"; errors: Partial<Record<QuoteFormField, string>>; values: QuoteFormValues };
 
 // Public form (like the lead form): no session, so everything the client sends is validated here.
 export async function requestQuote(
@@ -20,7 +20,7 @@ export async function requestQuote(
 ): Promise<RequestQuoteState> {
   const parsed = parseQuoteForm(formData);
   if (!parsed.ok) {
-    return { status: "invalid", errors: parsed.errors };
+    return { status: "invalid", errors: parsed.errors, values: parsed.values };
   }
 
   // Stored as "queued" with its idempotency key and correlation id before n8n is called.
@@ -54,5 +54,6 @@ export async function requestQuote(
     revalidatePath(`/quotes/${quote.id}`);
   });
 
-  return { status: "ok", id: quote.id };
+  // 303 without JavaScript, client-side navigation with it; after() still runs once the response is sent.
+  redirect(`/quotes/${quote.id}`);
 }
