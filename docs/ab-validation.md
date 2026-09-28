@@ -5,7 +5,7 @@
 > розділ.
 
 - **Інструмент і версія:** Claude Code (розширення VS Code), Windows 10 Pro 19045
-- **Модель і рівень міркування (effort), однакові в обох прогонах:** _після прогонів_
+- **Модель і рівень міркування (effort), однакові в обох прогонах:** `claude-opus-5-5` — «Opus 5.5 (1M context)» за `/model` в обох копіях; рівень міркування — налаштування за замовчуванням, у прогонах не змінювався
 - **Код:** BASE = `eb39591` (коміт після Task C: виправлення Task A, форма нотатки Task B, три скіли;
   ще без `/quotes` і без змін у виклику n8n) · скіл `integrating-n8n-webhooks` для копії B — з того ж
   `eb39591` (HEAD `e3113cc` змінює лише `docs/`, скіл той самий)
@@ -33,11 +33,115 @@
   (`grep -rliE "n8n|webhook" ~/.claude/skills --include=SKILL.md` → нічого) і їх видно однаково в обох
   прогонах, тож на різницю A/B вони не впливають. Особистої копії `integrating-n8n-webhooks` немає.
 - **Запит:** `materials/ab-task.md` без змін, нова сесія на кожен прогін
-- **Відповідь на уточнення, однакова в обох:** _після прогонів_
-- **Мок, однаковий для обох** (з робочого репозиторію, термінал у теці копії): _після прогонів_
+- **Відповідь на уточнення, однакова в обох:** не знадобилась — в обох прогонах агент під час роботи нічого не питав
+- **Мок, однаковий для обох** (з робочого репозиторію, термінал у теці копії):
+  `node --env-file=.env.local ../2026-quitcode-04-agent-skills-hw/tools/mock-n8n.mjs --mode respond-202 --delay 5000` (без `--callback-url`)
 - **Базова лінія `check-contract.mjs` на копії до прогону** (увесь код, без `--changed-since`): в обох
   копіях однаково — **7 PASS, 7 FAIL** (C1 `.env.example:6`, C3/C4/C5/C6/C8 `app/actions.ts:55` (на BASE рядок зсунувся на 1 після Task A), C7
   `.env.example`). Це старий код, в оцінку прогонів не йде.
+
+
+## A — без скіла
+
+- **Сесії** (журнали `~/.claude/projects/d--leaddesk-ab-a/`): `b71e0d17…` — окремий чат лише для
+  списку скілів (28.09.2026 08:21 UTC); `9a2082fa…` — `/model`; `ad2d6f6a…` — прогін (08:23 UTC).
+  Модель — `claude-opus-5-5` (`/model`: «Opus 5.5 (1M context)») — та сама, що в B.
+- **Які скіли бачив агент** (окремий чат): жодного скіла проєкту — лише вбудовані (`update-config`,
+  `code-review`, `simplify`, `security-review`, `run`, `init`, …) і особисті `anthropic-skills`. Агент
+  сам зауважив: «Скіли проєкту: за `AGENTS.md` вони мають лежати в `.claude/skills/`, але в мій список
+  жоден не потрапив». Той чат далі не використовувався.
+- **Що зробив агент:** сховище кошторисів у `lib/db.ts` (`pending → ready | failed`), `lib/quotes.ts` (виклик
+  n8n `fetch(process.env.N8N_QUOTE_WEBHOOK_URL)` з таймаутом 10 с, **токен на кожен запит** — у БД лише
+  його хеш, порівняння `timingSafeEqual`), `/quotes/new` + Server Action (запис, redirect на
+  `/quotes/<id>`, виклик n8n в `after()`), колбек `POST /api/quotes/[id]/callback` з
+  `Authorization: Bearer <token>` і тілом `{ status, pdfUrl }`, `/quotes/[id]` з автооновленням кожні 4 с і
+  кнопкою «Спробувати ще раз». Старий виклик n8n у формі лідів і `.env.example` не чіпав — лише
+  **додав** ще одну змінну з тестовим URL.
+- **Звідки агент узяв домовленості** (з журналу сесії): наявний код (`app/actions.ts`, `lib/db.ts`, форми),
+  документація Next.js у `node_modules/next/dist/docs` (читав `after.md`, шукав `after(`, `RouteContext`) і
+  загальні знання. Шукав `tools/` і `.claude/` (`ls tools .claude`) — їх немає; `.env.example` згадує
+  `tools/mock-n8n.mjs`, тож агент написав **власну заглушку n8n** у тимчасовій теці й перевіряв на ній.
+  Контракту команди (Header Auth, `idempotency-key`, `x-correlation-id`, HMAC-підпис, `/webhook/`) йому
+  не було звідки взяти — і в коді його немає.
+- **Поза текою копії:** до робочого репозиторію чи копії B не звертався (у журналі жодного такого шляху),
+  `.env.local` не відкривав (3 згадки — у тексті `AGENTS.md`, коментарі `.env.example` і фінальній
+  відповіді). Відмовляти ні в чому не довелось.
+- **Запитання агента:** під час роботи — жодного. Наприкінці — прохання до людини: додати
+  `N8N_QUOTE_WEBHOOK_URL` і `APP_BASE_URL` у `.env.local`, увімкнути у вебхуку «Respond: Immediately»,
+  додати HTTP Request з `Authorization: Bearer {{$json.callback.token}}`; зауваження про rate limit,
+  домен `pdfUrl` і що «Запит у n8n іде без секрету … варто додати Header Auth».
+- **Фінальна відповідь (скорочено):** «Готово. Сторінки `/quotes/new` і `/quotes/[id]`, Server Action і
+  ендпоінт для зворотного виклику від n8n працюють. `tsc`, `lint` і `build` проходять. Повний цикл я
+  перевірив локально на заглушці n8n … n8n отримує дані заявки і `callback: { url, token }` … Запит у n8n
+  іде без секрету, як і наявний `N8N_WEBHOOK_URL` для лідів … У `.env.example` згадано
+  `tools/mock-n8n.mjs`, але такого файлу в репозиторії немає.»
+- **Змінені файли** (`git diff --cached --stat base`): 11 файлів, +494 / −1 — `.env.example`,
+  `app/api/quotes/[id]/callback/route.ts`, `app/quotes/[id]/page.tsx`, `app/quotes/new/actions.ts`,
+  `app/quotes/new/page.tsx`, `components/quote-auto-refresh.tsx`, `components/quote-form.tsx`, `lib/db.ts`,
+  `lib/quote-form.ts`, `lib/quotes.ts`, `lib/types.ts`; діф: `docs/ab/a-without-skill.diff`
+- **Змінні середовища, які додав агент:** `N8N_QUOTE_WEBHOOK_URL` (у `.env.example` —
+  `http://127.0.0.1:5678/webhook-test/quote-request`, **тестовий URL**) і `APP_BASE_URL`. Для сценарію
+  `.env.local` копії: ці дві змінні зі значеннями для мока (`N8N_QUOTE_WEBHOOK_URL` — **production**
+  `/webhook/quote-request`, як і в B: з тестовим URL мок відповів би 404 ще до всього іншого), старий
+  `N8N_WEBHOOK_URL` і дві змінні мока `N8N_WEBHOOK_TOKEN`, `N8N_CALLBACK_SECRET` (згенеровані, не друкувались).
+- **`check-contract.mjs --root ../leaddesk-ab-a --changed-since base`** — лише код прогону (версія скрипта
+  з `c56abe1`, див. «Що змінили в скілі» нижче):
+  ```
+  C1   FAIL  test-url             no /webhook-test/ URL in code or .env.example
+         .env.example:11  test webhook URL (/webhook-test/)
+  C2   PASS  public-env           no NEXT_PUBLIC_N8N_* variables
+  C3   FAIL  single-module        n8n webhook env vars and fetch to n8n only in lib/n8n/client.ts
+         lib/quotes.ts:43  fetch to n8n outside lib/n8n/client.ts
+  C4   FAIL  server-only          lib/n8n/client.ts exists when n8n is called and starts with import "server-only"
+         lib/quotes.ts:43  n8n is called but there is no lib/n8n/client.ts module
+  C5   PASS  timeout              every fetch to n8n has signal: AbortSignal.timeout(...)
+  C6   FAIL  request-headers      webhook call sends x-n8n-token, idempotency-key, x-correlation-id
+         lib/quotes.ts:43  webhook request without header x-n8n-token
+         lib/quotes.ts:43  webhook request without header idempotency-key
+         lib/quotes.ts:43  webhook request without header x-correlation-id
+  C7   FAIL  env-example          .env.example lists the contract keys with safe local values
+         .env.example:1  missing key N8N_WEBHOOK_BASE_URL
+         .env.example:1  missing key N8N_WEBHOOK_TOKEN
+         .env.example:1  missing key N8N_CALLBACK_SECRET
+  C8   PASS  async-action         a Server Action ("use server") calls n8n only inside after()
+  C9   FAIL  raw-body             callback route reads req.text(), never req.json(); JSON.parse only after the signature check
+         app/api/quotes/[id]/callback/route.ts:21  body parsed with .json() (signature needs the raw body)
+         app/api/quotes/[id]/callback/route.ts:1  raw body is never read with .text()
+  C10  FAIL  signature            callback compares signatures with a length check + crypto.timingSafeEqual, never ===/!==
+         app/api/quotes/[id]/callback/route.ts:1  no crypto.timingSafeEqual
+  C11  FAIL  replay-window        callback checks x-n8n-timestamp against a 300 s window
+         app/api/quotes/[id]/callback/route.ts:1  x-n8n-timestamp is not read
+  C12  FAIL  callback-idempotency callback reads idempotency-key and answers duplicates
+         app/api/quotes/[id]/callback/route.ts:1  idempotency-key header is not read
+  C13  PASS  no-edge              no runtime = "edge" in the project
+  C14  PASS  logs                 console.* in n8n code never logs bodies, form data, contacts, tokens or signatures
+  
+  Summary: 5 PASS, 9 FAIL (14 checks, changed since base)
+  ```
+  Увесь проєкт без прапорця — 3 PASS, 11 FAIL (до 9 FAIL прогону додаються 2 старі: виклик n8n у формі лідів).
+- **Журнал мока** (той самий режим, що для B: `--mode respond-202 --delay 5000`):
+  ```
+  [mock-n8n] 2026-09-28T08:40:43.144Z POST /webhook/quote-request -> 403 in 3 ms auth=missing | headers: accept,accept-language,content-type,user-agent | body 305 B sha256=901f0d4b7e74218c11804ab310d59fd843e2593d9e3a0d54089c87220c74ac75
+  ```
+  URL — `/webhook/` (бо в `.env.local` так поставили для сценарію; у коді/`.env.example` агента —
+  `/webhook-test/`), **`auth=missing` → 403**, заголовків `idempotency-key` і `x-correlation-id` немає (у
+  рядку мока немає й поля `idempotency=`). Воркфлоу не запустився, колбеку не було. `--callback-url`
+  мокові задати не вийшло б: застосунок передає не `callbackUrl`, а `callback: { url, token }`, і URL
+  містить id конкретного запиту — але до колбека справа й не дійшла.
+- **Час від «Надіслати» до відповіді форми:** **414 мс** (DevTools → Network, POST `/quotes/new`, людина).
+- **Що показала `/quotes/<id>`** (`/quotes/q_f9d3559e-173e-4108-8fef-7481c658eebf`): одразу — «Готуємо
+  кошторис», за кілька секунд — «Не вдалося підготувати кошторис».
+- **Журнал сервера:**
+  ```
+  db:insertQuote: 1
+  db:getQuote: 1
+  Quote q_f9d3559e-173e-4108-8fef-7481c658eebf: failed to start n8n workflow Error: n8n responded with 403
+      at d (D:\leaddesk-ab-a\.next\server\chunks\ssr\[root-of-the-server]__0mrtqrw._.js:1:6089)
+  db:completeQuote: 1
+  db:getQuote: 2
+  ```
+  Тіл, email, токенів, підписів немає (`grep -ciE "@example|test@|token|sha256=|signature|Bearer"` → 0);
+  є стек помилки з внутрішнім шляхом чанка.
 
 ## B — зі скілом
 
@@ -106,7 +210,8 @@
   Summary: 14 PASS, 0 FAIL (14 checks, changed since base)
   ```
   Без `--changed-since` (увесь проєкт) — теж 14 PASS / 0 FAIL: агент переробив і старий код, тож 7 FAIL
-  базової лінії зникли.
+  базової лінії зникли. Після покращення скрипта (`c56abe1`) повторний запуск на коді B — так само
+  14 PASS / 0 FAIL в обох режимах.
 - **Журнал мока** (`--mode respond-202 --delay 5000`, `node --env-file=.env.local ../2026-quitcode-04-agent-skills-hw/tools/mock-n8n.mjs`;
   форма → колбек → `/quotes/<id>`):
   ```
@@ -132,3 +237,29 @@
   db:getQuote: 3
   ```
   Тіл, email, назв компаній, токенів чи підписів немає (`grep -ciE "@example|test@|x-n8n-token|sha256=|signature"` → 0).
+
+## Порівняння
+
+| Що дивимось | A — без скіла | B — зі скілом |
+|---|---|---|
+| Скіл викликано | — (скілів у копії немає) | так, першим кроком (`Skill`), далі `references/` і `scripts/` |
+| `check-contract.mjs --changed-since base`: FAIL (id) | **9 FAIL**: C1, C3, C4, C6, C7, C9, C10, C11, C12 | **0 FAIL** (14 PASS) |
+| `check-contract.mjs` на всьому проєкті | 11 FAIL (ще 2 від старого коду) | 0 FAIL — агент переробив і старий виклик лідів |
+| URL вебхука в коді/`.env.example` | `/webhook-test/quote-request` (новий тестовий URL) | `/webhook` + подія |
+| `auth=` / `idempotency=` у журналі мока | `auth=missing` → **403**; `idempotency` відсутній | `auth=ok` → **202**; `idempotency=new` |
+| Колбек дійшов; код відповіді застосунку | ні — воркфлоу не запустився | так, **202** з першої спроби |
+| Захист колбека | Bearer-токен на запит (хеш + `timingSafeEqual`), `request.json()`, без вікна часу й ідемпотентності (повтор → 409) | HMAC-SHA256 на сирому тілі, довжина + `timingSafeEqual`, вікно 300 с, `idempotency-key` (повтор → 200 duplicate) |
+| Результат на `/quotes/<id>` | «Не вдалося підготувати кошторис» | «Кошторис готовий» + PDF |
+| Час відповіді форми | 414 мс | 287 мс |
+| Тіла чи персональні дані в журналі сервера | немає (є стек помилки) | немає |
+| Змінених файлів | 11 (+494 / −1) | 15 (+658 / −15) |
+| Запитання агента | під час роботи — жодного | під час роботи — жодного |
+| Старий виклик n8n у формі лідів | не чіпав | переробив на клієнт + `after()`, мінімальний `data` |
+
+**Що змінили в скілі після прогонів.** `c56abe1` — `check-contract.mjs` знаходив колбек-роут лише в
+`app/api/n8n/`, тому на коді A перевірки C9–C12 спершу показали PASS, хоча роут
+`app/api/quotes/[id]/callback/route.ts` контракту не відповідає. Тепер колбек-роутом вважається й роут з
+`callback`/`webhook` у шляху або зі згадкою n8n у коді, а без колбек-роуту C9–C12 друкують **N/A** замість
+«тихого» PASS. Вивід для A вище — уже новою версією; на коді B, на шаблонах і на `main` результат
+(0 FAIL / 0 FAIL / 7 FAIL) не змінився, на `main` C9–C12 тепер N/A.
+
