@@ -348,6 +348,15 @@
   `send-signed-callback.mjs --url http://127.0.0.1:3000/api/n8n/quote-request` → 12/12 PASS. Форма лідів на
   головній тепер: `/webhook/lead-created`, `auth=ok`, тіло 112 B (на `main` було 1236 B з IP, user agent,
   нотатками) і відповідь, що не чекає на n8n.
+- **Та сама перевірка людиною в браузері** (28.09.2026, гілка `868e327`, `npm run build; npm start` +
+  `node --env-file=.env.local tools/mock-n8n.mjs --mode respond-202 --delay 5000`, `.env.local` з 4 ключами
+  контракту): POST `/quotes/new` — **330 мс** (DevTools → Network), перехід на
+  `/quotes/q_0e49bbea-41ea-4d9b-bb42-a0eda6bb1127`. Журнал мока:
+  ```
+  [mock-n8n] 2026-09-28T08:57:25.183Z callback POST http://127.0.0.1:3000/api/n8n/quote-request -> 202 in 176 ms (try 1/3) event=quote-request.completed body 382 B sha256=64caedecc5deadb7c7a179d1e63179ac27152bcb68d0fbcfe6fe5723766dff2c
+  ```
+  Журнал сервера (фрагмент): `n8n in event=quote-request correlation=780d6ab7-3d61-4b40-9698-75a4166781fa status=202`,
+  `db:getQuote: 3` — без email і назви компанії.
 - **Рядок у `docs/n8n-integrations.md`:** є — його додав агент у прогоні B (`quote-request` і `lead-created`).
 
 ## Висновок
