@@ -263,3 +263,103 @@
 «тихого» PASS. Вивід для A вище — уже новою версією; на коді B, на шаблонах і на `main` результат
 (0 FAIL / 0 FAIL / 7 FAIL) не змінився, на `main` C9–C12 тепер N/A.
 
+
+## Перенесення прогону B у гілку (фіча)
+
+- **Як переносили:** `git apply --3way docs/ab/b-with-skill.diff` у робочій гілці `ws04/Zahakailo30`
+  (код гілки між BASE `eb39591` і HEAD не змінювався — `git diff eb39591 HEAD -- app components lib .env.example`
+  порожній). Пробний `--check` і справжнє накладання — без конфліктів. `.env.local` і `node_modules/` у
+  діфі немає, `package.json`/`package-lock.json` агент не змінював. Коміти:
+  - `e1974f9` `feat(quotes): quote request feature from A/B run B (with skill)` — діф прогону B **без змін**
+    (15 файлів, разом із `docs/n8n-integrations.md` — реєстр інтеграцій);
+  - `e05b708` `fix(quote-form): team form pattern after transfer …` — доведення руками (нижче).
+- **Що довелось доробити руками після перенесення (і чому скіл цього не дав).** Для контракту n8n —
+  **нічого**: `check-contract.mjs` одразу 14 PASS / 0 FAIL на всьому коді, lint/build чисті, сценарій з моком
+  і матриця колбеків проходять. Доробити довелось **форму** `/quotes/new` — не за контрактом n8n, а за
+  патерном форм команди (Task B): у копії B був лише скіл `integrating-n8n-webhooks` (`SKILL.md` згадує
+  «форма — за скілом форм команди, якщо він є»), тож агент зробив форму «як уміє»:
+  - помилки полів без `aria-invalid`/`aria-describedby` і без підсумку `role="alert"`;
+  - після помилки введене зникало (React 19 скидає форму, а `defaultValue` зі стану не було);
+  - перехід на `/quotes/<id>` робив `useEffect` + `router.push` — **без JavaScript** користувач лишався на
+    «Запит прийнято, відкриваємо статус…».
+
+  Виправлено: дія повертає `values` разом з помилками і після запису робить ``redirect(`/quotes/${id}`)``
+  (у Next 16 — 303 для відправки без JS), `after()` при цьому все одно виконується; форма —
+  `label htmlFor`, `aria-invalid`, `aria-describedby`, `role="alert"`, `defaultValue` зі стану.
+  Перевірено без JS (multipart POST з полями `$ACTION_*` зі сторінки): помилка → 200, `role="alert"`,
+  `aria-invalid="true"`, введене на місці; успіх → `303 See Other`, `Location: /quotes/q_…` за 0,14 с.
+- **Ключі контракту в `.env.example`:** `N8N_WEBHOOK_BASE_URL=http://127.0.0.1:5678/webhook`,
+  `N8N_WEBHOOK_TOKEN=change-me-webhook-token`, `N8N_CALLBACK_SECRET=change-me-callback-secret`,
+  `APP_BASE_URL=http://127.0.0.1:3000`; старого `N8N_WEBHOOK_URL` з `/webhook-test/` немає. `git ls-files ".env*"`
+  → лише `.env.example`.
+- **`npm run lint`, `npm run build` на гілці:** без помилок (`✓ Compiled successfully`, у збірці
+  `ƒ /api/n8n/[event]`, `ƒ /quotes/[id]`, `○ /quotes/new`).
+- **`check-contract.mjs` на фінальному коді** (увесь проєкт, без прапорців; 0 FAIL, код виходу 0):
+  ```
+  check-contract: root=D:6-quitcode-04-agent-skills-hw | 41 code files + .env.example | whole project
+  C1   PASS  test-url             no /webhook-test/ URL in code or .env.example
+  C2   PASS  public-env           no NEXT_PUBLIC_N8N_* variables
+  C3   PASS  single-module        n8n webhook env vars and fetch to n8n only in lib/n8n/client.ts
+  C4   PASS  server-only          lib/n8n/client.ts exists when n8n is called and starts with import "server-only"
+  C5   PASS  timeout              every fetch to n8n has signal: AbortSignal.timeout(...)
+  C6   PASS  request-headers      webhook call sends x-n8n-token, idempotency-key, x-correlation-id
+  C7   PASS  env-example          .env.example lists the contract keys with safe local values
+  C8   PASS  async-action         a Server Action ("use server") calls n8n only inside after()
+  C9   PASS  raw-body             callback route reads req.text(), never req.json(); JSON.parse only after the signature check
+  C10  PASS  signature            callback compares signatures with a length check + crypto.timingSafeEqual, never ===/!==
+  C11  PASS  replay-window        callback checks x-n8n-timestamp against a 300 s window
+  C12  PASS  callback-idempotency callback reads idempotency-key and answers duplicates
+  C13  PASS  no-edge              no runtime = "edge" in the project
+  C14  PASS  logs                 console.* in n8n code never logs bodies, form data, contacts, tokens or signatures
+  
+  Summary: 14 PASS, 0 FAIL (14 checks, whole project)
+  exit=0
+  ```
+- **Сценарій «форма → колбек → `/quotes/<id>`» на гілці** (`next start` гілки + мок з `tools/`,
+  `--mode respond-202 --delay 5000`; змінні — одноразовий env-файл у тимчасовій теці, `.env.local` не
+  відкривався): форма → 303 за 0,14 с; через ~5 с сторінка — «Кошторис готовий» + «Завантажити PDF».
+  Журнал мока (кошторис, потім стара форма лідів на `/`):
+  ```
+  [mock-n8n] 2026-09-28T08:46:35.687Z listening on http://127.0.0.1:5678  mode=respond-202  delay=5000 ms  cloud-timeout=off
+  [mock-n8n] 2026-09-28T08:46:35.689Z production URLs: POST http://127.0.0.1:5678/webhook/<path>
+  [mock-n8n] 2026-09-28T08:46:35.689Z test URLs: not registered (start with --listen to open them for 120 s)
+  [mock-n8n] 2026-09-28T08:46:35.689Z header auth: x-n8n-token required (N8N_WEBHOOK_TOKEN is set)
+  [mock-n8n] 2026-09-28T08:46:35.689Z callbacks: signed, sent to the request's callbackUrl after 5000 ms (async modes)
+  [mock-n8n] 2026-09-28T08:46:50.912Z POST /webhook/quote-request -> 202 in 2 ms auth=ok idempotency=new | headers: accept,accept-language,content-type,idempotency-key,user-agent,x-correlation-id,x-n8n-token | body 297 B sha256=190abcdf3d4678a14e31353b4ac6a042cbb0d27f9d94a685a44508722f8f6786
+  [mock-n8n] 2026-09-28T08:46:50.913Z workflow fe82850d-9359-4111-8168-254415f7e656 running for 5000 ms, then callback event=quote-request.completed
+  [mock-n8n] 2026-09-28T08:46:56.100Z callback POST http://127.0.0.1:3000/api/n8n/quote-request -> 202 in 173 ms (try 1/3) event=quote-request.completed body 382 B sha256=76265f1fd39432eb64e7332e95a144f4921848ba97ca0e623c1731dca731b54b
+  [mock-n8n] 2026-09-28T08:47:26.598Z POST /webhook/lead-created -> 202 in 1 ms auth=ok idempotency=new | headers: accept,accept-language,content-type,idempotency-key,user-agent,x-correlation-id,x-n8n-token | body 112 B sha256=1f829d738c607b5fb22e4a3bd08149b79c4f39ea228b1b81d2cfa7646e2f8bd7
+  ```
+  Журнал сервера (тіл, email, назви компанії, токенів і підписів — 0 збігів):
+  ```
+  db:insertQuote: 1
+  n8n out event=quote-request correlation=861231cd-c996-402c-8743-d7b3ac581cbf attempt=1 status=202 ms=52
+  db:updateQuote: 1
+  db:updateQuote: 2
+  n8n in event=quote-request correlation=861231cd-c996-402c-8743-d7b3ac581cbf status=202
+  db:getQuote: 1
+  db:updateQuote: 3
+  n8n in event=quote-request job=87ae6eae-c4c4-429f-ba1d-cbbc0fd746ea correlation=5ef66dbf-e498-45fb-b043-a866f7a7cad2 quote=unknown
+  n8n in event=quote-request correlation=7d7ce043-19cc-45a8-ac26-4e9d3d25b75e status=202
+  db:insertLead: 1
+  n8n out event=lead-created correlation=7b43d3c6-88ab-48e0-9e60-a557e4f024d7 attempt=1 status=202 ms=9
+  db:insertAuditEntry: 1
+  ```
+  `send-signed-callback.mjs --url http://127.0.0.1:3000/api/n8n/quote-request` → 12/12 PASS. Форма лідів на
+  головній тепер: `/webhook/lead-created`, `auth=ok`, тіло 112 B (на `main` було 1236 B з IP, user agent,
+  нотатками) і відповідь, що не чекає на n8n.
+- **Рядок у `docs/n8n-integrations.md`:** є — його додав агент у прогоні B (`quote-request` і `lead-created`).
+
+## Висновок
+
+Скіл змінив результат по суті. Без скіла (A) агент зробив працездатну на вигляд фічу з власним,
+по-своєму продуманим захистом (Bearer-токен на запит, `timingSafeEqual`, таймаут, `after()`), але **не за
+контрактом команди**: тестовий URL у `.env.example`, жодного `x-n8n-token`/`idempotency-key`/`x-correlation-id`,
+колбек без HMAC, вікна часу й ідемпотентності, виклик n8n поза єдиним модулем — 9 FAIL
+`check-contract`, а з налаштованим за контрактом n8n (Header Auth) запит отримав **403**, і кошторис
+«не вдався». Домовленості A брав з наявного коду, документації Next.js у `node_modules` і загальних знань.
+Зі скілом (B) агент сам викликав скіл першим кроком, узяв шаблони з `references/`, перевірив себе
+скриптами скіла і дав **0 FAIL**, робочий цикл `202 → колбек 202 → «Кошторис готовий»`, ще й переробив
+старий виклик n8n. Після перенесення довелось доробити лише форму за патерном Task B (цього скіла в
+копії не було — межа скіла n8n). Сам скіл після прогонів покращено в одному місці: `check-contract.mjs`
+тепер знаходить колбек-роут будь-де і не дає «тихого» PASS (`c56abe1`).

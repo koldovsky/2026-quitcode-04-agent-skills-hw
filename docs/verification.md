@@ -18,7 +18,7 @@
 |---|---|---|
 | `vercel-react-best-practices` | Project (`.claude/skills/`) | видно у свіжій сесії, файли не відкривались |
 | `building-client-form` | Project (`.claude/skills/`) | у свіжій сесії `d4fdbaf5` агент викликав його сам на звичайний запит (Task B) |
-| `integrating-n8n-webhooks` | Project (`.claude/skills/`) | _підтвердити у свіжій сесії (перед Task D)_ |
+| `integrating-n8n-webhooks` | Project (`.claude/skills/`) | у свіжій сесії копії B (`798ffb58`, окремий чат) — у списку; у прогоні B агент викликав його сам першим кроком |
 
 - Інші скіли, які теж видно в тій сесії: вбудовані в Claude Code (`code-review`, `simplify`,
   `security-review`, `run`, `init`, `claude-api`, `update-config`, `keybindings-help`,
@@ -206,7 +206,12 @@ Chrome, вхід як Olena, сторінка ліда) — усі 4 пункт�
 - **SHA коміту зі скілом (BASE для Task D):** `eb39591` — у ньому виправлення Task A, форма Task B і всі
   три скіли; `/quotes` і переробленого виклику n8n ще немає. Наступний коміт змінює лише `docs/`
   (у копії Task D не йде), тож як BASE можна брати й HEAD — код той самий.
-- **Що скіл змінив у собі після прогонів:** _заповнюється після Task D._
+- **Що скіл змінив у собі після прогонів:** `c56abe1` (версія `0.1.1`) — `check-contract.mjs` шукав колбек-роут
+  лише в `app/api/n8n/`, тому на коді прогону A (роут `app/api/quotes/[id]/callback/route.ts`) C9–C12 спершу
+  показали PASS, нічого не перевіривши. Тепер колбек-роутом вважається й роут з `callback`/`webhook` у
+  шляху або зі згадкою n8n у коді, а без колбек-роуту C9–C12 друкують **N/A**. Через це вивід на `main`
+  вище (знятий до зміни) показує C9–C12 як PASS; тепер на `main` — `3 PASS, 7 FAIL, 4 N/A`, ті самі 7 FAIL.
+  Інших змін скіл після прогонів не потребував: прогін B дав 0 FAIL за контрактом.
 
 **`check-contract.mjs` на коді `main`** (`git archive main` у тимчасову теку; id + PASS/FAIL, код виходу):
 
@@ -320,8 +325,26 @@ exit=1
 Без прапорця той самий код дає 7 FAIL — усі від старого коду з `base`; з прапорцем лишається тільки
 рядок, доданий «агентом». Неіснуючий ref → код виходу 2.
 
-**`check-contract.mjs` на фінальному коді** (після перенесення прогону B — 0 FAIL):
+**`check-contract.mjs` на фінальному коді** (гілка після перенесення прогону B і доведення форми, коміт
+`e05b708`; увесь проєкт без прапорців — 0 FAIL, код виходу 0):
 
 ```
-_заповнюється після Task D_
+check-contract: root=D:6-quitcode-04-agent-skills-hw | 41 code files + .env.example | whole project
+C1   PASS  test-url             no /webhook-test/ URL in code or .env.example
+C2   PASS  public-env           no NEXT_PUBLIC_N8N_* variables
+C3   PASS  single-module        n8n webhook env vars and fetch to n8n only in lib/n8n/client.ts
+C4   PASS  server-only          lib/n8n/client.ts exists when n8n is called and starts with import "server-only"
+C5   PASS  timeout              every fetch to n8n has signal: AbortSignal.timeout(...)
+C6   PASS  request-headers      webhook call sends x-n8n-token, idempotency-key, x-correlation-id
+C7   PASS  env-example          .env.example lists the contract keys with safe local values
+C8   PASS  async-action         a Server Action ("use server") calls n8n only inside after()
+C9   PASS  raw-body             callback route reads req.text(), never req.json(); JSON.parse only after the signature check
+C10  PASS  signature            callback compares signatures with a length check + crypto.timingSafeEqual, never ===/!==
+C11  PASS  replay-window        callback checks x-n8n-timestamp against a 300 s window
+C12  PASS  callback-idempotency callback reads idempotency-key and answers duplicates
+C13  PASS  no-edge              no runtime = "edge" in the project
+C14  PASS  logs                 console.* in n8n code never logs bodies, form data, contacts, tokens or signatures
+
+Summary: 14 PASS, 0 FAIL (14 checks, whole project)
+exit=0
 ```
