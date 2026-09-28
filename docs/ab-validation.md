@@ -356,7 +356,9 @@
   [mock-n8n] 2026-09-28T08:57:25.183Z callback POST http://127.0.0.1:3000/api/n8n/quote-request -> 202 in 176 ms (try 1/3) event=quote-request.completed body 382 B sha256=64caedecc5deadb7c7a179d1e63179ac27152bcb68d0fbcfe6fe5723766dff2c
   ```
   Журнал сервера (фрагмент): `n8n in event=quote-request correlation=780d6ab7-3d61-4b40-9698-75a4166781fa status=202`,
-  `db:getQuote: 3` — без email і назви компанії.
+  `db:getQuote: 3` — без email і назви компанії. Форма (людина): порожня відправка — підсумок над формою й
+  повідомлення, що поля треба заповнити; неправильний email — помилка поля email; після правильної
+  відправки сторінка статусу показала «в черзі», потім «готово».
 - **Рядок у `docs/n8n-integrations.md`:** є — його додав агент у прогоні B (`quote-request` і `lead-created`).
 
 ## Висновок
