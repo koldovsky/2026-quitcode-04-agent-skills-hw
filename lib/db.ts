@@ -5,10 +5,15 @@ import type {
   LeadStats,
   LeadStatus,
   NewLead,
+  NewQuote,
+  Quote,
+  QuoteStatus,
+  QuoteUpdate,
   SourceCount,
   User,
   Workspace,
 } from "./types";
+import { randomUUID } from "node:crypto";
 import { LEAD_SOURCES, LEAD_STATUSES } from "./types";
 
 // In-memory stand-in for the agency's Postgres. Latencies mirror what the
@@ -31,10 +36,14 @@ const LATENCY_MS = {
   getLead: 80,
   insertLead: 120,
   updateLeadStatus: 80,
+  appendLeadNote: 80,
   deleteLead: 80,
   insertAuditEntry: 250,
   listUsers: 50,
   createSession: 50,
+  insertQuote: 120,
+  getQuote: 80,
+  updateQuote: 80,
 } as const;
 
 type QueryName = keyof typeof LATENCY_MS;
@@ -267,6 +276,10 @@ function createStore(): Store {
 // One store per server process (also survives module reloads in `next dev`).
 const globalForStore = globalThis as unknown as { leadDeskStore?: Store };
 const store = (globalForStore.leadDeskStore ??= createStore());
+// Quote requests are kept apart from the seeded store, so a store created before this
+// feature in a running `next dev` does not need a restart.
+const globalForQuotes = globalThis as unknown as { leadDeskQuotes?: Quote[] };
+const quotes = (globalForQuotes.leadDeskQuotes ??= []);
 
 const SESSION_PREFIX = "demo-";
 
@@ -369,6 +382,16 @@ export const db = {
     });
   },
 
+  appendLeadNote(id: string, note: string) {
+    return query("appendLeadNote", () => {
+      const lead = store.leads.find((l) => l.id === id);
+      if (!lead) return false;
+      lead.internalNotes = lead.internalNotes ? `${lead.internalNotes}\n\n${note}` : note;
+      lead.updatedAt = new Date().toISOString();
+      return true;
+    });
+  },
+
   deleteLead(id: string) {
     return query("deleteLead", () => {
       const index = store.leads.findIndex((l) => l.id === id);
@@ -381,6 +404,50 @@ export const db = {
   insertAuditEntry(entry: AuditEntry) {
     return query("insertAuditEntry", () => {
       store.audit.push(entry);
+    });
+  },
+
+  insertQuote(input: NewQuote) {
+    return query("insertQuote", (): Quote => {
+      const now = new Date().toISOString();
+      const quote: Quote = {
+        ...input,
+        // Unguessable: the public status page is reachable by id alone.
+        id: `q_${randomUUID()}`,
+        status: "queued",
+        idempotencyKey: randomUUID(),
+        correlationId: randomUUID(),
+        jobId: null,
+        documentUrl: null,
+        errorCode: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      quotes.push(quote);
+      return structuredClone(quote);
+    });
+  },
+
+  getQuote(id: string) {
+    return query("getQuote", () => {
+      const quote = quotes.find((q) => q.id === id);
+      return quote ? structuredClone(quote) : null;
+    });
+  },
+
+  // Applies the patch only while the quote is in one of `fromStatuses`, so a late
+  // "processing" never overwrites a callback that already arrived.
+  updateQuoteByIdempotencyKey(
+    idempotencyKey: string,
+    fromStatuses: readonly QuoteStatus[],
+    patch: QuoteUpdate,
+  ) {
+    return query("updateQuote", () => {
+      const quote = quotes.find((q) => q.idempotencyKey === idempotencyKey);
+      if (!quote) return { found: false as const };
+      if (!fromStatuses.includes(quote.status)) return { found: true as const, id: quote.id, applied: false };
+      Object.assign(quote, patch, { updatedAt: new Date().toISOString() });
+      return { found: true as const, id: quote.id, applied: true };
     });
   },
 };

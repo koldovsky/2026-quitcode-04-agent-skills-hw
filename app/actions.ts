@@ -1,11 +1,15 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { getCurrentUser, getLead, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import type { LeadStatus } from "@/lib/types";
+import { triggerWorkflow } from "@/lib/n8n/client";
+import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -50,28 +54,39 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
-
-  await logAudit("lead.created", lead.id);
+  // Fire-and-forget event (n8n: Respond Immediately). The user does not wait for n8n or the audit.
+  const idempotencyKey = randomUUID(); // one per business operation; store it with the record in a real DB
+  after(async () => {
+    await triggerWorkflow(
+      "lead-created",
+      { leadId: lead.id, company: lead.company, budget: lead.budget, source: lead.source },
+      { idempotencyKey },
+    );
+    await logAudit("lead.created", lead.id);
+  });
 
   return { status: "ok" };
 }
 
+// Server Actions are public endpoints: check the session and that the lead
+// belongs to the user's workspace inside every action.
+async function requireLeadInUserWorkspace(id: unknown) {
+  const user = await getCurrentUser();
+  if (typeof id !== "string") throw new Error("Lead not found");
+  const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), getLead(id)]);
+  if (!lead || lead.workspaceId !== workspace.id) throw new Error("Lead not found");
+}
+
 export async function updateLeadStatus(id: string, status: LeadStatus) {
+  if (!LEAD_STATUSES.includes(status)) throw new Error("Invalid status");
+  await requireLeadInUserWorkspace(id);
   await db.updateLeadStatus(id, status);
   revalidatePath("/dashboard");
   revalidatePath(`/dashboard/leads/${id}`);
 }
 
 export async function deleteLead(id: string) {
+  await requireLeadInUserWorkspace(id);
   await db.deleteLead(id);
   revalidatePath("/dashboard");
 }
