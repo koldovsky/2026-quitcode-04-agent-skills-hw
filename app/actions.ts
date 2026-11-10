@@ -4,8 +4,9 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
+import { getCurrentUser, getWorkspace } from "@/lib/data";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
-import type { LeadStatus } from "@/lib/types";
+import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
 const PUBLIC_FORM_WORKSPACE_ID = "ws_studio_nova";
 
@@ -65,13 +66,27 @@ export async function submitLead(
   return { status: "ok" };
 }
 
+// server-auth-actions: a Server Action is a public POST endpoint — anyone can call it with any
+// arguments, not only our UI. Check the session and that the lead belongs to the caller's
+// workspace inside the action itself (proxy.ts only checks that *a* cookie exists).
+async function requireOwnLead(id: unknown) {
+  if (typeof id !== "string") throw new Error("Lead not found");
+  const user = await getCurrentUser(); // redirects to /login without a valid session
+  const [workspace, lead] = await Promise.all([getWorkspace(user.workspaceSlug), db.getLead(id)]);
+  if (!lead || lead.workspaceId !== workspace.id) throw new Error("Lead not found");
+  return lead;
+}
+
 export async function updateLeadStatus(id: string, status: LeadStatus) {
+  if (!(LEAD_STATUSES as readonly unknown[]).includes(status)) throw new Error("Unknown status");
+  await requireOwnLead(id);
   await db.updateLeadStatus(id, status);
   revalidatePath("/dashboard");
   revalidatePath(`/dashboard/leads/${id}`);
 }
 
 export async function deleteLead(id: string) {
+  await requireOwnLead(id);
   await db.deleteLead(id);
   revalidatePath("/dashboard");
 }
