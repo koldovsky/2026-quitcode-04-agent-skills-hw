@@ -89,17 +89,27 @@
 | `async-parallel` | незалежні запити — `Promise.all()` | `01-app/01-getting-started/06-fetching-data.md`: паралельне завантаження даних, послідовні `await` — водоспад | ✅ застосовуємо (`/dashboard`) |
 | `server-cache-react` | `React.cache()` для БД/авторизації; не передавати inline-об'єкти як аргумент | `06-fetching-data.md`: для доступу до даних не через `fetch` — `cache` з `react`; приклад з примітивним `id` | ✅ застосовуємо: `getWorkspace({ slug })` у нас якраз з inline-об'єктом (кеш завжди промахується), `getCurrentUser` без `cache` |
 | `bundle-dynamic-imports` | приклад `dynamic(() => import(...), { ssr: false })` | `01-app/02-guides/lazy-loading.md`: «`ssr: false` is not allowed with `next/dynamic` in Server Components» — помилка збірки | ⚠️ лише в Client Component (у нас `leads-toolbar.tsx`); скопійований у `app/dashboard/page.tsx` приклад зламає `npm run build` |
-| `bundle-barrel-imports` | додати `experimental.optimizePackageImports: ['lucide-react', '@mui/material']`; серед «уражених» — `lodash` | `05-config/01-next-config-js/optimizePackageImports.md`: `lucide-react`, `@mui/material`, `recharts` та ін. оптимізуються **за замовчуванням**; `lodash` (CommonJS) у списку немає, є лише `lodash-es` | ⚠️ конфіг з прикладу в 16.3.5 зайвий; для `lodash` потрібен прямий імпорт (`lodash/debounce`), а не прапорець |
+| `bundle-barrel-imports` | додати `experimental.optimizePackageImports: ['lucide-react', '@mui/material']`; серед «уражених» — `lodash` | `05-config/01-next-config-js/optimizePackageImports.md`: `lucide-react`, `@mui/material`, `recharts` та ін. оптимізуються **за замовчуванням**; `lodash` у цьому списку немає, **але** `node_modules/next/dist/server/config.js:1117` за замовчуванням додає `modularizeImports: { lodash: { transform: 'lodash/{{member}}' } }` | ❌ у 16.3.5 не потрібна: і конфіг з прикладу, і «прямий імпорт» для `lodash` Next.js уже робить сам. Спершу я записав тут «для lodash потрібен прямий імпорт» — це спростував агент під час рев'ю застосунку (крок 5), я перевірив у коді Next.js |
 | `server-after-nonblocking` | побічні ефекти — в `after()`; «працює в Server Actions, Route Handlers, Server Components» | `04-functions/after.md`: те саме + Proxy; «виконується навіть якщо відповідь не завершилась успішно — зокрема при `redirect`/`notFound`» | ✅ правдиво; у Task A не застосовуємо до виклику n8n (його контракт — Task C/D), лише беремо id для власних скілів |
 
 ## 6. Закріплення версії й коміт
 
-- Команда встановлення (запускає людина у звичайному терміналі, не агент — агентський запуск вмикає
-  `--yes`):
+- Команда встановлення:
   `DISABLE_TELEMETRY=1 npx skills@1.7.0 add vercel-labs/agent-skills#agent-skills-063bee94c3f4df8453406c830b0a7df0f2860278 --skill vercel-react-best-practices -a claude-code --copy`,
   scope — **Project**.
-- Де лягли файли; справжні файли чи посилання: _(допишу після встановлення)_
-- Що потрапило в git: _(допишу після встановлення)_
+- **Хто запускав — чесно:** інструкція радить запускати самому в терміналі. Я свідомо доручив це агенту
+  (Claude Code) — **після** того, як це рев'ю було закомічене (`5a202a8`) і аудити прочитані на
+  skills.sh. CLI так і написав: «Agent detected — installing non-interactively» — тобто підтвердження
+  й показ аудитів пропущено, як і попереджає walkthrough. Тому рішення «встановлювати» ухвалено до
+  запуску, а результат перевірено після: `diff -r` клону тега з `.claude/skills/vercel-react-best-practices`
+  → відрізняється лише відсутнім `metadata.json`; scope за замовчуванням — Project (у `~/.claude/skills/`
+  нічого не з'явилось).
+- Де лягли файли; справжні файли чи посилання: `.claude/skills/vercel-react-best-practices/` —
+  **75 справжніх файлів** (`find … -type f | wc -l` → 75; `find .claude -type l` → порожньо);
+  `.agents/` не створено (`ls .agents` → немає).
+- Що потрапило в git (коміт `d8cd024`): тека скіла (75 файлів) і `skills-lock.json` —
+  `source: vercel-labs/agent-skills`, `ref: agent-skills-063bee94c3f4…`,
+  `computedHash: 3219a1944e40…d34c2357`.
 - Як оновлювати: та сама команда з новим тегом → `git diff .claude/skills/vercel-react-best-practices skills-lock.json`
   → рев'ю змін за цим чеклістом (розділи 1–5) → окремий коміт `skills: bump vercel-react-best-practices to <тег>`.
 
