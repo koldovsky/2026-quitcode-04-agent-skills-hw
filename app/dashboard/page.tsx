@@ -12,7 +12,7 @@ import {
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const workspace = await getWorkspace({ slug: user.workspaceSlug });
+  const workspace = await getWorkspace(user.workspaceSlug);
   // async-parallel: the three queries depend only on workspace.id, not on each other.
   const [leads, stats, sources] = await Promise.all([
     getLeads(workspace.id),
