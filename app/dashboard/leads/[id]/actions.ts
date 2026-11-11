@@ -27,7 +27,7 @@ export async function addLeadNote(
   const user = await getCurrentUser();
 
   const [workspace, lead] = await Promise.all([
-    getWorkspace({ slug: user.workspaceSlug }),
+    getWorkspace(user.workspaceSlug),
     db.getLead(leadId),
   ]);
   if (!lead || lead.workspaceId !== workspace.id) {
