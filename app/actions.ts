@@ -1,10 +1,13 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { getCurrentUser, getWorkspace } from "@/lib/data";
+import { triggerWorkflow } from "@/lib/n8n/client";
 import { parseLeadForm, type LeadFormField } from "@/lib/lead-form";
 import { LEAD_STATUSES, type LeadStatus } from "@/lib/types";
 
@@ -51,17 +54,36 @@ export async function submitLead(
     },
   });
 
-  try {
-    await fetch(process.env.N8N_WEBHOOK_URL!, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(lead),
-    });
-  } catch (error) {
-    console.error(`Failed to send lead ${lead.id} to n8n`, error);
-  }
-
-  await logAudit("lead.created", lead.id);
+  // integrating-n8n-webhooks / server-after-nonblocking: the visitor does not wait for n8n or the
+  // audit log. lead-created is an «Immediately» event (no callback); the key is created once for this
+  // lead and reused by every retry. data is the minimum the lead workflow needs — no IP, user agent,
+  // rawPayload or internal fields.
+  const idempotencyKey = randomUUID();
+  after(async () => {
+    try {
+      await triggerWorkflow({
+        event: "lead-created",
+        data: {
+          leadId: lead.id,
+          firstName: lead.firstName,
+          lastName: lead.lastName,
+          email: lead.email,
+          phone: lead.phone,
+          company: lead.company,
+          website: lead.website,
+          budget: lead.budget,
+          message: lead.message,
+          consentMarketing: lead.consentMarketing,
+          source: lead.source,
+          createdAt: lead.createdAt,
+        },
+        idempotencyKey,
+      });
+    } catch {
+      console.error(`n8n out event=lead-created lead=${lead.id} error=config`);
+    }
+    await logAudit("lead.created", lead.id);
+  });
 
   return { status: "ok" };
 }

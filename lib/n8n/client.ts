@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 
 // The only module that calls n8n. Contract: .claude/skills/integrating-n8n-webhooks.
 
-export type N8nEvent = "quote-request"; // kebab-case, one event = one webhook path
+export type N8nEvent = "lead-created" | "quote-request"; // kebab-case, one event = one webhook path
 
 const ATTEMPT_TIMEOUT_MS = 10_000;
 const RETRY_PAUSES_MS = [1_000, 3_000]; // at most 2 retries = 3 attempts

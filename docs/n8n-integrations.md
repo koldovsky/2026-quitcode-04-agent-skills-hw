@@ -4,18 +4,23 @@ Contract: `.claude/skills/integrating-n8n-webhooks`. One row per event.
 
 | event | напрям | шлях n8n | режим | код у застосунку | власник |
 |---|---|---|---|---|---|
-| `quote-request` | Next.js → n8n → колбек | `/webhook/quote-request` | Respond to Webhook 202 `{job_id}` + підписаний колбек на `/api/n8n/quote-request` | `app/quotes/actions.ts`, `app/api/n8n/[event]/route.ts` | — |
-| `lead-created` | Next.js → n8n | ⚠️ `/webhook-test/lead-created` | Immediately | `app/actions.ts` (`submitLead`) | — |
+| `quote-request` | Next.js → n8n → колбек | `/webhook/quote-request` | Respond to Webhook 202 `{job_id}` + підписаний колбек на `/api/n8n/quote-request` | `app/quotes/actions.ts`, `app/api/n8n/[event]/route.ts` | Мар'ян Андрущак |
+| `lead-created` | Next.js → n8n | `/webhook/lead-created` | Immediately (подія «до відома», без колбека) | `app/actions.ts` (`submitLead`) → `lib/n8n/client.ts` | Мар'ян Андрущак |
 
-## ⚠️ `lead-created` — ще не за контрактом
+## `lead-created`
 
-Інтеграція старша за контракт і потребує окремої задачі разом із клієнтом (зміна тіла зламає його
-воркфлоу, а потрібні воркфлоу поля невідомі):
+Переведено на контракт під час перенесення прогону B (раніше: тестовий URL `/webhook-test/` у
+`.env.example`, весь лід з IP, user agent і `rawPayload` у тілі, `fetch` без токена, таймауту й
+повторів, форма чекала відповіді n8n).
 
-- `.env.example` вказує тестовий URL `/webhook-test/` — працює лише при відкритому редакторі n8n;
-- у тілі — весь лід, включно з IP, user agent і `rawPayload`; без конверта `{ version, event, data }`;
-- `fetch` поза `lib/n8n/client.ts`: без `x-n8n-token`, `idempotency-key`, таймауту й повторів;
-- форма чекає відповіді n8n (виклик не в `after()`).
+- **Запит** (`data`): `leadId`, `firstName`, `lastName`, `email`, `phone`, `company`, `website`,
+  `budget`, `message`, `consentMarketing`, `source`, `createdAt` — дані заявки, які потрібні воркфлоу
+  менеджерів; **без** IP, user agent, `rawPayload` і внутрішніх полів. Конверт `{ version: 1, event,
+  data }` — це **зміна тіла** для воркфлоу клієнта: перед деплоєм узгодити з ним (у n8n поля тепер у
+  `$json.body.data`, а не в корені).
+- Виклик — в `after()`: відвідувач не чекає n8n; `idempotency-key` створюється один раз на заявку.
+- Налаштування n8n — `.claude/skills/integrating-n8n-webhooks/references/n8n-setup.md`, але з
+  Respond `Immediately`, без Respond to Webhook і колбека.
 
 ## `quote-request`
 
