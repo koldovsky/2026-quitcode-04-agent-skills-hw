@@ -139,9 +139,16 @@ const code = new Map([...sources].map(([f, s]) => [f, blankComments(s)]));
 
 const inN8nModule = (f) => /(^|\/)lib\/n8n\//.test(f);
 const isClientModule = (f) => /(^|\/)lib\/n8n\/client\.(ts|tsx|js|mjs)$/.test(f);
-const N8N_URL_RE = /process\.env\.N8N_WEBHOOK|process\.env\[\s*["']N8N_WEBHOOK|webhook-test\/|\/webhook\/|:5678\b/;
+// n8n code is recognised by ANY N8N_* variable, not only by the contract's names: code written
+// without the contract (N8N_QUOTE_WEBHOOK_URL, /api/quotes/callback…) must not slip through as N/A.
+// Endpoint/token variables (…WEBHOOK…, …URL…, …TOKEN…) belong to lib/n8n/ only; the callback
+// secret may be read by the callback code.
+const N8N_ENDPOINT_ENV_RE = /process\.env\.N8N_[A-Z0-9_]*(WEBHOOK|URL|TOKEN)[A-Z0-9_]*|process\.env\[\s*["']N8N_[A-Z0-9_]*(WEBHOOK|URL|TOKEN)/;
+const N8N_SECRET_ENV_RE = /process\.env\.N8N_[A-Z0-9_]*(CALLBACK|SECRET)[A-Z0-9_]*|process\.env\[\s*["']N8N_[A-Z0-9_]*(CALLBACK|SECRET)/;
+const N8N_URL_RE = new RegExp(`${N8N_ENDPOINT_ENV_RE.source}|webhook-test\\/|\\/webhook\\/|:5678\\b`);
 const isCallbackFile = (f, src) =>
-  (/(^|\/)app\/api\/n8n\//.test(f) && /route\.(ts|js)$/.test(f)) || /x-n8n-signature/i.test(src);
+  /x-n8n-signature/i.test(src) ||
+  (/route\.(ts|js)$/.test(f) && (/(^|\/)app\/api\/n8n\//.test(f) || N8N_SECRET_ENV_RE.test(src)));
 
 // ---------------------------------------------------------------------------- checks
 const results = [];
@@ -195,8 +202,8 @@ function eachLine(filter, fn) {
 {
   const findings = [];
   eachLine((f) => !inN8nModule(f), (f, line, n) => {
-    if (/process\.env\.N8N_WEBHOOK|process\.env\[\s*["']N8N_WEBHOOK/.test(line)) {
-      findings.push(`${f}:${n} reads N8N_WEBHOOK_* outside lib/n8n/`);
+    if (N8N_ENDPOINT_ENV_RE.test(line)) {
+      findings.push(`${f}:${n} reads ${line.match(/N8N_[A-Z0-9_]+/)[0]} (n8n URL/token) outside lib/n8n/`);
     } else if (/\bfetch\s*\(/.test(line) && N8N_URL_RE.test(line)) {
       findings.push(`${f}:${n} fetch to n8n outside lib/n8n/`);
     }
@@ -215,8 +222,10 @@ function n8nFetchCalls() {
       const window = lines.slice(i, i + 25).join("\n");
       const end = callEnd(window);
       const callText = window.slice(0, end);
+      // a file that reads an n8n URL/token variable and calls fetch is talking to n8n,
+      // even if the URL sits in a local variable (fetch(webhookUrl, …))
       const fileTalksToN8n = inN8nModule(f) || N8N_URL_RE.test(src);
-      if (inN8nModule(f) || N8N_URL_RE.test(callText) || (fileTalksToN8n && /N8N|n8n/.test(callText))) {
+      if (fileTalksToN8n || N8N_URL_RE.test(callText)) {
         calls.push({ f, n: i + 1, text: callText });
       }
     });
@@ -271,11 +280,11 @@ const fetchCalls = n8nFetchCalls();
   let applicable = 0;
   for (const [f, src] of code) {
     if (!/^\s*["']use server["']/.test(src)) continue;
-    const startsWorkflow = /from\s+["'][^"']*lib\/n8n\/client["']/.test(src) || /process\.env\.N8N_WEBHOOK/.test(src) || fetchCalls.some((c) => c.f === f);
+    const startsWorkflow = /from\s+["'][^"']*lib\/n8n\/client["']/.test(src) || N8N_ENDPOINT_ENV_RE.test(src) || fetchCalls.some((c) => c.f === f);
     if (!startsWorkflow) continue;
     applicable++;
     if (!/\bafter\s*\(/.test(src) || !/import\s*\{[^}]*\bafter\b[^}]*\}\s*from\s*["']next\/server["']/.test(src)) {
-      const line = src.split("\n").findIndex((l) => /lib\/n8n\/client|process\.env\.N8N_WEBHOOK|\bfetch\s*\(/.test(l)) + 1;
+      const line = src.split("\n").findIndex((l) => /lib\/n8n\/client|\bfetch\s*\(/.test(l) || N8N_ENDPOINT_ENV_RE.test(l)) + 1;
       findings.push(`${f}:${line || 1} Server Action starts an n8n workflow without after() — the user waits for n8n`);
     }
   }
@@ -309,7 +318,10 @@ const scopeText = (list) => list.map((f) => (code.get(f) ?? blankComments(read(f
   const findings = [];
   for (const f of callbackScope) {
     (code.get(f) ?? blankComments(read(f))).split("\n").forEach((l, i) => {
-      if (/(===|!==|==|!=)/.test(l) && /\bsig\w*|hmac|digest/i.test(l.replace(/\bsignal\b/g, "")) && !/\.length\b|typeof|\bnull\b|undefined/.test(l)) {
+      // an operand of ===/!== that looks like a signature: sig, signature, expectedSig, hmac, digest…
+      const SIG = String.raw`(?!signal\b)\w*(?:sig|hmac|digest)\w*|expected\w*`;
+      const compare = new RegExp(String.raw`\b(?:${SIG})\b(?:\s*\)|\.\w+\([^)]*\))*\s*[!=]==?\s*(?!["'\`]|null\b|undefined\b|\d)|[!=]==?\s*\b(?:${SIG})\b(?!\s*\.length)`, "i");
+      if (compare.test(l) && !/\.length\s*[!=]==?|typeof\s/.test(l)) {
         findings.push(`${f}:${i + 1} signature compared with ===/!== — use crypto.timingSafeEqual`);
       }
     });
@@ -350,7 +362,8 @@ const scopeText = (list) => list.map((f) => (code.get(f) ?? blankComments(read(f
     const base = vars.get("N8N_WEBHOOK_BASE_URL");
     if (base && !/\/webhook\/?$/.test(base.value)) findings.push(`${env}:${base.line} N8N_WEBHOOK_BASE_URL must end with /webhook`);
     const legacy = vars.get("N8N_WEBHOOK_URL");
-    if (legacy) findings.push(`${env}:${legacy.line} N8N_WEBHOOK_URL is not a contract key (use N8N_WEBHOOK_BASE_URL + /<event>)`);
+    // with --changed-since an untouched legacy line is old code, not the run's work
+    if (legacy && lineChanged(env, legacy.line)) findings.push(`${env}:${legacy.line} N8N_WEBHOOK_URL is not a contract key (use N8N_WEBHOOK_BASE_URL + /<event>)`);
   }
   result("C11", "env-example", findings, applicable, applicable ? "" : "(.env.example absent or unchanged)");
 }
