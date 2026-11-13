@@ -29,14 +29,20 @@ Checks (PASS / FAIL / N/A — N/A means there was nothing to check):
   C4   server-only          lib/n8n/client.* starts with import "server-only"
   C5   fetch-timeout        every fetch to n8n has signal: AbortSignal.timeout(...)
   C6   contract-headers     n8n requests send x-n8n-token, idempotency-key, x-correlation-id
-  C7   non-blocking-action  a "use server" file that starts a workflow does it inside after()
-  C8   callback-raw-body    callback route reads request.text(); no .json()/JSON.parse before the signature check
+  C7   non-blocking-action  a "use server" file that starts a workflow does it inside an after() callback
+  C8   callback-raw-body    callback route reads the raw body (request.text() or a bounded stream reader);
+                            no .json()/JSON.parse before the signature check
   C9   timing-safe-compare  signature compared with crypto.timingSafeEqual, never with === / !==
   C10  no-edge-runtime      no export const runtime = "edge"
   C11  env-example          .env.example has the 4 contract keys; secrets are change-me-…; base URL ends with /webhook
   C12  no-sensitive-logs    no console.* of bodies, form data, personal data, tokens or signatures in n8n code
   C13  callback-replay      callback code checks x-n8n-timestamp against a 300 s window
-  C14  callback-idempotent  callback code uses idempotency-key and matches it with jobId from the body
+  C14  callback-idempotent  callback route reads idempotency-key into a variable, claims/stores it and
+                            compares it with \`\${jobId}:…\` from the signed body
+
+  Signature helpers in lib/n8n/ (timingSafeEqual, the 300 s window) count for C9/C13 even when only
+  the route changed. With --changed-since a fetch( call counts as changed when any line inside it
+  was added, edited or removed.
 
 Examples:
   node check-contract.mjs                                  # whole project
@@ -98,6 +104,7 @@ function blankComments(code) {
 
 // --changed-since: which files and lines changed after <ref>
 let changed = null; // Map<file, Set<line> | "all">
+const deletedAfter = new Map(); // Map<file, Set<line>> — new-side line after which lines were removed
 if (opts.since) {
   const git = (...args) => execFileSync("git", ["-C", ROOT, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   try {
@@ -121,6 +128,11 @@ if (opts.since) {
       const start = Number(hunk[1]);
       const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
       for (let n = start; n < start + count; n++) changed.get(current).add(n);
+      if (count === 0) {
+        // pure deletion: "+start,0" — lines were removed right after new-side line `start`
+        if (!deletedAfter.has(current)) deletedAfter.set(current, new Set());
+        deletedAfter.get(current).add(start);
+      }
     }
   }
   for (const f of git("ls-files", "--others", "--exclude-standard").split("\n").filter(Boolean)) changed.set(f, "all");
@@ -130,6 +142,12 @@ const lineChanged = (rel, n) => {
   if (!changed) return true;
   const lines = changed.get(rel);
   return lines === "all" || (lines instanceof Set && lines.has(n));
+};
+// any line in [from, to] added/edited, or lines removed between them
+const rangeChanged = (rel, from, to) => {
+  if (!changed) return true;
+  for (let n = from; n <= to; n++) if (lineChanged(rel, n)) return true;
+  return [...(deletedAfter.get(rel) ?? [])].some((d) => d >= from && d < to);
 };
 
 const allFiles = walk(ROOT);
@@ -218,10 +236,13 @@ function n8nFetchCalls() {
   for (const [f, src] of code) {
     const lines = src.split("\n");
     lines.forEach((line, i) => {
-      if (!/\bfetch\s*\(/.test(line) || !lineChanged(f, i + 1)) return;
+      if (!/\bfetch\s*\(/.test(line)) return;
       const window = lines.slice(i, i + 25).join("\n");
       const end = callEnd(window);
       const callText = window.slice(0, end);
+      // the whole call counts: removing only `signal:` or a header leaves the fetch( line untouched
+      const lastLine = i + callText.split("\n").length;
+      if (!rangeChanged(f, i + 1, lastLine)) return;
       // a file that reads an n8n URL/token variable and calls fetch is talking to n8n,
       // even if the URL sits in a local variable (fetch(webhookUrl, …))
       const fileTalksToN8n = inN8nModule(f) || N8N_URL_RE.test(src);
@@ -274,18 +295,53 @@ const fetchCalls = n8nFetchCalls();
   result("C6", "contract-headers", findings, fetchCalls.length > 0);
 }
 
-// C7 — "use server" files that start a workflow do it in after()
+// [open, close] offsets of the parentheses of every `name(` call in src
+function callRanges(src, nameRe) {
+  const ranges = [];
+  for (const m of src.matchAll(nameRe)) {
+    const open = m.index + m[0].length - 1;
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === "(") depth++;
+      else if (src[i] === ")" && --depth === 0) {
+        ranges.push([open, i]);
+        break;
+      }
+    }
+  }
+  return ranges;
+}
+const lineOf = (src, offset) => src.slice(0, offset).split("\n").length;
+
+// C7 — "use server" files that start a workflow do it inside an after() callback
 {
   const findings = [];
   let applicable = 0;
   for (const [f, src] of code) {
     if (!/^\s*["']use server["']/.test(src)) continue;
-    const startsWorkflow = /from\s+["'][^"']*lib\/n8n\/client["']/.test(src) || N8N_ENDPOINT_ENV_RE.test(src) || fetchCalls.some((c) => c.f === f);
+    const clientImport = /import\s*\{([^}]*)\}\s*from\s*["'][^"']*lib\/n8n\/client["']/.exec(src);
+    const startsWorkflow = Boolean(clientImport) || N8N_ENDPOINT_ENV_RE.test(src) || fetchCalls.some((c) => c.f === f);
     if (!startsWorkflow) continue;
     applicable++;
+    const firstLine = src.split("\n").findIndex((l) => /lib\/n8n\/client|\bfetch\s*\(/.test(l) || N8N_ENDPOINT_ENV_RE.test(l)) + 1;
     if (!/\bafter\s*\(/.test(src) || !/import\s*\{[^}]*\bafter\b[^}]*\}\s*from\s*["']next\/server["']/.test(src)) {
-      const line = src.split("\n").findIndex((l) => /lib\/n8n\/client|\bfetch\s*\(/.test(l) || N8N_ENDPOINT_ENV_RE.test(l)) + 1;
-      findings.push(`${f}:${line || 1} Server Action starts an n8n workflow without after() — the user waits for n8n`);
+      findings.push(`${f}:${firstLine || 1} Server Action starts an n8n workflow without after() — the user waits for n8n`);
+      continue;
+    }
+    // every place that starts the workflow — calls of names imported from lib/n8n/client and
+    // fetch( calls to n8n — must sit inside an after(...) argument, not merely next to an after()
+    const names = clientImport
+      ? clientImport[1].split(",").map((s) => s.trim().split(/\s+as\s+/).pop()).filter(Boolean)
+      : [];
+    const sites = [
+      ...names.flatMap((n) => [...src.matchAll(new RegExp(String.raw`\b${n}\s*\(`, "g"))].map((m) => m.index)),
+      ...(fetchCalls.some((c) => c.f === f) ? [...src.matchAll(/\bfetch\s*\(/g)].map((m) => m.index) : []),
+    ];
+    const afters = callRanges(src, /\bafter\s*\(/g);
+    for (const at of sites) {
+      if (!afters.some(([open, close]) => at > open && at < close)) {
+        findings.push(`${f}:${lineOf(src, at)} n8n workflow started outside the after() callback — the user waits for n8n`);
+      }
     }
   }
   result("C7", "non-blocking-action", findings, applicable > 0);
@@ -295,7 +351,11 @@ const fetchCalls = n8nFetchCalls();
 const callbackFiles = files.filter((f) => isCallbackFile(f, sources.get(f)));
 const callbackRoutes = callbackFiles.filter((f) => /route\.(ts|js)$/.test(f));
 const verifyHelpers = allFiles.filter((f) => inN8nModule(f) && /timingSafeEqual|x-n8n-signature/i.test(read(f)));
+// callbackScope — files whose LINES are diagnosed (changed ones only with --changed-since);
+// callbackContext — what counts as present: an untouched lib/n8n/callback.ts still verifies the
+// signature for a route that delegates to it, so it must not turn a correct route into a FAIL.
 const callbackScope = [...new Set([...callbackFiles, ...verifyHelpers.filter(fileChanged)])];
+const callbackContext = callbackScope.length ? [...new Set([...callbackScope, ...verifyHelpers])] : [];
 const scopeText = (list) => list.map((f) => (code.get(f) ?? blankComments(read(f)))).join("\n");
 
 // C8 — raw body before signature
@@ -305,7 +365,10 @@ const scopeText = (list) => list.map((f) => (code.get(f) ?? blankComments(read(f
     const lines = code.get(f).split("\n");
     const jsonCall = lines.findIndex((l) => /\.\s*json\s*\(\s*\)/.test(l) && /\b(req|request)\b/.test(l));
     if (jsonCall >= 0) findings.push(`${f}:${jsonCall + 1} request.json() — read the raw body with request.text()`);
-    if (!lines.some((l) => /\.\s*text\s*\(\s*\)/.test(l))) findings.push(`${f}:1 the raw body is never read with request.text()`);
+    // raw text: request.text(), or a bounded reader (readBodyLimited(request), body.getReader())
+    if (!lines.some((l) => /\.\s*text\s*\(\s*\)|\bread\w*Body\w*\s*\(|\.getReader\s*\(/.test(l))) {
+      findings.push(`${f}:1 the raw body is never read with request.text() or a bounded stream reader`);
+    }
     const verify = lines.findIndex((l) => /timingSafeEqual|verif\w*\s*\(/i.test(l));
     const parse = lines.findIndex((l) => /JSON\.parse\s*\(/.test(l));
     if (parse >= 0 && (verify < 0 || parse < verify)) findings.push(`${f}:${parse + 1} JSON.parse before the signature check`);
@@ -326,7 +389,7 @@ const scopeText = (list) => list.map((f) => (code.get(f) ?? blankComments(read(f
       }
     });
   }
-  if (callbackScope.length && !/timingSafeEqual\s*\(/.test(scopeText(callbackScope))) {
+  if (callbackScope.length && !/timingSafeEqual\s*\(/.test(scopeText(callbackContext))) {
     findings.push(`${callbackScope[0]}:1 no crypto.timingSafeEqual in the callback code`);
   }
   result("C9", "timing-safe-compare", findings, callbackScope.length > 0);
@@ -394,7 +457,7 @@ const scopeText = (list) => list.map((f) => (code.get(f) ?? blankComments(read(f
 // C13 — timestamp window
 {
   const findings = [];
-  const text = scopeText(callbackScope);
+  const text = scopeText(callbackContext);
   if (callbackScope.length) {
     if (!/x-n8n-timestamp/i.test(text)) findings.push(`${callbackScope[0]}:1 x-n8n-timestamp is never read`);
     else if (!/\b300\b|5\s*\*\s*60/.test(text)) findings.push(`${callbackScope[0]}:1 no 300 s window for x-n8n-timestamp`);
@@ -402,13 +465,25 @@ const scopeText = (list) => list.map((f) => (code.get(f) ?? blankComments(read(f
   result("C13", "callback-replay", findings, callbackScope.length > 0);
 }
 
-// C14 — idempotency on callbacks
+// C14 — idempotency on callbacks: the mechanism, not just the names. The header value is read into
+// a variable, that variable is claimed/stored (a repeat is answered without processing) and compared
+// with `${jobId}:…` built from the signed body (the header itself is not signed).
 {
   const findings = [];
   const text = scopeText(callbackRoutes);
+  const at = `${callbackRoutes[0]}:1`;
   if (callbackRoutes.length) {
-    if (!/["'`]idempotency-key["'`]/i.test(text)) findings.push(`${callbackRoutes[0]}:1 idempotency-key header is never read`);
-    else if (!/jobId/.test(text)) findings.push(`${callbackRoutes[0]}:1 idempotency-key is not matched with data.jobId from the signed body`);
+    const header = /\b(?:const|let|var)\s+(\w+)\s*=[^;\n]*headers\s*\.\s*get\s*\(\s*["'`]idempotency-key["'`]\s*\)/i.exec(text);
+    if (!/["'`]idempotency-key["'`]/i.test(text)) findings.push(`${at} idempotency-key header is never read`);
+    else if (!header) findings.push(`${at} idempotency-key is not read into a variable — nothing can be claimed or compared`);
+    else {
+      const k = header[1];
+      const claimed = new RegExp(String.raw`\b\w*(?:claim|seen|dedup|idempot|processed|lock|reserve|insert|mark)\w*\s*\(\s*(?:await\s+)?${k}\b`, "i");
+      const jobKey = String.raw`\`[^\`]*\$\{[^}]*jobId[^}]*\}[^\`]*\``;
+      const matched = new RegExp(String.raw`\b${k}\s*[!=]==?\s*${jobKey}|${jobKey}\s*[!=]==?\s*${k}\b`);
+      if (!claimed.test(text)) findings.push(`${at} idempotency-key "${k}" is never claimed/stored — a repeated callback is processed again`);
+      if (!matched.test(text)) findings.push(`${at} idempotency-key "${k}" is not compared with \`\${jobId}:…\` from the signed body`);
+    }
   }
   result("C14", "callback-idempotent", findings, callbackRoutes.length > 0);
 }
