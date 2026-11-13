@@ -13,7 +13,8 @@ type LeadNoteFormProps = {
 export function LeadNoteForm({ action }: LeadNoteFormProps) {
   const [state, formAction, pending] = useActionState(action, initialState);
   const errors = state.status === "invalid" ? state.errors : {};
-  const values = state.status === "invalid" ? state.values : undefined;
+  // restore the typed note after any failed submit; clear it only after a successful write
+  const values = state.status === "invalid" || state.status === "error" ? state.values : undefined;
   const errorCount = Object.keys(errors).length;
 
   return (
@@ -48,6 +49,7 @@ export function LeadNoteForm({ action }: LeadNoteFormProps) {
           id="note"
           name="note"
           rows={3}
+          required
           maxLength={LEAD_NOTE_MAX_LENGTH}
           defaultValue={values?.note ?? ""}
           aria-invalid={Boolean(errors.note)}

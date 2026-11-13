@@ -14,7 +14,7 @@ export type AddLeadNoteState =
       errors: Partial<Record<LeadNoteFormField, string>>;
       values: LeadNoteFormData;
     }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; values?: LeadNoteFormData }
   | { status: "ok" };
 
 // Server Action is a public POST endpoint: leadId comes from the client (bound
@@ -41,7 +41,9 @@ export async function addLeadNote(
 
   const saved = await db.appendLeadNote(lead.id, parsed.data.note);
   if (!saved) {
-    return { status: "error", message: "Лід не знайдено" };
+    // The lead vanished between the check and the write: keep what the user typed —
+    // React resets uncontrolled fields after the action even when it returns an error.
+    return { status: "error", message: "Лід не знайдено", values: { note: parsed.data.note } };
   }
 
   after(() => logAudit("lead.note_added", lead.id));
