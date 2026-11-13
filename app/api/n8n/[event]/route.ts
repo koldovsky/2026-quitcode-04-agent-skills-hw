@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import {
-  CALLBACK_MAX_BYTES,
   claimCallbackKey,
+  readBodyLimited,
   releaseCallbackKey,
   verifyCallbackSignature,
 } from "@/lib/n8n/callback";
@@ -19,8 +19,9 @@ export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]
     return Response.json({ error: "unsupported media type" }, { status: 415 });
   }
 
-  const raw = await request.text(); // raw bytes first — never request.json() before the signature
-  if (Buffer.byteLength(raw) > CALLBACK_MAX_BYTES) return Response.json({ error: "too large" }, { status: 413 });
+  // Raw text first — never request.json() before the signature; the 64 KB limit applies while reading.
+  const raw = await readBodyLimited(request);
+  if (raw === null) return Response.json({ error: "too large" }, { status: 413 });
 
   const correlationId = request.headers.get("x-correlation-id") ?? "-";
   const bodyHash = createHash("sha256").update(raw).digest("hex").slice(0, 12);
@@ -81,6 +82,9 @@ function parseQuoteCallback(body: unknown, pathEvent: string, key: string): Quot
   const d = data as Record<string, unknown>;
   if (typeof d.jobId !== "string" || !d.jobId || key !== `${d.jobId}:${event}`) return null; // header is not signed
   if (typeof d.requestIdempotencyKey !== "string" || !d.requestIdempotencyKey) return null;
+  // The signature proves who sent it, not that it is consistent: "<event>.failed" with
+  // data.status "completed" (or the reverse) is rejected, not stored.
+  if (event !== `${pathEvent}.${String(d.status)}`) return null;
 
   if (d.status === "completed") {
     const documentUrl = (d.result as Record<string, unknown> | undefined)?.documentUrl;
