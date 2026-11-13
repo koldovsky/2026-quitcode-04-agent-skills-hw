@@ -53,7 +53,8 @@ metadata:
 3. **`components/<entity>-form.tsx`** (`"use client"`):
    - `const [state, formAction, pending] = useActionState(action, initialState)`;
      `<form action={formAction}>` — **без** `onSubmit` з `preventDefault`: тоді форма працює й без
-     JavaScript (Next.js рендерить прихований `$ACTION_ID_…` і браузер робить звичайний POST);
+     JavaScript (React рендерить приховані поля дії і браузер робить звичайний POST: `$ACTION_ID_…`
+     для простої дії, `$ACTION_REF_…` — для дії через `useActionState` або з `.bind(...)`);
    - у кожного поля `name`, `id` і `<label htmlFor>` (або обгортка `<label>`);
    - помилка поля: `aria-invalid={Boolean(errors.x)}`, `aria-describedby="x-error"` і
      `<p id="x-error">…</p>` поруч із полем;
@@ -74,7 +75,7 @@ metadata:
 ```
 - [ ] 1. Сесія, права й валідація — всередині Server Action, до будь-якого запису.
 - [ ] 2. Дія повертає лише { status, ... } без рядків з бази.
-- [ ] 3. <form action={formAction}> без preventDefault; у HTML є $ACTION_ID_.
+- [ ] 3. <form action={formAction}> без preventDefault; у HTML є $ACTION_ID_ або $ACTION_REF_.
 - [ ] 4. Кожне поле: label, name; помилка — aria-invalid + aria-describedby; є role="alert".
 - [ ] 5. Після помилки введене лишається (defaultValue зі state.values).
 - [ ] 6. Повільні побічні ефекти — в after(); у журналі немає персональних даних.
@@ -94,7 +95,8 @@ metadata:
 - [ ] `npm run lint` і `npm run build` без помилок.
 - [ ] Порожня відправка: біля кожного обов'язкового поля — текст помилки, зверху `role="alert"`,
       введене в інші поля лишилось.
-- [ ] Без JS: `curl -s <url сторінки> | grep -o 'name="\$ACTION_ID_[^"]*"'` → знайдено; або DevTools →
+- [ ] Без JS: `curl -s <url сторінки> | grep -oE 'name="\$ACTION_(ID|REF)_[^"]*"'` → знайдено (форма з
+      `useActionState` дає `$ACTION_REF_`, тож пошук лише `$ACTION_ID_` її не бачить); і DevTools →
       Disable JavaScript → відправка працює.
 - [ ] Дія без сесії (вийти й повторити запит, або curl без cookie) → дані не змінились.
 - [ ] Журнал сервера після відправки: жодного email, телефону, імені чи тексту повідомлення.
