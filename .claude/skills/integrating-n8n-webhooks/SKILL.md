@@ -48,8 +48,9 @@ metadata:
    n8n відповідає 202 `{ job_id }`, результат приходить колбеком. Синхронно — лише швидкі довідки.
    → [references/response-modes.md](references/response-modes.md)
 5. **n8n → Next.js — Route Handler `app/api/n8n/[event]/route.ts`**, порядок саме такий:
-   невідома подія → 404, не `application/json` → 415 (до читання тіла) → `const raw = await req.text()`
-   (ні `req.json()`, ні `JSON.parse` до підпису) → > 64 КБ → 413 → `x-n8n-timestamp` далі ніж 300 с
+   невідома подія → 404, не `application/json` → 415 (до читання тіла) → сирий текст тіла з лімітом
+   64 КБ **під час читання** (`readBodyLimited`, а не `req.text()`, що спершу буферизує все), більше →
+   413; ні `req.json()`, ні `JSON.parse` до підпису → `x-n8n-timestamp` далі ніж 300 с
    → 401 → HMAC-SHA256(`N8N_CALLBACK_SECRET`, `` `${timestamp}.${raw}` ``) проти
    `x-n8n-signature: sha256=<hex>` — довжини, потім `crypto.timingSafeEqual`, не `===` → 401 без
    подробиць → «застовпити» `idempotency-key`, уже був → 200 `{ duplicate: true }` → `JSON.parse(raw)`
@@ -69,7 +70,7 @@ metadata:
 - [ ] 2. URL /webhook/<event> (не /webhook-test/) у коді й .env.example; секрети там — change-me-….
 - [ ] 3. x-n8n-token, idempotency-key, x-correlation-id; AbortSignal.timeout(10_000); ≤ 2 повтори.
 - [ ] 4. Server Action: перевірки всередині, запис queued, виклик n8n в after(), відповідь { status, id }.
-- [ ] 5. Колбек: 404/415 → req.text() → 413 → 300 с → timingSafeEqual → ідемпотентність → 400 → стан → 202.
+- [ ] 5. Колбек: 404/415 → тіло з лімітом під час читання (413) → 300 с → timingSafeEqual → ідемпотентність → 400 → стан → 202.
 - [ ] 6. У журналах немає тіл, персональних даних, токенів і підписів.
 - [ ] 7. node .claude/skills/integrating-n8n-webhooks/scripts/check-contract.mjs → 0 FAIL.
 ```

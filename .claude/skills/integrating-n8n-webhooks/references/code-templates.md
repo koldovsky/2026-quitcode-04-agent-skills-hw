@@ -97,6 +97,27 @@ export const CALLBACK_WINDOW_SECONDS = 300;
 
 export type SignatureCheck = "ok" | "stale" | "invalid";
 
+/** Raw body as text with the limit applied WHILE reading (request.text() buffers it all). Null = too large. */
+export async function readBodyLimited(request: Request, maxBytes = CALLBACK_MAX_BYTES): Promise<string | null> {
+  const declared = Number(request.headers.get("content-length") ?? 0);
+  if (declared > maxBytes) return null; // cheap early exit; the header can lie, the loop below cannot
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 export function verifyCallbackSignature(
   raw: string,
   timestamp: string | null,
@@ -119,7 +140,7 @@ export function verifyCallbackSignature(
 ```ts
 import { createHash } from "node:crypto";
 import { after } from "next/server";
-import { CALLBACK_MAX_BYTES, verifyCallbackSignature } from "@/lib/n8n/callback";
+import { readBodyLimited, verifyCallbackSignature } from "@/lib/n8n/callback";
 import { claimCallbackKey, releaseCallbackKey, saveQuoteResult } from "@/lib/quotes"; // your storage
 
 const KNOWN_EVENTS = new Set(["quote-request"]);
@@ -131,8 +152,9 @@ export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]
     return Response.json({ error: "unsupported media type" }, { status: 415 });
   }
 
-  const raw = await request.text(); // raw bytes first — never request.json() before the signature
-  if (Buffer.byteLength(raw) > CALLBACK_MAX_BYTES) return Response.json({ error: "too large" }, { status: 413 });
+  // Raw text first — never request.json() before the signature; the 64 KB limit applies while reading.
+  const raw = await readBodyLimited(request);
+  if (raw === null) return Response.json({ error: "too large" }, { status: 413 });
 
   const check = verifyCallbackSignature(raw, request.headers.get("x-n8n-timestamp"), request.headers.get("x-n8n-signature"));
   const correlationId = request.headers.get("x-correlation-id") ?? "-";
@@ -173,25 +195,37 @@ export async function POST(request: Request, ctx: RouteContext<"/api/n8n/[event]
 type QuoteCallback = {
   jobId: string;
   status: "completed" | "failed";
-  requestIdempotencyKey: string | null;
-  documentUrl: string | null;
+  requestIdempotencyKey: string; // the idempotency-key we sent to n8n — finds the record
+  documentUrl: string | null; // http(s) only — it is rendered as a link
 };
 
+// The signature proves who sent the body, not that its shape is right: check it all before saving.
 function parseCallback(body: unknown, pathEvent: string, key: string): QuoteCallback | null {
   if (typeof body !== "object" || body === null) return null;
   const { version, event, data } = body as Record<string, unknown>;
-  if (version !== 1 || typeof event !== "string" || !event.startsWith(`${pathEvent}.`)) return null;
+  if (version !== 1) return null;
+  if (event !== `${pathEvent}.completed` && event !== `${pathEvent}.failed`) return null; // exact events only
   if (typeof data !== "object" || data === null) return null;
   const d = data as Record<string, unknown>;
-  if (typeof d.jobId !== "string" || key !== `${d.jobId}:${event}`) return null; // header is not signed
-  if (d.status !== "completed" && d.status !== "failed") return null;
-  const result = d.result as Record<string, unknown> | undefined;
-  return {
-    jobId: d.jobId,
-    status: d.status,
-    requestIdempotencyKey: typeof d.requestIdempotencyKey === "string" ? d.requestIdempotencyKey : null,
-    documentUrl: typeof result?.documentUrl === "string" ? result.documentUrl : null,
-  };
+  if (typeof d.jobId !== "string" || !d.jobId || key !== `${d.jobId}:${event}`) return null; // header is not signed
+  if (typeof d.requestIdempotencyKey !== "string" || !d.requestIdempotencyKey) return null;
+  if (event !== `${pathEvent}.${String(d.status)}`) return null; // "….failed" with status "completed" — rejected
+  if (d.status === "completed") {
+    const documentUrl = (d.result as Record<string, unknown> | undefined)?.documentUrl;
+    if (!isHttpUrl(documentUrl)) return null; // never javascript:, data: and the like
+    return { jobId: d.jobId, status: "completed", requestIdempotencyKey: d.requestIdempotencyKey, documentUrl };
+  }
+  return { jobId: d.jobId, status: "failed", requestIdempotencyKey: d.requestIdempotencyKey, documentUrl: null };
+}
+
+function isHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 2048) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 ```
 
@@ -225,11 +259,19 @@ export async function requestQuote(_prev: QuoteFormState, formData: FormData): P
       idempotencyKey: quote.idempotencyKey,
       callbackPath: "/api/n8n/quote-request",
     });
-    await quotes.update(quote.id, result.ok ? { status: "processing" } : { status: "failed" });
+    // A fast callback may already have stored "completed"/"failed" while we waited for n8n:
+    // move ONLY queued → processing | failed, atomically (UPDATE … WHERE id = $1 AND status = 'queued').
+    await quotes.markTriggered(quote.id, result.ok);
   });
   redirect(`/quotes/${quote.id}`); // or return { status: "ok", id: quote.id } — never the row
 }
 ```
+
+`markTriggered(id, ok)` — перехід **лише** з `queued`, атомарно: у БД
+`UPDATE quotes SET status = $2 WHERE id = $1 AND status = 'queued'`, у пам'яті —
+`if (quote.status !== "queued") return;`. Безумовний `update(id, { status: "processing" })` після
+`triggerWorkflow` перезаписав би `completed`, який колбек зберіг, поки ми чекали відповідь n8n, — і
+нового колбека вже не буде.
 
 Сторінка статусу (`/quotes/[id]`) показує мінімум — статус і посилання на документ; id запису —
 випадковий UUID, а не порядковий номер. Поки статус не кінцевий, сторінку можна оновлювати
