@@ -51,7 +51,8 @@ for (let i = 0; i < argv.length; i++) {
     process.exit(0);
   }
   const key = FLAGS[a];
-  if (!key || argv[i + 1] === undefined) {
+  // an empty value is a usage error too: --request-key "" would silently send an empty key
+  if (!key || argv[i + 1] === undefined || argv[i + 1].trim() === "") {
     process.stderr.write(`Bad argument: ${a}\n\n${HELP}`);
     process.exit(2);
   }
