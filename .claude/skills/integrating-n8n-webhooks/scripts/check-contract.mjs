@@ -253,15 +253,66 @@ function n8nFetchCalls() {
   }
   return calls;
 }
-// index where the fetch( call closes (paren balance), or the whole window
-function callEnd(text) {
-  const start = text.search(/\bfetch\s*\(/);
-  let depth = 0;
-  for (let i = start; i < text.length; i++) {
-    if (text[i] === "(") depth++;
-    else if (text[i] === ")" && --depth === 0) return i + 1;
+// Paren matching that ignores parens inside '…', "…", `…` (including ${…}) and /regex/ literals —
+// otherwise console.info(")") or /\)$/ inside a call shifts its end. Comments are already blanked.
+function skipString(src, i) {
+  const quote = src[i];
+  for (let j = i + 1; j < src.length; j++) {
+    const c = src[j];
+    if (c === "\\") {
+      j++;
+      continue;
+    }
+    if (quote === "`" && c === "$" && src[j + 1] === "{") {
+      let depth = 0; // ${ … } is code: skip to its matching "}", honouring nested literals
+      for (j = j + 1; j < src.length; j++) {
+        const d = src[j];
+        if (d === '"' || d === "'" || d === "`") j = skipString(src, j);
+        else if (d === "{") depth++;
+        else if (d === "}" && --depth === 0) break;
+      }
+      continue;
+    }
+    if (c === quote) return j;
+    if (quote !== "`" && c === "\n") return j; // unterminated '…' / "…": stop at the line end
   }
-  return text.length;
+  return src.length;
+}
+function regexCanStart(src, i) {
+  let j = i - 1;
+  while (j >= 0 && /\s/.test(src[j])) j--;
+  if (j < 0 || /[(,=:[!&|?{};+\-*%<>~^]/.test(src[j])) return true;
+  return /\b(?:return|typeof|case|do|else|in|of|void|yield|await)$/.test(src.slice(Math.max(0, j - 9), j + 1));
+}
+function skipRegex(src, i) {
+  let inClass = false;
+  for (let j = i + 1; j < src.length; j++) {
+    const c = src[j];
+    if (c === "\\") j++;
+    else if (c === "\n") return i; // not a regex after all — treat "/" as division
+    else if (inClass) inClass = c !== "]";
+    else if (c === "[") inClass = true;
+    else if (c === "/") return j;
+  }
+  return i;
+}
+// index of the ")" that closes the "(" at `open`, or -1
+function matchParen(src, open) {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === "`") i = skipString(src, i);
+    else if (c === "/" && regexCanStart(src, i)) i = skipRegex(src, i);
+    else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+// index where the fetch( call closes, or the whole window
+function callEnd(text) {
+  const m = /\bfetch\s*\(/.exec(text);
+  const close = m ? matchParen(text, m.index + m[0].length - 1) : -1;
+  return close < 0 ? text.length : close + 1;
 }
 const fetchCalls = n8nFetchCalls();
 
@@ -300,14 +351,8 @@ function callRanges(src, nameRe) {
   const ranges = [];
   for (const m of src.matchAll(nameRe)) {
     const open = m.index + m[0].length - 1;
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-      if (src[i] === "(") depth++;
-      else if (src[i] === ")" && --depth === 0) {
-        ranges.push([open, i]);
-        break;
-      }
-    }
+    const close = matchParen(src, open);
+    if (close >= 0) ranges.push([open, close]);
   }
   return ranges;
 }
@@ -465,25 +510,29 @@ const scopeText = (list) => list.map((f) => (code.get(f) ?? blankComments(read(f
   result("C13", "callback-replay", findings, callbackScope.length > 0);
 }
 
-// C14 — idempotency on callbacks: the mechanism, not just the names. The header value is read into
-// a variable, that variable is claimed/stored (a repeat is answered without processing) and compared
-// with `${jobId}:…` built from the signed body (the header itself is not signed).
+// C14 — idempotency on callbacks, checked PER ROUTE (one protected route must not hide another):
+// the header value is read into a variable, that variable is claimed/stored (a repeat is answered
+// without processing) and compared with `${jobId}:…` built from the signed body (the header is not signed).
 {
   const findings = [];
-  const text = scopeText(callbackRoutes);
-  const at = `${callbackRoutes[0]}:1`;
-  if (callbackRoutes.length) {
+  for (const f of callbackRoutes) {
+    const text = code.get(f) ?? blankComments(read(f));
     const header = /\b(?:const|let|var)\s+(\w+)\s*=[^;\n]*headers\s*\.\s*get\s*\(\s*["'`]idempotency-key["'`]\s*\)/i.exec(text);
-    if (!/["'`]idempotency-key["'`]/i.test(text)) findings.push(`${at} idempotency-key header is never read`);
-    else if (!header) findings.push(`${at} idempotency-key is not read into a variable — nothing can be claimed or compared`);
-    else {
-      const k = header[1];
-      const claimed = new RegExp(String.raw`\b\w*(?:claim|seen|dedup|idempot|processed|lock|reserve|insert|mark)\w*\s*\(\s*(?:await\s+)?${k}\b`, "i");
-      const jobKey = String.raw`\`[^\`]*\$\{[^}]*jobId[^}]*\}[^\`]*\``;
-      const matched = new RegExp(String.raw`\b${k}\s*[!=]==?\s*${jobKey}|${jobKey}\s*[!=]==?\s*${k}\b`);
-      if (!claimed.test(text)) findings.push(`${at} idempotency-key "${k}" is never claimed/stored — a repeated callback is processed again`);
-      if (!matched.test(text)) findings.push(`${at} idempotency-key "${k}" is not compared with \`\${jobId}:…\` from the signed body`);
+    if (!/["'`]idempotency-key["'`]/i.test(text)) {
+      findings.push(`${f}:1 idempotency-key header is never read`);
+      continue;
     }
+    if (!header) {
+      findings.push(`${f}:1 idempotency-key is not read into a variable — nothing can be claimed or compared`);
+      continue;
+    }
+    const k = header[1];
+    const at = `${f}:${lineOf(text, header.index)}`;
+    const claimed = new RegExp(String.raw`\b\w*(?:claim|seen|dedup|idempot|processed|lock|reserve|insert|mark)\w*\s*\(\s*(?:await\s+)?${k}\b`, "i");
+    const jobKey = String.raw`\`[^\`]*\$\{[^}]*jobId[^}]*\}[^\`]*\``;
+    const matched = new RegExp(String.raw`\b${k}\s*[!=]==?\s*${jobKey}|${jobKey}\s*[!=]==?\s*${k}\b`);
+    if (!claimed.test(text)) findings.push(`${at} idempotency-key "${k}" is never claimed/stored — a repeated callback is processed again`);
+    if (!matched.test(text)) findings.push(`${at} idempotency-key "${k}" is not compared with \`\${jobId}:…\` from the signed body`);
   }
   result("C14", "callback-idempotent", findings, callbackRoutes.length > 0);
 }
