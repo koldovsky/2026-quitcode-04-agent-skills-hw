@@ -18,7 +18,9 @@ Options:
   --request-key <key>    data.requestIdempotencyKey — the idempotency-key your app sent to n8n for an
                          existing record. Without it the "valid" case may get 404 (record not found).
   --document-url <url>   data.result.documentUrl (default https://files.example.test/n8n/<jobId>.pdf).
-  --only <ids>           Run only these cases, comma-separated (e.g. bad-signature,stale).
+  --only <ids>           Run only these cases, comma-separated (e.g. bad-signature,stale). Unknown or
+                         empty names are a usage error (exit 2). "duplicate" without "valid" first
+                         sends the valid callback once as setup.
   -h, --help             Show this help.
 
 Environment:
@@ -32,6 +34,7 @@ Cases (expected status):
   stale              401  x-n8n-timestamp 301 s in the past
   reformatted        401  body pretty-printed after signing
   key-mismatch       400  valid signature, idempotency-key does not match data.jobId
+  status-mismatch    400  valid signature, data.status contradicts the event (….completed + "failed")
   valid              202  correct callback
   duplicate          200  the same callback again ({"duplicate": true})
 
@@ -57,6 +60,18 @@ for (let i = 0; i < argv.length; i++) {
 if (!opts.url) {
   process.stderr.write(`--url is required\n\n${HELP}`);
   process.exit(2);
+}
+const CASE_IDS = ["unknown-event", "wrong-type", "too-large", "bad-signature", "stale", "reformatted", "key-mismatch", "status-mismatch", "valid", "duplicate"];
+let only = null;
+if (opts.only !== undefined) {
+  // a typo must not turn into "0 cases sent — all cases match the contract"
+  const picked = opts.only.split(",").map((s) => s.trim()).filter(Boolean);
+  const unknown = picked.filter((id) => !CASE_IDS.includes(id));
+  if (!picked.length || unknown.length) {
+    process.stderr.write(`--only: ${picked.length ? `unknown case(s): ${unknown.join(", ")}` : "no cases given"}\nKnown: ${CASE_IDS.join(", ")}\n`);
+    process.exit(2);
+  }
+  only = new Set(picked);
 }
 const secret = process.env.N8N_CALLBACK_SECRET;
 if (!secret) {
@@ -110,18 +125,17 @@ const cases = [
   { id: "stale", expect: 401, ...signedRequest(callback(randomUUID()), { timestamp: now() - 301 }) },
   { id: "reformatted", expect: 401, ...signedRequest(reformattedBody, { sendBody: JSON.stringify(reformattedBody, null, 2) }) },
   { id: "key-mismatch", expect: 400, ...signedRequest(callback(randomUUID()), { key: `${randomUUID()}:${event}` }) },
+  {
+    id: "status-mismatch",
+    expect: 400,
+    ...signedRequest(callback(randomUUID(), { status: event.endsWith(".failed") ? "completed" : "failed" })),
+  },
   { id: "valid", expect: 202, ...validRequest },
   { id: "duplicate", expect: 200, ...validRequest, check: (text) => /"duplicate"\s*:\s*true/.test(text) },
 ];
+if (cases.map((c) => c.id).join() !== CASE_IDS.join()) throw new Error("CASE_IDS out of sync with cases");
 
-const only = opts.only ? new Set(opts.only.split(",")) : null;
-let failed = 0;
-console.log(`send-signed-callback → ${url.origin}${url.pathname} (event ${event})\n`);
-console.log("case            expected  got      result");
-for (const c of cases) {
-  if (only && !only.has(c.id)) continue;
-  let got = "ERR";
-  let ok = false;
+async function send(c) {
   try {
     const response = await fetch(c.target ?? url, {
       method: "POST",
@@ -129,12 +143,24 @@ for (const c of cases) {
       body: c.body,
       signal: AbortSignal.timeout(10_000),
     });
-    got = response.status;
-    const text = await response.text();
-    ok = got === c.expect && (!c.check || c.check(text));
+    return { got: response.status, text: await response.text() };
   } catch (error) {
-    got = error.name === "TimeoutError" ? "timeout" : "network";
+    return { got: error.name === "TimeoutError" ? "timeout" : "network", text: "" };
   }
+}
+
+let failed = 0;
+console.log(`send-signed-callback → ${url.origin}${url.pathname} (event ${event})\n`);
+if (only?.has("duplicate") && !only.has("valid")) {
+  // "duplicate" tests a REPEAT: deliver the valid callback once first, otherwise a fresh key gets 202
+  const setup = await send(validRequest);
+  console.log(`setup: first delivery of the valid callback → ${setup.got}\n`);
+}
+console.log("case            expected  got      result");
+for (const c of cases) {
+  if (only && !only.has(c.id)) continue;
+  const { got, text } = await send(c);
+  const ok = got === c.expect && (!c.check || c.check(text));
   if (!ok) failed++;
   console.log(`${c.id.padEnd(16)}${String(c.expect).padEnd(10)}${String(got).padEnd(9)}${ok ? "PASS" : "FAIL"}`);
 }

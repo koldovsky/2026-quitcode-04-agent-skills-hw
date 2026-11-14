@@ -129,6 +129,12 @@ function log(line) {
   console.log(`[mock-n8n] ${new Date().toISOString()} ${line}`);
 }
 
+// Log label for a URL: origin + path only — never user:password@ or ?query (tokens live there).
+function safeUrlLabel(value) {
+  const url = new URL(value);
+  return `${url.origin}${url.pathname}`;
+}
+
 function isHttpUrl(value) {
   try {
     const url = new URL(value);
@@ -386,7 +392,7 @@ server.listen(port, args.host, () => {
   log(token ? "header auth: x-n8n-token required (N8N_WEBHOOK_TOKEN is set)" : "header auth: none (N8N_WEBHOOK_TOKEN is not set)");
   log(
     callbackSecret
-      ? `callbacks: signed, sent to ${callbackUrlFlag ?? "the request's callbackUrl"} after ${delayMs} ms (async modes)`
+      ? `callbacks: signed, sent to ${callbackUrlFlag ? safeUrlLabel(callbackUrlFlag) : "the request's callbackUrl"} after ${delayMs} ms (async modes)`
       : "callbacks: off (N8N_CALLBACK_SECRET is not set)",
   );
 });
