@@ -107,9 +107,10 @@ components/, lib/ за скілом vercel-react-best-practices … Файли �
   `runtime = "edge"`, файли в тілі, зміна воркфлоу/JSON/вузол Code; невідомо, які поля потрібні
   воркфлоу в `data`.
 - Скрипти: `check-contract.mjs` (C1–C14, `--root`, `--changed-since`, `--json`, `--help`, код виходу
-  1 при FAIL), `mock-n8n.mjs` (байт-у-байт копія `tools/mock-n8n.mjs`), `send-signed-callback.mjs`
-  (9 випадків: 404, 415, 413, неправильний підпис 401, прострочений час 401, тіло переформатоване
-  після підпису 401, ключ ≠ тіло 400, валідний 202, повтор 200 `duplicate`).
+  1 при FAIL), `mock-n8n.mjs` (копія `tools/mock-n8n.mjs`; після рев'ю CodeRabbit відрізняється
+  однією правкою — адреса колбека в журналі без облікових даних і query), `send-signed-callback.mjs`
+  (10 випадків: 404, 415, 413, неправильний підпис 401, прострочений час 401, тіло переформатоване
+  після підпису 401, ключ ≠ тіло 400, `status` ≠ подія 400, валідний 202, повтор 200 `duplicate`).
 - SHA коміту зі скілом (BASE для Task D): **`6c7fcc6`** (`6c7fcc69c3f7fc6133442d4240c6348ba6498b58`).
 - Що скіл змінив у собі після прогонів: коміт `8adab99` — `check-contract.mjs` упізнає код n8n за будь-якою
   змінною `N8N_*`, а не лише за назвами контракту (прогін A з `N8N_QUOTE_WEBHOOK_URL` і
@@ -203,3 +204,40 @@ exit=0
 
 **Матриця колбеків** (`send-signed-callback.mjs --request-key <ключ справжнього запиту>`) проти
 `/api/n8n/quote-request` на гілці: 404 / 415 / 413 / 401 / 401 / 401 / 400 / 202 / 200 — **9/9 PASS**.
+
+## Після рев'ю CodeRabbit (PR #21)
+
+16 зауважень, усі звірено з кодом; виправлено 16 — окремими комітами `f92293b`…`8a04211`.
+
+| Зауваження | Що було насправді | Виправлення і доказ |
+|---|---|---|
+| `building-client-form` Verify шукає лише `$ACTION_ID_` | На продакшн-збірці `/quotes/new` рендерить лише `$ACTION_REF_1`, нотатка — `$ACTION_REF_2` (дія з `useActionState`/`.bind`): перевірка «провалювала» робочу форму | grep `\$ACTION_(ID\|REF)_` → `name="$ACTION_REF_1"` |
+| Шаблон колбека: ліміт тіла після `request.text()` | Те саме було й у робочому роуті | `readBodyLimited()` у `lib/n8n/callback.ts` і шаблоні: потік 10 МБ без `Content-Length` зупиняється на ~68 КБ, «брехливий» `Content-Length: 10` — так само, рівно 64 КБ проходить; матриця `too-large` → 413 |
+| Шаблон: будь-яка `<event>.*`, ключ запиту може бути `null`, довільний `documentUrl` | Шаблон відставав від роуту, який скіл сам і згенерував | `parseCallback` у шаблоні = перевірки роуту: точні події, непорожній ключ, `isHttpUrl` |
+| Роут: `data.status` не звірявся з подією | `….failed` зі `status: "completed"` зберігався як `completed` | Перевірка в роуті й шаблоні + новий випадок матриці `status-mismatch` → 400 |
+| Шаблон Server Action перезаписує кінцевий статус | Безумовний `update` після `triggerWorkflow` | `quotes.markTriggered` — лише з `queued` (робочий `markQuoteTriggered` так і робив) |
+| `check-contract` C5/C6, C7, C9/C13, C14 | Фікстура на кожне зауваження: старий чекер дав N/A, PASS, хибні FAIL, PASS | Новий чекер: C5 FAIL, C7 FAIL, 0 хибних FAIL, C14 FAIL (таблиця нижче) |
+| `send-signed-callback`: `--only` з помилкою — «all cases match», `duplicate` без `valid` | Так | Невідома/порожня назва → код 2; `duplicate` сам робить першу доставку: `setup → 202`, `duplicate → 200` |
+| `mock-n8n.mjs`: `--callback-url` з паролем/токеном у журналі | Так | Копія скіла пише лише origin + path; `tools/` не змінено |
+| Нотатка: при `error` введене зникає; поле не `required` | Так | `values` у стані `error`, `required` |
+| `QuoteForm` не оголошує помилки | Форма з прогону B не відповідала нашому ж `building-client-form` | Playwright: `role="alert"` «помилок — 4», усі 4 поля `aria-invalid=true`, `aria-describedby` → текст помилки, `required`, `label` |
+
+**Регресія `check-contract.mjs`** (локальний стенд `~/.local/share/qc-ws7-tools/ws4/regress`: ті самі
+прогони, що вище, плюс по фікстурі на кожне зауваження):
+
+| Прогін | Старий чекер | Новий чекер |
+|---|---|---|
+| `main` | 6 FAIL (C1 C3 C5 C6 C7 C11) | те саме |
+| навмисно поганий роут | 7 FAIL | те саме |
+| шаблони скіла | 0 FAIL | 0 FAIL (нові шаблони) |
+| `--changed-since` контроль | C2 FAIL | те саме |
+| копія A / копія B (`--changed-since base`) | 8 FAIL / 0 FAIL | ті самі id |
+| увесь проєкт | 13 PASS, **C8 FAIL** (новий потоковий читач) | **14 PASS** |
+| f221: з `fetch` видалено лише `signal:` | C5/C6 **N/A** | **C5 FAIL** |
+| f286: `await triggerWorkflow()` поруч із порожнім `after()` | C7 **PASS** | **C7 FAIL** |
+| f298: змінено лише роут, `lib/n8n/callback.ts` незмінний | **C9, C13 FAIL** (хибно) | PASS |
+| f411: назви є, механізму немає | C14 **PASS** | **C14 FAIL** ×2 |
+
+**Матриця колбеків після виправлень** (продакшн-збірка, ключ справжнього запиту з `/quotes/new`):
+404 / 415 / 413 / 401 / 401 / 401 / 400 / **400** / 202 / 200 — **10/10 PASS**; `npm run lint` і
+`npm run build` без помилок.
